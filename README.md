@@ -12,7 +12,7 @@ A beautiful, lightweight CLI tool that spins up a local web UI for visualizing g
 - **Dark Mode** - Beautiful dark theme for better viewing experience
 - **Real-time Updates** - Live updates via WebSocket
 - **Lightweight** - Works via npx, no installation required
-- **Angular 21 Frontend** - Latest Angular with modern, component-based UI and TypeScript
+- **Angular 20 Frontend** - Latest stable Angular with modern, component-based UI and TypeScript
 
 ## 🚀 Quick Start
 
@@ -69,7 +69,7 @@ git-history-ui/
 │   └── backend/
 │       ├── server.ts       # Express server
 │       └── gitService.ts   # Git operations
-├── frontend/               # Angular 21 application
+├── frontend/               # Angular 20 application
 │   ├── src/
 │   │   ├── app/
 │   │   │   ├── components/ # Angular components
