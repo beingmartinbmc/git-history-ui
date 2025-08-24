@@ -11,6 +11,12 @@ A beautiful, modern web UI for visualizing git history with interactive commit g
 
 **Author:** Ankit Sharma (ankit.sharma199803@gmail.com)
 
+## 📋 Requirements
+
+- **Node.js**: 18.0.0 or higher
+- **Angular**: 20.2.1
+- **Git**: Any version (must be in a git repository)
+
 ## ✨ Features
 
 - **🎨 Interactive Commit Graph** - Beautiful D3.js-powered visualizations with branch tracking and merge detection
@@ -25,7 +31,7 @@ A beautiful, modern web UI for visualizing git history with interactive commit g
 ## 🚀 Quick Start (1 Step!)
 
 ### Prerequisites
-- **Node.js 18+** - [Download here](https://nodejs.org/)
+- **Node.js 18.0.0+** - [Download here](https://nodejs.org/)
 - **Git repository** - Must be in a git repository
 
 ### Step 1: Run the Application
@@ -110,7 +116,7 @@ HOST=0.0.0.0 npx git-history-ui
 ## 🛠️ Development Setup
 
 ### Prerequisites
-- **Node.js 18+** - [Download here](https://nodejs.org/)
+- **Node.js 18.0.0+** - [Download here](https://nodejs.org/)
 - **Git repository** - Must be in a git repository
 
 ### Project Structure
