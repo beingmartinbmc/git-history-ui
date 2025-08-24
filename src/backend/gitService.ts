@@ -200,10 +200,12 @@ export class GitService {
     const files: DiffFile[] = [];
     const lines = diff.split('\n');
     let currentFile: DiffFile | null = null;
+    let currentFileLines: string[] = [];
 
     for (const line of lines) {
       if (line.startsWith('diff --git')) {
         if (currentFile) {
+          currentFile.changes = currentFileLines.join('\n');
           files.push(currentFile);
         }
         const fileMatch = line.match(/b\/(.+)$/);
@@ -213,14 +215,24 @@ export class GitService {
           deletions: 0,
           changes: ''
         };
+        currentFileLines = [];
       } else if (line.startsWith('+') && !line.startsWith('+++')) {
         if (currentFile) currentFile.additions++;
+        currentFileLines.push(line);
       } else if (line.startsWith('-') && !line.startsWith('---')) {
         if (currentFile) currentFile.deletions++;
+        currentFileLines.push(line);
+      } else if (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++') || line.trim() === '') {
+        // Include git diff headers and context lines
+        currentFileLines.push(line);
+      } else if (line.startsWith(' ')) {
+        // Context lines (unchanged)
+        currentFileLines.push(line);
       }
     }
 
     if (currentFile) {
+      currentFile.changes = currentFileLines.join('\n');
       files.push(currentFile);
     }
 
