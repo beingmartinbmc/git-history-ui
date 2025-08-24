@@ -12,6 +12,7 @@ A beautiful, lightweight CLI tool that spins up a local web UI for visualizing g
 - **Dark Mode** - Beautiful dark theme for better viewing experience
 - **Real-time Updates** - Live updates via WebSocket
 - **Lightweight** - Works via npx, no installation required
+- **Angular 21 Frontend** - Latest Angular with modern, component-based UI and TypeScript
 
 ## 🚀 Quick Start
 
@@ -26,7 +27,7 @@ npx git-history-ui --file src/app.js
 npx git-history-ui --since v2.0.0
 
 # Filter by author
-npx git-history-ui --author "John Doe"
+npx git-history-ui --author "beingmartinbmc"
 
 # Custom port
 npx git-history-ui --port 8080
@@ -46,7 +47,7 @@ npx git-history-ui --no-open
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/git-history-ui.git
+git clone https://github.com/beingmartinbmc/git-history-ui.git
 cd git-history-ui
 
 # Install dependencies
@@ -68,9 +69,14 @@ git-history-ui/
 │   └── backend/
 │       ├── server.ts       # Express server
 │       └── gitService.ts   # Git operations
-├── public/
-│   ├── index.html          # Main HTML file
-│   └── app.js              # Frontend JavaScript
+├── frontend/               # Angular 21 application
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── components/ # Angular components
+│   │   │   ├── services/   # Angular services
+│   │   │   └── models/     # TypeScript interfaces
+│   │   └── styles.css      # Custom CSS
+│   └── angular.json        # Angular configuration
 ├── dist/                   # Compiled output
 └── package.json
 ```
@@ -150,11 +156,11 @@ MIT License - see LICENSE file for details
 ## 🙏 Acknowledgments
 
 - [D3.js](https://d3js.org/) for beautiful visualizations
-- [Tailwind CSS](https://tailwindcss.com/) for styling
+- [Angular](https://angular.io/) for the modern frontend framework
 - [simple-git](https://github.com/steveukx/git-js) for git operations
 - [Socket.IO](https://socket.io/) for real-time updates
 
-## �� Issues & Support
+## 🐛 Issues & Support
 
 Found a bug? Have a feature request? Please open an issue on GitHub!
 
