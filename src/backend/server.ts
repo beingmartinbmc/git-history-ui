@@ -35,6 +35,9 @@ export async function startServer(
   
   // Serve Angular build files
   app.use(express.static(path.join(__dirname, '../../frontend/dist/frontend/browser')));
+  
+  // Serve public folder as fallback
+  app.use(express.static(path.join(__dirname, '../../public')));
 
   // API Routes
   app.get('/api/commits', async (req, res) => {

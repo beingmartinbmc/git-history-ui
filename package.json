@@ -11,7 +11,7 @@
     "build:backend": "tsc -p tsconfig.json",
     "build:frontend": "cd frontend && ng build --configuration production",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "ts-node-dev --respawn --transpile-only src/backend/server.ts",
+    "dev:backend": "ts-node-dev --respawn --transpile-only src/backend/dev-server.ts",
     "dev:frontend": "cd frontend && ng serve --port 4200",
     "start": "node dist/backend/server.js",
     "test": "jest",
