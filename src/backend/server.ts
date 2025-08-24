@@ -32,7 +32,9 @@ export async function startServer(
   // Middleware
   app.use(cors());
   app.use(express.json());
-  app.use(express.static(path.join(__dirname, '../../public')));
+  
+  // Serve Angular build files
+  app.use(express.static(path.join(__dirname, '../../frontend/dist/frontend/browser')));
 
   // API Routes
   app.get('/api/commits', async (req, res) => {
@@ -104,9 +106,9 @@ export async function startServer(
     }
   });
 
-  // Serve the main HTML file
+  // Serve the main HTML file for Angular routing
   app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../public/index.html'));
+    res.sendFile(path.join(__dirname, '../../frontend/dist/frontend/browser/index.html'));
   });
 
   // Socket.IO for real-time updates
