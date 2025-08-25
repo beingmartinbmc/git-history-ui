@@ -9,7 +9,31 @@ import { ColorPalette } from '../../models/color-palette.models';
   imports: [CommonModule],
   template: `
     <div class="commit-list" [style.background-color]="getBackgroundColor()" [style.min-height]="'100vh'">
-      <div *ngFor="let commit of commits" 
+      <!-- Pagination Info -->
+      <div class="pagination-info" 
+           [style.color]="getColor('text', '#6b7280')"
+           [style.margin-bottom]="'1rem'">
+        <span>Showing {{ startIndex + 1 }}-{{ endIndex }} of {{ commits.length }} commits</span>
+        <div class="page-size-controls">
+          <label [style.margin-right]="'0.5rem'">Page size:</label>
+          <select [value]="pageSize" 
+                  (change)="onPageSizeChange($event)"
+                  [style.background-color]="getColor('background', 'white')"
+                  [style.color]="getColor('text', '#111827')"
+                  [style.border-color]="getColor('border', '#d1d5db')"
+                  [style.padding]="'0.25rem 0.5rem'"
+                  [style.border-radius]="'0.25rem'"
+                  [style.font-size]="'0.875rem'">
+            <option value="10">10</option>
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Commit Items -->
+      <div *ngFor="let commit of paginatedCommits" 
            class="commit-item"
            [style.background-color]="getColor('background', 'white')"
            [style.border-color]="getColor('border', '#e5e7eb')"
@@ -42,6 +66,37 @@ import { ColorPalette } from '../../models/color-palette.models';
             </button>
           </div>
         </div>
+      </div>
+      
+      <!-- Pagination Controls -->
+      <div class="pagination-controls" 
+           [style.margin-top]="'2rem'"
+           [style.display]="'flex'"
+           [style.justify-content]="'center'"
+           [style.align-items]="'center'"
+           [style.gap]="'1rem'">
+        
+        <!-- Previous Page -->
+        <button class="pagination-btn"
+                [disabled]="currentPage === 1"
+                (click)="goToPage(currentPage - 1)">
+          ← Previous
+        </button>
+        
+        <!-- Page Info -->
+        <div class="page-info">
+          <span>Page</span>
+          <span class="current-page">{{ currentPage }}</span>
+          <span>of</span>
+          <span class="total-pages">{{ totalPages }}</span>
+        </div>
+        
+        <!-- Next Page -->
+        <button class="pagination-btn"
+                [disabled]="currentPage === totalPages"
+                (click)="goToPage(currentPage + 1)">
+          Next →
+        </button>
       </div>
       
       <!-- No results message -->
@@ -137,12 +192,70 @@ import { ColorPalette } from '../../models/color-palette.models';
 
     /* Remove hardcoded dark mode styles to let dynamic styling work */
     /* All styling is now handled by dynamic [style] bindings */
+    
+    .pagination-btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid #d1d5db;
+      border-radius: 0.375rem;
+      background-color: white;
+      color: #374151;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      min-width: 100px;
+      text-align: center;
+    }
+    
+    .pagination-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      background-color: #f9fafb;
+    }
+    
+    .pagination-btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+    
+    .pagination-btn:disabled {
+      background-color: #f3f4f6;
+      color: #9ca3af;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+    
+    .page-info {
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #374151;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    
+    .current-page {
+      color: #3b82f6;
+      font-weight: 600;
+    }
+    
+    .total-pages {
+      color: #6b7280;
+    }
   `]
 })
 export class CommitListComponent implements OnInit, OnDestroy {
   @Input() commits: Commit[] = [];
   @Input() colorPalette?: ColorPalette;
   @Output() commitClick = new EventEmitter<Commit>();
+  
+  // Pagination properties
+  @Input() currentPage: number = 1;
+  @Input() pageSize: number = 25;
+  @Input() totalCommits: number = 0;
+  @Input() totalPages: number = 1;
+  @Output() pageChange = new EventEmitter<number>();
+  @Output() pageSizeChange = new EventEmitter<number>();
   
   private observer?: MutationObserver;
 
@@ -158,6 +271,38 @@ export class CommitListComponent implements OnInit, OnDestroy {
 
   onCommitClick(commit: Commit) {
     this.commitClick.emit(commit);
+  }
+
+  // Pagination methods
+  get paginatedCommits(): Commit[] {
+    return this.commits;
+  }
+
+  get startIndex(): number {
+    return (this.currentPage - 1) * this.pageSize;
+  }
+
+  get endIndex(): number {
+    return Math.min(this.startIndex + this.pageSize, this.totalCommits);
+  }
+
+
+
+  goToPage(page: number) {
+    console.log('goToPage called with:', page);
+    console.log('Current page:', this.currentPage);
+    console.log('Total pages:', this.totalPages);
+    if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
+      console.log('Emitting pageChange event with page:', page);
+      this.pageChange.emit(page);
+    } else {
+      console.log('Page change rejected:', { page, currentPage: this.currentPage, totalPages: this.totalPages });
+    }
+  }
+
+  onPageSizeChange(event: any) {
+    const newPageSize = parseInt(event.target.value);
+    this.pageSizeChange.emit(newPageSize);
   }
 
   formatDate(dateString: string): string {

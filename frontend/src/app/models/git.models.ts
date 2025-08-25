@@ -29,6 +29,18 @@ export interface GitOptions {
   since?: string;
   author?: string;
   limit?: number;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface PaginatedCommits {
+  commits: Commit[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
 }
 
 export interface CommitNode {

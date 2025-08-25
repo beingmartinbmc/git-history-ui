@@ -47,15 +47,16 @@ describe('GitService', () => {
 
       const commits = await gitService.getCommits();
       
-      expect(Array.isArray(commits)).toBe(true);
-      expect(commits.length).toBeGreaterThan(0);
-      expect(commits[0]).toHaveProperty('hash');
-      expect(commits[0]).toHaveProperty('author');
-      expect(commits[0]).toHaveProperty('date');
-      expect(commits[0]).toHaveProperty('message');
+      expect(commits).toHaveProperty('commits');
+      expect(Array.isArray(commits.commits)).toBe(true);
+      expect(commits.commits.length).toBeGreaterThan(0);
+      expect(commits.commits[0]).toHaveProperty('hash');
+      expect(commits.commits[0]).toHaveProperty('author');
+      expect(commits.commits[0]).toHaveProperty('date');
+      expect(commits.commits[0]).toHaveProperty('message');
     });
 
-    it('should respect the limit parameter', async () => {
+    it('should respect the pageSize parameter', async () => {
       const mockCommits = Array(3).fill(null).map((_, i) => ({
         hash: `hash${i}`,
         date: '2024-01-01',
@@ -73,10 +74,11 @@ describe('GitService', () => {
 
       mockGit.log.mockResolvedValue({ all: mockCommits });
 
-      const commits = await gitService.getCommits({ limit: 3 });
+      const result = await gitService.getCommits({ pageSize: 3 });
       
-      // The GitService should respect the limit parameter
-      expect(commits.length).toBe(3);
+      // The GitService should respect the pageSize parameter
+      expect(result.commits.length).toBe(3);
+      expect(result.pageSize).toBe(3);
     });
 
     it('should handle git log errors', async () => {
@@ -88,10 +90,12 @@ describe('GitService', () => {
     it('should handle empty commit list', async () => {
       mockGit.log.mockResolvedValue({ all: [] });
 
-      const commits = await gitService.getCommits();
+      const result = await gitService.getCommits();
       
-      expect(Array.isArray(commits)).toBe(true);
-      expect(commits.length).toBe(0);
+      expect(result).toHaveProperty('commits');
+      expect(Array.isArray(result.commits)).toBe(true);
+      expect(result.commits.length).toBe(0);
+      expect(result.total).toBe(0);
     });
 
     it('should handle file filter option', async () => {
@@ -114,10 +118,11 @@ describe('GitService', () => {
 
       mockGit.log.mockResolvedValue({ all: mockCommits });
 
-      const commits = await gitService.getCommits({ file: 'src/app.js' });
+      const result = await gitService.getCommits({ file: 'src/app.js' });
       
-      expect(Array.isArray(commits)).toBe(true);
-      expect(commits.length).toBeGreaterThan(0);
+      expect(result).toHaveProperty('commits');
+      expect(Array.isArray(result.commits)).toBe(true);
+      expect(result.commits.length).toBeGreaterThan(0);
     });
 
     it('should handle since filter option', async () => {
@@ -140,10 +145,11 @@ describe('GitService', () => {
 
       mockGit.log.mockResolvedValue({ all: mockCommits });
 
-      const commits = await gitService.getCommits({ since: 'v1.0.0' });
+      const result = await gitService.getCommits({ since: 'v1.0.0' });
       
-      expect(Array.isArray(commits)).toBe(true);
-      expect(commits.length).toBeGreaterThan(0);
+      expect(result).toHaveProperty('commits');
+      expect(Array.isArray(result.commits)).toBe(true);
+      expect(result.commits.length).toBeGreaterThan(0);
     });
 
     it('should handle author filter option', async () => {
@@ -169,10 +175,11 @@ describe('GitService', () => {
       mockGit.branch.mockResolvedValue({ all: ['main'] });
       mockGit.raw.mockResolvedValue('');
 
-      const commits = await gitService.getCommits({ author: 'Test Author' });
+      const result = await gitService.getCommits({ author: 'Test Author' });
       
-      expect(Array.isArray(commits)).toBe(true);
-      expect(commits.length).toBeGreaterThan(0);
+      expect(result).toHaveProperty('commits');
+      expect(Array.isArray(result.commits)).toBe(true);
+      expect(result.commits.length).toBeGreaterThan(0);
     });
 
     it('should handle private method errors gracefully', async () => {
@@ -198,13 +205,14 @@ describe('GitService', () => {
       mockGit.branch.mockRejectedValue(new Error('Branch error'));
       mockGit.raw.mockRejectedValue(new Error('Tag error'));
 
-      const commits = await gitService.getCommits();
+      const result = await gitService.getCommits();
       
-      expect(Array.isArray(commits)).toBe(true);
-      expect(commits.length).toBeGreaterThan(0);
-      expect(commits[0].files).toEqual([]);
-      expect(commits[0].branches).toEqual([]);
-      expect(commits[0].tags).toEqual([]);
+      expect(result).toHaveProperty('commits');
+      expect(Array.isArray(result.commits)).toBe(true);
+      expect(result.commits.length).toBeGreaterThan(0);
+      expect(result.commits[0].files).toEqual([]);
+      expect(result.commits[0].branches).toEqual([]);
+      expect(result.commits[0].tags).toEqual([]);
     });
 
     it('should handle non-Error exceptions', async () => {
