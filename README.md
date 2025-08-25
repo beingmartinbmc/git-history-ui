@@ -6,7 +6,7 @@ A beautiful, modern web UI for visualizing git history with interactive commit g
 
 ```bash
 # Run directly with npx (no installation needed)
-npx git-history-ui
+npx git-history-ui@latest
 ```
 
 That's it! The application will start on `http://localhost:3000` and open your browser automatically.
@@ -25,22 +25,22 @@ That's it! The application will start on `http://localhost:3000` and open your b
 ### CLI Options
 ```bash
 # Custom port
-npx git-history-ui --port 8080
+npx git-history-ui@latest --port 8080
 
 # Filter by specific file
-npx git-history-ui --file src/app.js
+npx git-history-ui@latest --file src/app.js
 
 # Filter by author
-npx git-history-ui --author "your-name"
+npx git-history-ui@latest --author "your-name"
 
 # Filter by date range
-npx git-history-ui --since 2024-01-01
+npx git-history-ui@latest --since 2024-01-01
 
 # Don't auto-open browser
-npx git-history-ui --no-open
+npx git-history-ui@latest --no-open
 
 # Show help
-npx git-history-ui --help
+npx git-history-ui@latest --help
 ```
 
 ## 🏭 Production
