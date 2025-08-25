@@ -20,17 +20,25 @@ export async function startServer(
 ) {
   const app = express();
   const server = createServer(app);
+  
+  // CORS configuration
+  const corsOptions = {
+    origin: process.env.NODE_ENV === 'production' 
+      ? ['http://localhost:4200', 'http://localhost:3000', 'http://127.0.0.1:4200', 'http://127.0.0.1:3000'] 
+      : true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  };
+
   const io = new Server(server, {
-    cors: {
-      origin: "*",
-      methods: ["GET", "POST"]
-    }
+    cors: corsOptions
   });
 
   const gitService = new GitService();
 
   // Middleware
-  app.use(cors());
+  app.use(cors(corsOptions));
   app.use(express.json());
   
   // Serve Angular build files
