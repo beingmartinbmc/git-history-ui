@@ -41,11 +41,17 @@ export async function startServer(
   app.use(cors(corsOptions));
   app.use(express.json());
   
-  // Serve Angular build files
-  app.use(express.static(path.join(__dirname, '../../frontend/dist/frontend/browser')));
+  // Check if Angular build exists, otherwise use public folder
+  const angularBuildPath = path.join(__dirname, '../../frontend/dist/frontend/browser');
+  const publicPath = path.join(__dirname, '../../public');
   
-  // Serve public folder as fallback
-  app.use(express.static(path.join(__dirname, '../../public')));
+  if (require('fs').existsSync(angularBuildPath)) {
+    // Serve Angular build files
+    app.use(express.static(angularBuildPath));
+  } else {
+    // Serve public folder as fallback
+    app.use(express.static(publicPath));
+  }
 
   // API Routes
   app.get('/api/commits', async (req, res) => {
@@ -119,7 +125,14 @@ export async function startServer(
 
   // Serve the main HTML file for Angular routing
   app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../frontend/dist/frontend/browser/index.html'));
+    const angularIndexPath = path.join(__dirname, '../../frontend/dist/frontend/browser/index.html');
+    const publicIndexPath = path.join(__dirname, '../../public/index.html');
+    
+    if (require('fs').existsSync(angularIndexPath)) {
+      res.sendFile(angularIndexPath);
+    } else {
+      res.sendFile(publicIndexPath);
+    }
   });
 
   // Socket.IO for real-time updates

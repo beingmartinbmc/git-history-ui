@@ -1,11 +1,16 @@
 {
   "name": "git-history-ui",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Beautiful git history visualization in your browser",
   "main": "dist/cli.js",
   "bin": {
     "git-history-ui": "dist/cli.js"
   },
+  "files": [
+    "dist/**/*",
+    "frontend/dist/**/*",
+    "public/**/*"
+  ],
   "scripts": {
     "build": "npm run build:backend && npm run build:frontend",
     "build:backend": "tsc -p tsconfig.json",
