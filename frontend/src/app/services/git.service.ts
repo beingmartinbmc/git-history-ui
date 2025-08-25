@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Commit, DiffFile, BlameLine, GitOptions } from '../models/git.models';
+import { Commit, DiffFile, BlameLine, GitOptions, PaginatedCommits } from '../models/git.models';
 
 @Injectable({
   providedIn: 'root'
@@ -11,14 +11,15 @@ export class GitService {
 
   constructor(private http: HttpClient) { }
 
-  getCommits(options: GitOptions = {}): Observable<Commit[]> {
+  getCommits(options: GitOptions = {}): Observable<PaginatedCommits> {
     const params = new URLSearchParams();
     if (options.file) params.set('file', options.file);
     if (options.since) params.set('since', options.since);
     if (options.author) params.set('author', options.author);
-    if (options.limit) params.set('limit', options.limit.toString());
+    if (options.page) params.set('page', options.page.toString());
+    if (options.pageSize) params.set('pageSize', options.pageSize.toString());
 
-    return this.http.get<Commit[]>(`${this.apiUrl}/commits?${params.toString()}`);
+    return this.http.get<PaginatedCommits>(`${this.apiUrl}/commits?${params.toString()}`);
   }
 
   getCommit(hash: string): Observable<Commit> {

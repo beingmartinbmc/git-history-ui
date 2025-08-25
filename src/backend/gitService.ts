@@ -32,6 +32,18 @@ export interface GitOptions {
   since?: string;
   author?: string;
   limit?: number;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface PaginatedCommits {
+  commits: Commit[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
 }
 
 export class GitService {
@@ -41,35 +53,74 @@ export class GitService {
     this.git = simpleGit();
   }
 
-  async getCommits(options: GitOptions = {}): Promise<Commit[]> {
+  async getCommits(options: GitOptions = {}): Promise<PaginatedCommits> {
     try {
-      const logOptions = {
-        maxCount: options.limit || 100
+      const page = options.page || 1;
+      const pageSize = options.pageSize || 25;
+      const skip = (page - 1) * pageSize;
+      
+      // Get total count first (without limit)
+      const countOptions = {
+        maxCount: 0 // Get all commits for counting
       };
 
-      let log: LogResult<DefaultLogFields>;
+      let totalLog: LogResult<DefaultLogFields>;
 
       if (options.file) {
-        log = await this.git.log({
-          ...logOptions,
+        totalLog = await this.git.log({
+          ...countOptions,
           file: options.file
         });
       } else if (options.since) {
-        log = await this.git.log({
-          ...logOptions,
+        totalLog = await this.git.log({
+          ...countOptions,
           from: options.since
         });
       } else if (options.author) {
-        log = await this.git.log({
-          ...logOptions,
+        totalLog = await this.git.log({
+          ...countOptions,
           author: options.author
         });
       } else {
-        log = await this.git.log(logOptions);
+        totalLog = await this.git.log(countOptions);
       }
 
+      const total = totalLog.all.length;
+      const totalPages = Math.ceil(total / pageSize);
+
+      // Get paginated commits
+      // For pagination, we need to get all commits and then slice them
+      // since simple-git doesn't support skip parameter properly
+      const allLogOptions = {
+        maxCount: 0 // Get all commits
+      };
+
+      let allLog: LogResult<DefaultLogFields>;
+
+      if (options.file) {
+        allLog = await this.git.log({
+          ...allLogOptions,
+          file: options.file
+        });
+      } else if (options.since) {
+        allLog = await this.git.log({
+          ...allLogOptions,
+          from: options.since
+        });
+      } else if (options.author) {
+        allLog = await this.git.log({
+          ...allLogOptions,
+          author: options.author
+        });
+      } else {
+        allLog = await this.git.log(allLogOptions);
+      }
+
+      // Apply pagination manually
+      const paginatedCommits = allLog.all.slice(skip, skip + pageSize);
+
       const commits: Commit[] = await Promise.all(
-        log.all.map(async (commit) => {
+        paginatedCommits.map(async (commit) => {
           const [branches, tags] = await Promise.all([
             this.getBranchesForCommit(commit.hash),
             this.getTagsForCommit(commit.hash)
@@ -88,7 +139,15 @@ export class GitService {
         })
       );
 
-      return commits;
+      return {
+        commits,
+        total,
+        page,
+        pageSize,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrevious: page > 1
+      };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Failed to get commits: ${errorMessage}`);

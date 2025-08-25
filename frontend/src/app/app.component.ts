@@ -128,7 +128,13 @@ import { ColorPaletteId, COLOR_PALETTES, DARK_COLOR_PALETTES } from './models/co
             <app-commit-list 
               [commits]="filteredCommits" 
               [colorPalette]="getCurrentPalette()"
-              (commitClick)="showCommitDetails($event)">
+              [currentPage]="currentPage"
+              [pageSize]="pageSize"
+              [totalCommits]="totalCommits"
+              [totalPages]="totalPages"
+              (commitClick)="showCommitDetails($event)"
+              (pageChange)="onPageChange($event)"
+              (pageSizeChange)="onPageSizeChange($event)">
             </app-commit-list>
           </div>
         </div>
@@ -389,6 +395,14 @@ export class AppComponent implements OnInit {
   authors: string[] = [];
   tags: string[] = [];
   
+  // Pagination properties
+  currentPage = 1;
+  pageSize = 25;
+  totalCommits = 0;
+  totalPages = 1;
+  hasNext = false;
+  hasPrevious = false;
+  
   currentView: 'list' | 'graph' = 'list';
   darkMode = false;
   selectedColorPalette: ColorPaletteId = 'default';
@@ -417,13 +431,34 @@ export class AppComponent implements OnInit {
     this.checkDarkMode();
   }
 
-  loadCommits() {
+  loadCommits(page: number = 1) {
     this.loading = true;
-    this.gitService.getCommits().subscribe({
-      next: (commits) => {
-        this.commits = commits;
-        this.filteredCommits = commits;
-        this.authors = [...new Set(commits.map(c => c.author))];
+    this.currentPage = page;
+    
+    const options: GitOptions = {
+      page: page,
+      pageSize: this.pageSize
+    };
+    
+    // Add filters if they exist
+    if (this.selectedAuthor) options.author = this.selectedAuthor;
+    if (this.selectedSince) options.since = this.selectedSince;
+    if (this.fileFilter) options.file = this.fileFilter;
+    // Note: Search query will need to be handled server-side if we want to implement it
+
+    this.gitService.getCommits(options).subscribe({
+      next: (result) => {
+        this.commits = result.commits;
+        this.filteredCommits = result.commits;
+        this.totalCommits = result.total;
+        this.totalPages = result.totalPages;
+        this.hasNext = result.hasNext;
+        this.hasPrevious = result.hasPrevious;
+        this.currentPage = result.page;
+        this.pageSize = result.pageSize;
+        
+        // Update authors list (this might need to be loaded separately for all authors)
+        this.authors = [...new Set(result.commits.map(c => c.author))];
         this.loading = false;
       },
       error: (error) => {
@@ -431,6 +466,15 @@ export class AppComponent implements OnInit {
         this.loading = false;
       }
     });
+  }
+
+  onPageChange(page: number) {
+    this.loadCommits(page);
+  }
+
+  onPageSizeChange(pageSize: number) {
+    this.pageSize = pageSize;
+    this.loadCommits(1); // Reset to first page when changing page size
   }
 
   loadTags() {
@@ -500,55 +544,21 @@ export class AppComponent implements OnInit {
   }
 
   onSearch() {
-    this.applyFilters();
+    this.loadCommits(1); // Reset to first page when searching
   }
 
   onAuthorFilter() {
-    this.applyFilters();
+    this.loadCommits(1); // Reset to first page when filtering
   }
 
   onSinceFilter() {
-    this.applyFilters();
+    this.loadCommits(1); // Reset to first page when filtering
     console.log('Date picker dark mode:', this.darkMode);
     console.log('Document dark class:', document.documentElement.classList.contains('dark'));
   }
 
-
-
   onFileFilter() {
-    this.applyFilters();
-  }
-
-  applyFilters() {
-    let filtered = this.commits;
-
-    if (this.searchQuery) {
-      const query = this.searchQuery.toLowerCase();
-      filtered = filtered.filter(commit => 
-        commit.message.toLowerCase().includes(query) ||
-        commit.author.toLowerCase().includes(query) ||
-        commit.hash.toLowerCase().includes(query)
-      );
-    }
-
-    if (this.selectedAuthor) {
-      filtered = filtered.filter(commit => commit.author === this.selectedAuthor);
-    }
-
-    if (this.selectedSince) {
-      const sinceDate = new Date(this.selectedSince);
-      if (!isNaN(sinceDate.getTime())) {
-        filtered = filtered.filter(commit => new Date(commit.date) >= sinceDate);
-      }
-    }
-
-    if (this.fileFilter) {
-      filtered = filtered.filter(commit => 
-        commit.files.some(f => f.toLowerCase().includes(this.fileFilter.toLowerCase()))
-      );
-    }
-
-    this.filteredCommits = filtered;
+    this.loadCommits(1); // Reset to first page when filtering
   }
 
   showCommitDetails(commit: Commit) {

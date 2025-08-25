@@ -56,14 +56,15 @@ export async function startServer(
   // API Routes
   app.get('/api/commits', async (req, res) => {
     try {
-      const { file, since, author, limit = '100' } = req.query;
-      const commits = await gitService.getCommits({
+      const { file, since, author, page = '1', pageSize = '25' } = req.query;
+      const result = await gitService.getCommits({
         file: file as string,
         since: since as string,
         author: author as string,
-        limit: parseInt(limit as string)
+        page: parseInt(page as string),
+        pageSize: parseInt(pageSize as string)
       });
-      res.json(commits);
+      res.json(result);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       res.status(500).json({ error: errorMessage });
