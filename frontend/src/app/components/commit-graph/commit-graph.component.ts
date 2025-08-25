@@ -10,6 +10,31 @@ import { ColorPalette } from '../../models/color-palette.models';
   imports: [CommonModule],
   template: `
     <div class="graph-container">
+      <!-- Zoom Controls -->
+      <div class="zoom-controls">
+        <button class="zoom-btn" (click)="zoomIn()" title="Zoom In (+ or =)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+          </svg>
+        </button>
+        <button class="zoom-btn" (click)="zoomOut()" title="Zoom Out (-)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 13H5v-2h14v2z"/>
+          </svg>
+        </button>
+        <button class="zoom-btn" (click)="resetZoom()" title="Reset Zoom (0)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
+          </svg>
+        </button>
+        <span class="zoom-level" title="Current zoom level">{{ (zoomLevel * 100).toFixed(0) }}%</span>
+      </div>
+      
+      <!-- Zoom Instructions -->
+      <div class="zoom-instructions">
+        <span>Use mouse wheel to zoom • Drag to pan • Click commits for details</span>
+      </div>
+      
       <svg #commitGraph width="100%" height="600"></svg>
     </div>
   `,
@@ -20,6 +45,67 @@ import { ColorPalette } from '../../models/color-palette.models';
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
       padding: 1.5rem;
       transition: background-color 0.2s ease;
+      position: relative;
+    }
+
+    .zoom-controls {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      z-index: 10;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 0.5rem;
+      border-radius: 0.375rem;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      backdrop-filter: blur(4px);
+    }
+
+    .zoom-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      border: 1px solid #d1d5db;
+      border-radius: 0.25rem;
+      background-color: white;
+      color: #374151;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .zoom-btn:hover {
+      background-color: #f3f4f6;
+      border-color: #9ca3af;
+    }
+
+    .zoom-btn:active {
+      background-color: #e5e7eb;
+    }
+
+    .zoom-level {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: #374151;
+      min-width: 3rem;
+      text-align: center;
+    }
+
+    .zoom-instructions {
+      position: absolute;
+      bottom: 1rem;
+      left: 1rem;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.375rem;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      backdrop-filter: blur(4px);
+      font-size: 0.75rem;
+      color: #6b7280;
+      z-index: 10;
     }
 
     /* Dark mode styles */
@@ -27,9 +113,57 @@ import { ColorPalette } from '../../models/color-palette.models';
       background-color: #2d2d2d;
     }
 
+    .dark .zoom-controls {
+      background-color: rgba(45, 45, 45, 0.9);
+      border: 1px solid #404040;
+    }
+
+    .dark .zoom-btn {
+      background-color: #404040;
+      border-color: #555;
+      color: #e0e0e0;
+    }
+
+    .dark .zoom-btn:hover {
+      background-color: #555;
+      border-color: #666;
+    }
+
+    .dark .zoom-btn:active {
+      background-color: #666;
+    }
+
+    .dark .zoom-level {
+      color: #e0e0e0;
+    }
+
+    .dark .zoom-instructions {
+      background-color: rgba(45, 45, 45, 0.9);
+      color: #9ca3af;
+      border: 1px solid #404040;
+    }
+
     /* SVG dark mode support */
     .dark svg {
       background-color: transparent;
+    }
+
+    /* Zoom behavior styles */
+    .commit-node {
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .commit-node:hover {
+      transform: scale(1.1);
+    }
+
+    .commit-node circle {
+      transition: all 0.2s ease;
+    }
+
+    .commit-node:hover circle {
+      stroke-width: 3px;
     }
   `]
 })
@@ -41,11 +175,14 @@ export class CommitGraphComponent implements AfterViewInit, OnChanges, OnDestroy
 
   private svg: any;
   private g: any;
+  private zoom: any;
   private observer: MutationObserver | null = null;
+  zoomLevel: number = 1;
 
   ngAfterViewInit() {
     this.initializeGraph();
     this.setupDarkModeObserver();
+    this.setupKeyboardShortcuts();
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -58,11 +195,67 @@ export class CommitGraphComponent implements AfterViewInit, OnChanges, OnDestroy
     if (this.observer) {
       this.observer.disconnect();
     }
+    // Remove keyboard event listeners
+    document.removeEventListener('keydown', this.handleKeyDown);
+  }
+
+  // Zoom control methods
+  zoomIn() {
+    this.zoom.scaleBy(this.svg.transition().duration(300), 1.3);
+  }
+
+  zoomOut() {
+    this.zoom.scaleBy(this.svg.transition().duration(300), 1 / 1.3);
+  }
+
+  resetZoom() {
+    this.svg.transition().duration(300).call(
+      this.zoom.transform,
+      d3.zoomIdentity
+    );
+  }
+
+  private setupKeyboardShortcuts() {
+    this.handleKeyDown = this.handleKeyDown.bind(this);
+    document.addEventListener('keydown', this.handleKeyDown);
+  }
+
+  private handleKeyDown(event: KeyboardEvent) {
+    // Only handle shortcuts when the graph is focused or when no input is focused
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+
+    switch (event.key) {
+      case '+':
+      case '=':
+        event.preventDefault();
+        this.zoomIn();
+        break;
+      case '-':
+        event.preventDefault();
+        this.zoomOut();
+        break;
+      case '0':
+        event.preventDefault();
+        this.resetZoom();
+        break;
+    }
   }
 
   private initializeGraph() {
     this.svg = d3.select(this.svgElement.nativeElement);
     this.g = this.svg.append('g');
+    
+    // Initialize zoom behavior
+    this.zoom = d3.zoom()
+      .scaleExtent([0.1, 5]) // Min 10%, Max 500%
+      .on('zoom', (event) => {
+        this.zoomLevel = event.transform.k;
+        this.g.attr('transform', event.transform);
+      });
+
+    this.svg.call(this.zoom);
     this.renderGraph();
   }
 
