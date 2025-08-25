@@ -42,7 +42,7 @@ export async function startServer(
   app.use(express.json());
   
   // Check if Angular build exists, otherwise use public folder
-  const angularBuildPath = path.join(__dirname, '../../frontend/dist/frontend/browser');
+  const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
   
   if (require('fs').existsSync(angularBuildPath)) {
@@ -125,7 +125,7 @@ export async function startServer(
 
   // Serve the main HTML file for Angular routing
   app.get('*', (req, res) => {
-    const angularIndexPath = path.join(__dirname, '../../frontend/dist/frontend/browser/index.html');
+    const angularIndexPath = path.join(__dirname, '../../build/frontend/index.html');
     const publicIndexPath = path.join(__dirname, '../../public/index.html');
     
     if (require('fs').existsSync(angularIndexPath)) {

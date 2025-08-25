@@ -10,7 +10,7 @@ coverage
 .coverage
 .cache
 dist
-frontend/dist
+!frontend/dist
 frontend/node_modules
 src/__tests__
 *.log

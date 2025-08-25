@@ -1,6 +1,6 @@
 {
   "name": "git-history-ui",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Beautiful git history visualization in your browser",
   "main": "dist/cli.js",
   "bin": {
@@ -8,11 +8,11 @@
   },
   "files": [
     "dist/**/*",
-    "frontend/dist/**/*",
+    "build/**/*",
     "public/**/*"
   ],
   "scripts": {
-    "build": "npm run build:backend && npm run build:frontend",
+    "build": "npm run build:backend && npm run build:frontend && npm run copy-frontend",
     "build:backend": "tsc -p tsconfig.json",
     "build:frontend": "cd frontend && ng build --configuration production",
     "build:production": "NODE_ENV=production npm run build",
@@ -25,6 +25,7 @@
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "lint": "eslint src/**/*.ts",
+    "copy-frontend": "mkdir -p build/frontend && cp -r frontend/dist/frontend/browser/* build/frontend/",
     "prepare": "npm run build"
   },
   "keywords": [
