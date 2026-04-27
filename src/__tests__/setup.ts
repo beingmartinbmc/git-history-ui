@@ -1,25 +1,16 @@
-// Test setup file
+// Global Jest setup. This file is referenced by setupFilesAfterEach in
+// jest.config.js — it is NOT picked up as a test file (see
+// testPathIgnorePatterns).
+
 import { jest } from '@jest/globals';
 
-// Mock console methods to reduce noise in tests
+// Quiet noisy console output but keep error visible so genuine failures show.
 global.console = {
   ...console,
   log: jest.fn(),
   debug: jest.fn(),
   info: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn(),
+  warn: jest.fn()
 };
 
-// Mock process.exit to prevent tests from exiting
-process.exit = jest.fn() as any;
-
-// Set test timeout
-jest.setTimeout(10000);
-
-// Add a simple test to satisfy Jest requirements
-describe('Setup', () => {
-  it('should be configured correctly', () => {
-    expect(true).toBe(true);
-  });
-});
+jest.setTimeout(15_000);

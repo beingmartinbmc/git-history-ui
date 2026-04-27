@@ -2,400 +2,311 @@
 @tailwind components;
 @tailwind utilities;
 
-/* You can add global styles to this file, and also import other style files */
+/* ------- Design tokens (light) ------- */
+:root {
+  color-scheme: light;
+  --bg-app: #f7f8fa;
+  --bg-surface: #ffffff;
+  --bg-surface-2: #f3f4f6;
+  --bg-elevated: #ffffff;
+  --bg-hover: #eef2ff;
+  --bg-selected: #e0e7ff;
+  --bg-overlay: rgba(15, 23, 42, 0.45);
 
-/* Modern CSS Reset */
-* {
-  margin: 0;
-  padding: 0;
+  --fg-primary: #0f172a;
+  --fg-secondary: #475569;
+  --fg-muted: #64748b;
+  --fg-subtle: #94a3b8;
+  --fg-inverted: #ffffff;
+
+  --border-soft: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --border-focus: #6366f1;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef2ff;
+  --accent-fg: #ffffff;
+
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+
+  --diff-add-bg: #dcfce7;
+  --diff-add-fg: #14532d;
+  --diff-add-gutter: #86efac;
+  --diff-del-bg: #fee2e2;
+  --diff-del-fg: #7f1d1d;
+  --diff-del-gutter: #fca5a5;
+  --diff-hunk-bg: #f1f5f9;
+  --diff-hunk-fg: #475569;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Mono',
+    'Liberation Mono', 'Courier New', monospace;
+}
+
+/* ------- Design tokens (dark) ------- */
+:root.dark {
+  color-scheme: dark;
+  --bg-app: #0b1020;
+  --bg-surface: #111827;
+  --bg-surface-2: #0f172a;
+  --bg-elevated: #1f2937;
+  --bg-hover: #1e293b;
+  --bg-selected: #312e81;
+  --bg-overlay: rgba(2, 6, 23, 0.6);
+
+  --fg-primary: #f8fafc;
+  --fg-secondary: #cbd5e1;
+  --fg-muted: #94a3b8;
+  --fg-subtle: #64748b;
+  --fg-inverted: #0b1020;
+
+  --border-soft: #1f2937;
+  --border-strong: #334155;
+  --border-focus: #818cf8;
+
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-soft: #1e1b4b;
+  --accent-fg: #0b1020;
+
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+
+  --diff-add-bg: rgba(34, 197, 94, 0.16);
+  --diff-add-fg: #bbf7d0;
+  --diff-add-gutter: #166534;
+  --diff-del-bg: rgba(239, 68, 68, 0.18);
+  --diff-del-fg: #fecaca;
+  --diff-del-gutter: #7f1d1d;
+  --diff-hunk-bg: #1f2937;
+  --diff-hunk-fg: #cbd5e1;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* ------- Reset & base ------- */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-/* Base styles */
+html,
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  line-height: 1.6;
-  color: #333;
-  background-color: #f8f9fa;
+  height: 100%;
 }
 
-/* Dark mode support */
-@media (prefers-color-scheme: dark) {
-  body {
-    background-color: #1a1a1a;
-    color: #e0e0e0;
-  }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg-primary);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* Manual dark mode toggle */
-.dark {
-  background-color: #1a1a1a !important;
-  color: #e0e0e0 !important;
+::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
-.dark body {
-  background-color: #1a1a1a !important;
-  color: #e0e0e0 !important;
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.dark * {
-  border-color: #404040 !important;
+/* Focus visibility */
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
-.dark .app-container {
-  background-color: #1a1a1a;
-  color: #e0e0e0;
+button {
+  font-family: inherit;
 }
 
-.dark .header {
-  background-color: #2d2d2d;
-  border-bottom-color: #404040;
-}
-
-.dark .app-title {
-  color: #e0e0e0;
-}
-
-.dark .search-input {
-  background-color: #404040;
-  color: #e0e0e0;
-  border-color: #555;
-}
-
-.dark .search-input::placeholder {
-  color: #9ca3af;
-}
-
-.dark .filters {
-  background-color: #2d2d2d;
-  border-bottom-color: #404040;
-}
-
-.dark .filter-select,
-.dark .filter-input {
-  background-color: #404040;
-  color: #e0e0e0;
-  border-color: #555;
-}
-
-.dark .main-content {
-  background-color: #1a1a1a;
-}
-
-.dark .commit-item {
-  background-color: #2d2d2d;
-  border-color: #404040;
-}
-
-.dark .commit-hash {
-  color: #9ca3af;
-}
-
-.dark .commit-author {
-  color: #d1d5db;
-}
-
-.dark .commit-date {
-  color: #9ca3af;
-}
-
-.dark .commit-message {
-  color: #e0e0e0;
-}
-
-/* Date picker dark mode support */
-.dark input[type="date"] {
-  background-color: #404040 !important;
-  color: #e0e0e0 !important;
-  border-color: #555 !important;
-}
-
-.dark .date-picker {
-  background-color: #404040 !important;
-  color: #e0e0e0 !important;
-  border-color: #555 !important;
-}
-
-.dark .filter-input.date-picker {
-  background-color: #404040 !important;
-  color: #e0e0e0 !important;
-  border-color: #555 !important;
-}
-
-.dark input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) !important;
-}
-
-.dark input[type="date"]::-webkit-datetime-edit {
-  color: #e0e0e0 !important;
-}
-
-.dark input[type="date"]::-webkit-datetime-edit-fields-wrapper {
-  color: #e0e0e0 !important;
-}
-
-.dark input[type="date"]::-webkit-datetime-edit-text {
-  color: #e0e0e0 !important;
-}
-
-.dark input[type="date"]::-webkit-datetime-edit-month-field,
-.dark input[type="date"]::-webkit-datetime-edit-day-field,
-.dark input[type="date"]::-webkit-datetime-edit-year-field {
-  color: #e0e0e0 !important;
-}
-
-.dark .loading {
-  color: #e0e0e0;
-}
-
-/* Graph container dark mode */
-.dark .graph-container {
-  background-color: #2d2d2d !important;
-  color: #e0e0e0 !important;
-}
-
-/* SVG dark mode support */
-.dark svg {
-  background-color: transparent !important;
-}
-
-/* Modal dark mode support */
-.dark .modal-title,
-.dark .modal-header .modal-title,
-.dark .modal-container .modal-title {
-  color: #e0e0e0 !important;
-}
-
-/* Header dark mode support */
-.dark .header {
-  background-color: #2d2d2d !important;
-  border-bottom-color: #404040 !important;
-}
-
-.dark .app-title {
-  color: #e0e0e0 !important;
-}
-
-.dark .filters {
-  background-color: #2d2d2d !important;
-  border-bottom-color: #404040 !important;
-}
-
-/* Input placeholder dark mode */
-.dark input::placeholder {
-  color: #9ca3af !important;
-}
-
-.dark select {
-  color: #e0e0e0 !important;
-}
-
-/* Ensure all elements transition smoothly */
-* {
-  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-/* Specific transitions for form elements */
-input, select, button {
-  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-/* Additional dark mode styles for cards and other elements */
-.dark .card,
-.dark .commit-item,
-.dark .modal-container,
-.dark .diff-viewer {
-  background-color: #2d2d2d !important;
-  color: #e0e0e0 !important;
-  border-color: #404040 !important;
-}
-
-.dark .btn {
-  background-color: #404040 !important;
-  color: #e0e0e0 !important;
-  border-color: #555 !important;
-}
-
-.dark .btn:hover {
-  background-color: #555 !important;
-}
-
-.dark .btn-primary {
-  background-color: #3b82f6 !important;
-  color: white !important;
-}
-
-.dark .btn-primary:hover {
-  background-color: #2563eb !important;
-}
-
-.dark .btn-secondary {
-  background-color: #6b7280 !important;
-  color: white !important;
-}
-
-.dark .btn-secondary:hover {
-  background-color: #4b5563 !important;
-}
-
-.dark .file-item,
-.dark .diff-item {
-  background-color: #404040 !important;
-  border-color: #555 !important;
-}
-
-.dark .section-title {
-  color: #e0e0e0 !important;
-}
-
-.dark .commit-meta,
-.dark .commit-info {
-  color: #e0e0e0 !important;
-}
-
-.dark .commit-hash {
-  color: #9ca3af !important;
-}
-
-.dark .commit-author {
-  color: #d1d5db !important;
-}
-
-.dark .commit-date {
-  color: #9ca3af !important;
-}
-
-.dark .commit-message {
-  color: #e0e0e0 !important;
-}
-
-.dark .file-name,
-.dark .diff-file-name {
-  color: #d1d5db !important;
-}
-
-.dark .diff-stats {
-  color: #9ca3af !important;
-}
-
-/* Utility classes */
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 1rem;
-}
-
-.flex {
-  display: flex;
-}
-
-.flex-col {
-  flex-direction: column;
-}
-
-.items-center {
-  align-items: center;
-}
-
-.justify-between {
-  justify-content: space-between;
-}
-
-.space-x-4 > * + * {
-  margin-left: 1rem;
-}
-
-.space-y-4 > * + * {
-  margin-top: 1rem;
-}
-
-/* Button styles */
+/* Reusable primitives */
 .btn {
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 0.375rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.85rem;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  color: var(--fg-primary);
+  border: 1px solid var(--border-soft);
   cursor: pointer;
-  font-size: 0.875rem;
-  transition: all 0.2s;
-  margin-right: 0.5rem;
+  transition: background 120ms, border-color 120ms, color 120ms, transform 60ms;
 }
-
-.btn:last-child {
-  margin-right: 0;
+.btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
 }
-
-/* Button container spacing */
-.flex.items-center {
-  gap: 0.5rem;
+.btn:active {
+  transform: translateY(1px);
 }
-
 .btn-primary {
-  background-color: #3b82f6;
-  color: white;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
 }
-
 .btn-primary:hover {
-  background-color: #2563eb;
+  background: var(--accent-hover);
+}
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.btn-ghost:hover {
+  background: var(--bg-hover);
+}
+.btn-icon {
+  width: 32px;
+  padding: 0;
+  height: 32px;
 }
 
-.btn-secondary {
-  background-color: #6b7280;
-  color: white;
+.input,
+.select {
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  font-size: 13px;
+  outline: none;
+  min-height: 32px;
+}
+.input::placeholder {
+  color: var(--fg-subtle);
+}
+.input:focus,
+.select:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
 }
 
-.btn-secondary:hover {
-  background-color: #4b5563;
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
 }
 
-/* Card styles */
-.card {
-  background-color: white;
-  border-radius: 0.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  padding: 1.5rem;
+.divider {
+  height: 1px;
+  background: var(--border-soft);
 }
 
-.dark .card {
-  background-color: #2d2d2d;
-  color: #e0e0e0;
+/* Highlight.js theme overrides — colors driven by tokens */
+.hljs {
+  background: transparent;
+  color: var(--fg-primary);
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-meta-keyword,
+.hljs-doctag,
+.hljs-section,
+.hljs-name {
+  color: #c084fc;
+}
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-meta-keyword,
+.dark .hljs-doctag,
+.dark .hljs-section,
+.dark .hljs-name {
+  color: #d8b4fe;
+}
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+  color: #15803d;
+}
+.dark .hljs-string,
+.dark .hljs-attr,
+.dark .hljs-symbol,
+.dark .hljs-bullet,
+.dark .hljs-addition {
+  color: #86efac;
+}
+.hljs-number,
+.hljs-literal,
+.hljs-link {
+  color: #b45309;
+}
+.dark .hljs-number,
+.dark .hljs-literal,
+.dark .hljs-link {
+  color: #fcd34d;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--fg-subtle);
+  font-style: italic;
+}
+.hljs-title,
+.hljs-class .hljs-title,
+.hljs-type {
+  color: #1d4ed8;
+}
+.dark .hljs-title,
+.dark .hljs-class .hljs-title,
+.dark .hljs-type {
+  color: #93c5fd;
+}
+.hljs-deletion {
+  color: #b91c1c;
+}
+.dark .hljs-deletion {
+  color: #fca5a5;
 }
 
-/* Custom styles for git history UI */
-.commit-node {
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.commit-node:hover {
-  stroke-width: 3px;
-}
-
-.branch-line {
-  stroke-width: 2px;
-}
-
-.diff-line {
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.diff-line.added {
-  background-color: #dcfce7;
-  color: #166534;
-}
-
-.diff-line.removed {
-  background-color: #fee2e2;
-  color: #991b1b;
-}
-
-.dark .diff-line.added {
-  background-color: #14532d;
-  color: #bbf7d0;
-}
-
-.dark .diff-line.removed {
-  background-color: #7f1d1d;
-  color: #fecaca;
+/* CDK overlay backdrop */
+.cdk-overlay-dark-backdrop {
+  background: var(--bg-overlay);
+  backdrop-filter: blur(2px);
 }

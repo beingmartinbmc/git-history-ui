@@ -1,29 +1,51 @@
-# Use Node.js 18 Alpine for smaller image size
-FROM node:18-alpine
+# syntax=docker/dockerfile:1.7
 
-# Set working directory
+# ----- Build stage -------------------------------------------------------
+FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
-COPY frontend/package*.json ./frontend/
+# Native deps for any optional builds.
+RUN apk add --no-cache git python3 make g++
 
-# Install dependencies
-RUN npm ci --only=production && \
-    cd frontend && npm ci --only=production && cd ..
+# Backend deps (with dev for tsc)
+COPY package.json package-lock.json* ./
+RUN npm ci
 
-# Copy source code
-COPY . .
+# Frontend deps (with dev for ng build)
+COPY frontend/package.json frontend/package-lock.json* ./frontend/
+RUN npm ci --prefix frontend
 
-# Build the application
-RUN npm run build:production
+# Sources + build everything
+COPY tsconfig.json ./
+COPY src ./src
+COPY frontend ./frontend
+RUN npm run build:backend \
+ && npm run build:frontend \
+ && npm run copy-frontend \
+ && npm prune --omit=dev
 
-# Expose port
+# ----- Runtime stage -----------------------------------------------------
+FROM node:20-alpine AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOST=0.0.0.0
+
+# git is required at runtime; tini gives proper signal handling.
+RUN apk add --no-cache git tini
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/build ./build
+COPY --from=builder /app/public ./public
+COPY package.json ./
+
+USER node
 EXPOSE 3000
 
-# Set environment variables
-ENV NODE_ENV=production
-ENV PORT=3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1 || exit 1
 
-# Start the application
-CMD ["npm", "run", "start:production"]
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "dist/backend/server.js"]

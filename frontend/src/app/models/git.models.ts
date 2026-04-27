@@ -1,16 +1,24 @@
 export interface Commit {
   hash: string;
+  shortHash: string;
   author: string;
+  authorEmail: string;
   date: string;
   message: string;
-  files: string[];
+  subject: string;
+  body: string;
   parents: string[];
   branches: string[];
   tags: string[];
+  isMerge: boolean;
 }
+
+export type DiffStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'binary';
 
 export interface DiffFile {
   file: string;
+  oldFile?: string;
+  status: DiffStatus;
   additions: number;
   deletions: number;
   changes: string;
@@ -27,8 +35,9 @@ export interface BlameLine {
 export interface GitOptions {
   file?: string;
   since?: string;
+  until?: string;
   author?: string;
-  limit?: number;
+  search?: string;
   page?: number;
   pageSize?: number;
 }
@@ -41,11 +50,4 @@ export interface PaginatedCommits {
   totalPages: number;
   hasNext: boolean;
   hasPrevious: boolean;
-}
-
-export interface CommitNode {
-  id: string;
-  x: number;
-  y: number;
-  commit: Commit;
 }

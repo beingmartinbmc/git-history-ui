@@ -2,11 +2,15 @@ import { startServer } from './server';
 
 async function main() {
   try {
-    console.log('🚀 Starting Git History UI Development Server...');
-    await startServer(3000, 'localhost');
-    console.log('✅ Development server running at http://localhost:3000');
+    const { url, close } = await startServer(3000, 'localhost');
+    // eslint-disable-next-line no-console
+    console.log(`git-history-ui dev server running at ${url}`);
+    const shutdown = () => close().then(() => process.exit(0));
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   } catch (error) {
-    console.error('❌ Error starting development server:', error);
+    // eslint-disable-next-line no-console
+    console.error('Failed to start dev server:', error);
     process.exit(1);
   }
 }
