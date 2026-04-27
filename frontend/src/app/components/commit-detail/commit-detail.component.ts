@@ -1,327 +1,287 @@
-import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { Commit, DiffFile } from '../../models/git.models';
+import { CommonModule, DatePipe } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal
+} from '@angular/core';
+import { catchError, of, switchMap } from 'rxjs';
+import { toObservable, toSignal } from '@angular/core/rxjs-interop';
+import { DiffFile } from '../../models/git.models';
+import { GitService } from '../../services/git.service';
+import { UiStateService } from '../../services/ui-state.service';
+import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 
 @Component({
   selector: 'app-commit-detail',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, DatePipe, DiffViewerComponent],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="modal-overlay" (click)="onClose()">
-      <div class="modal-container" [class.dark]="isDarkMode" (click)="$event.stopPropagation()">
-        <div class="modal-header">
-          <h3 class="modal-title">Commit Details</h3>
-          <button (click)="onClose()" class="close-button">
-            <svg class="close-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-            </svg>
-          </button>
+    <ng-container *ngIf="commit() as c; else empty">
+      <header class="head">
+        <div class="row">
+          <span class="hash">{{ c.shortHash }}</span>
+          <span class="badges">
+            <span class="badge tag" *ngFor="let t of c.tags">{{ t }}</span>
+            <span class="badge branch" *ngFor="let b of c.branches">{{ b }}</span>
+            <span class="badge merge" *ngIf="c.isMerge">merge</span>
+          </span>
         </div>
-        
-        <div class="modal-content" *ngIf="commit">
-          <div class="commit-details">
-            <div class="commit-header">
-              <div class="commit-meta">
-                <span class="commit-hash">{{ commit.hash }}</span>
-                <span class="commit-author">by {{ commit.author }}</span>
-                <span class="commit-date">{{ formatDate(commit.date) }}</span>
-              </div>
-              <h3 class="commit-message">{{ commit.message }}</h3>
-            </div>
-            
-            <div class="commit-sections">
-              <div class="section">
-                <h4 class="section-title">Files Changed</h4>
-                <div class="file-list">
-                  <div *ngFor="let diffFile of diffFiles" class="file-item">
-                    <span class="file-name">{{ diffFile.file }}</span>
-                    <button class="btn btn-primary" (click)="onFileClick(diffFile.file)">
-                      View Diff
-                    </button>
-                  </div>
-                </div>
-              </div>
-              
-              <div class="section" *ngIf="diffFiles.length > 0">
-                <h4 class="section-title">Diff Summary</h4>
-                <div class="diff-summary">
-                  <div *ngFor="let file of diffFiles" class="diff-item">
-                    <div class="diff-file-name">{{ file.file }}</div>
-                    <div class="diff-stats">
-                      +{{ file.additions }} -{{ file.deletions }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+        <h2 class="subject">{{ c.subject }}</h2>
+        <div class="meta">
+          <span>{{ c.author }} &lt;{{ c.authorEmail }}&gt;</span>
+          <span class="dot">•</span>
+          <span>{{ c.date | date: 'medium' }}</span>
+        </div>
+        <pre class="body" *ngIf="c.body">{{ c.body }}</pre>
+      </header>
+
+      <div class="split">
+        <aside class="files">
+          <div class="files-header">
+            <span>Files</span>
+            <span class="count" *ngIf="files().length">{{ files().length }}</span>
           </div>
-        </div>
+          <div class="files-list">
+            <button *ngFor="let f of files(); trackBy: trackByFile"
+                    class="file"
+                    [class.selected]="f.file === activeFile()?.file"
+                    (click)="selectFile(f)">
+              <span class="status-dot" [attr.data-status]="f.status"></span>
+              <span class="path" [title]="f.file">{{ f.file }}</span>
+              <span class="counts">
+                <span class="add" *ngIf="f.additions">+{{ f.additions }}</span>
+                <span class="del" *ngIf="f.deletions">−{{ f.deletions }}</span>
+              </span>
+            </button>
+            <div class="files-empty" *ngIf="!files().length && !loading()">
+              No files changed.
+            </div>
+            <div class="files-empty" *ngIf="loading()">Loading…</div>
+          </div>
+        </aside>
+        <section class="diff">
+          <app-diff-viewer [fileInput]="activeFile()" />
+        </section>
       </div>
-    </div>
+    </ng-container>
+
+    <ng-template #empty>
+      <div class="placeholder">
+        <p class="title">No commit selected</p>
+        <p class="hint">
+          Pick a commit from the list, or press
+          <kbd class="kbd">⌘K</kbd> to open the command palette.
+        </p>
+      </div>
+    </ng-template>
   `,
   styles: [`
-    .modal-overlay {
-      position: fixed;
-      inset: 0;
-      background-color: rgba(0, 0, 0, 0.5);
-      z-index: 50;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 1rem;
-    }
-
-    .modal-container {
-      background-color: white;
-      border-radius: 0.5rem;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-      max-width: 64rem;
-      width: 100%;
-      max-height: 100vh;
-      overflow-y: auto;
-      transition: background-color 0.2s ease, color 0.2s ease;
-    }
-
-    .modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 1.5rem;
-      border-bottom: 1px solid #e5e7eb;
-      transition: border-bottom-color 0.2s ease;
-    }
-
-    .modal-title {
-      font-size: 1.125rem;
-      font-weight: 600;
-      color: #111827;
-      transition: color 0.2s ease;
-    }
-
-    /* Force dark mode styles with higher specificity */
-    .modal-container.dark .modal-title,
-    .dark .modal-container .modal-title,
-    .dark .modal-title,
-    .dark .modal-header .modal-title,
-    .modal-container.dark .modal-header .modal-title {
-      color: #e0e0e0 !important;
-    }
-
-    .close-button {
-      color: #6b7280;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 0.5rem;
-    }
-
-    .close-button:hover {
-      color: #374151;
-    }
-
-    .close-icon {
-      width: 1.5rem;
-      height: 1.5rem;
-    }
-
-    .modal-content {
-      padding: 1.5rem;
-    }
-
-    .commit-header {
-      border-bottom: 1px solid #e5e7eb;
-      padding-bottom: 1rem;
-      margin-bottom: 1rem;
-      transition: border-bottom-color 0.2s ease;
-    }
-
-    .commit-meta {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-bottom: 0.5rem;
-    }
-
-    .commit-hash {
-      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-      font-size: 0.875rem;
-      color: #6b7280;
-      transition: color 0.2s ease;
-    }
-
-    .commit-author {
-      font-size: 0.875rem;
-      color: #374151;
-      transition: color 0.2s ease;
-    }
-
-    .commit-date {
-      font-size: 0.875rem;
-      color: #6b7280;
-      transition: color 0.2s ease;
-    }
-
-    .commit-message {
-      font-size: 1.25rem;
-      font-weight: 600;
-      color: #111827;
-      transition: color 0.2s ease;
-    }
-
-    .commit-sections {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.5rem;
-    }
-
-    .section-title {
-      font-size: 1.125rem;
-      font-weight: 500;
-      color: #111827;
-      margin-bottom: 0.75rem;
-      transition: color 0.2s ease;
-    }
-
-    .file-list, .diff-summary {
+    :host {
       display: flex;
       flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      background: var(--bg-app);
+    }
+    .head {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--border-soft);
+      background: var(--bg-surface);
+    }
+    .row {
+      display: flex;
+      align-items: center;
       gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.4rem;
+    }
+    .hash {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--fg-muted);
+      padding: 2px 6px;
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 4px;
+    }
+    .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+    .badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 999px;
+    }
+    .badge.tag {
+      background: rgba(217, 119, 6, 0.15);
+      color: var(--warning);
+    }
+    .badge.branch {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .badge.merge {
+      background: rgba(139, 92, 246, 0.18);
+      color: #8b5cf6;
+    }
+    .subject {
+      font-size: 18px;
+      margin: 0 0 4px;
+      font-weight: 600;
+    }
+    .meta {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--fg-muted);
+    }
+    .meta .dot { opacity: 0.5; }
+    .body {
+      white-space: pre-wrap;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--fg-secondary);
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+      padding: 0.5rem 0.75rem;
+      margin-top: 0.5rem;
+      max-height: 160px;
+      overflow: auto;
     }
 
-    .file-item, .diff-item {
+    .split {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 0;
+    }
+    .files {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-soft);
+    }
+    .files-header {
       display: flex;
       justify-content: space-between;
+      padding: 0.5rem 0.85rem;
+      font-size: 12px;
+      color: var(--fg-muted);
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .count {
+      background: var(--bg-surface-2);
+      padding: 0 6px;
+      border-radius: 999px;
+      font-size: 11px;
+    }
+    .files-list { overflow: auto; flex: 1; min-height: 0; }
+    .file {
+      display: grid;
+      grid-template-columns: 10px 1fr auto;
+      gap: 0.5rem;
       align-items: center;
-      padding: 0.5rem;
-      background-color: #f9fafb;
-      border-radius: 0.25rem;
-      transition: background-color 0.2s ease;
+      width: 100%;
+      padding: 0.5rem 0.85rem;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+      border-bottom: 1px solid var(--border-soft);
+      font-size: 12px;
     }
+    .file:hover { background: var(--bg-hover); }
+    .file.selected { background: var(--bg-selected); }
+    .file .path {
+      font-family: var(--font-mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      direction: rtl;
+      text-align: left;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .status-dot[data-status='added'] { background: var(--success); }
+    .status-dot[data-status='deleted'] { background: var(--danger); }
+    .status-dot[data-status='renamed'],
+    .status-dot[data-status='copied'] { background: var(--warning); }
+    .status-dot[data-status='binary'] { background: var(--fg-muted); }
+    .counts { display: flex; gap: 6px; font-family: var(--font-mono); font-size: 11px; }
+    .counts .add { color: var(--success); }
+    .counts .del { color: var(--danger); }
+    .files-empty { padding: 1rem; color: var(--fg-muted); font-size: 12px; text-align: center; }
 
-    .file-name, .diff-file-name {
-      font-size: 0.875rem;
-      color: #374151;
-      transition: color 0.2s ease;
+    .diff { min-width: 0; }
+    .placeholder {
+      flex: 1;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: var(--fg-muted);
     }
-
-    .diff-stats {
-      font-size: 0.75rem;
-      color: #6b7280;
-      transition: color 0.2s ease;
-    }
-
-    /* Dark mode styles */
-    .dark .modal-container {
-      background-color: #2d2d2d !important;
-      color: #e0e0e0 !important;
-    }
-
-    .dark .modal-header {
-      border-color: #404040 !important;
-    }
-
-    .dark .modal-title {
-      color: #e0e0e0 !important;
-    }
-
-    .dark .close-button {
-      color: #9ca3af !important;
-    }
-
-    .dark .close-button:hover {
-      color: #d1d5db !important;
-    }
-
-    .dark .commit-header {
-      border-color: #404040 !important;
-    }
-
-    .dark .commit-hash {
-      color: #9ca3af !important;
-    }
-
-    .dark .commit-author {
-      color: #d1d5db !important;
-    }
-
-    .dark .commit-date {
-      color: #9ca3af !important;
-    }
-
-    .dark .commit-message {
-      color: #e0e0e0 !important;
-    }
-
-    .dark .section-title {
-      color: #e0e0e0 !important;
-    }
-
-    .dark .file-item,
-    .dark .diff-item {
-      background-color: #404040 !important;
-    }
-
-    .dark .file-name,
-    .dark .diff-file-name {
-      color: #d1d5db !important;
-    }
-
-    .dark .diff-stats {
-      color: #9ca3af !important;
-    }
-
-    @media (max-width: 768px) {
-      .commit-sections {
-        grid-template-columns: 1fr;
-      }
-    }
+    .placeholder .title { font-size: 16px; margin-bottom: 4px; color: var(--fg-secondary); }
+    .placeholder .hint { font-size: 13px; }
   `]
 })
-export class CommitDetailComponent implements OnInit {
-  @Input() commit: Commit | null = null;
-  @Input() diffFiles: DiffFile[] = [];
-  @Output() close = new EventEmitter<void>();
-  @Output() fileClick = new EventEmitter<string>();
+export class CommitDetailComponent {
+  private state = inject(UiStateService);
+  private git = inject(GitService);
 
-  isDarkMode = false;
+  commit = this.state.selected;
 
-  ngOnInit() {
-    this.checkDarkMode();
-    this.setupDarkModeObserver();
-  }
+  loading = signal(false);
 
-  private checkDarkMode() {
-    this.isDarkMode = document.documentElement.classList.contains('dark');
-  }
-
-  private setupDarkModeObserver() {
-    // Observe changes to the document element's class list
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-          this.checkDarkMode();
+  files = toSignal(
+    toObservable(this.commit).pipe(
+      switchMap((c) => {
+        if (!c) {
+          this.loading.set(false);
+          return of([] as DiffFile[]);
         }
-      });
+        this.loading.set(true);
+        return this.git.getDiff(c.hash).pipe(
+          catchError(() => of([] as DiffFile[]))
+        );
+      })
+    ),
+    { initialValue: [] as DiffFile[] }
+  );
+
+  activeFileIndex = signal(0);
+  activeFile = computed(() => {
+    const list = this.files();
+    if (!list.length) return null;
+    const idx = Math.min(this.activeFileIndex(), list.length - 1);
+    return list[idx];
+  });
+
+  constructor() {
+    effect(() => {
+      // reset selection when files list changes
+      void this.files();
+      this.activeFileIndex.set(0);
+      this.loading.set(false);
     });
-
-    // Start observing the document element for class changes
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class']
-    });
   }
 
-  onClose() {
-    this.close.emit();
+  trackByFile(_: number, f: DiffFile) {
+    return f.file;
   }
 
-  onFileClick(file: string) {
-    this.fileClick.emit(file);
-  }
-
-  formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+  selectFile(f: DiffFile) {
+    const idx = this.files().findIndex((x) => x.file === f.file);
+    if (idx >= 0) this.activeFileIndex.set(idx);
   }
 }

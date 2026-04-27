@@ -1,9 +1,12 @@
-import express from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
+import helmet from 'helmet';
+import compression from 'compression';
+import rateLimit from 'express-rate-limit';
+import { createServer, type Server as HttpServer } from 'http';
 import path from 'path';
-import { GitService } from './gitService';
+import fs from 'fs';
+import { GitService, NotARepositoryError } from './gitService';
 
 export interface ServerOptions {
   port?: number;
@@ -11,144 +14,216 @@ export interface ServerOptions {
   file?: string;
   since?: string;
   author?: string;
+  cwd?: string;
 }
 
+export interface BootResult {
+  server: HttpServer;
+  url: string;
+  close: () => Promise<void>;
+}
+
+const DEFAULT_PORT = 3000;
+const DEFAULT_HOST = 'localhost';
+
 export async function startServer(
-  port: number = 3000,
-  host: string = 'localhost',
+  port: number = DEFAULT_PORT,
+  host: string = DEFAULT_HOST,
   options: Partial<ServerOptions> = {}
-) {
+): Promise<BootResult> {
+  const cwd = options.cwd ?? process.cwd();
+
   const app = express();
-  const server = createServer(app);
-  
-  // CORS configuration
-  const corsOptions = {
-    origin: process.env.NODE_ENV === 'production' 
-      ? ['http://localhost:4200', 'http://localhost:3000', 'http://127.0.0.1:4200', 'http://127.0.0.1:3000'] 
-      : true,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-  };
+  app.disable('x-powered-by');
+  app.set('trust proxy', 'loopback');
 
-  const io = new Server(server, {
-    cors: corsOptions
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: 'same-origin' }
+    })
+  );
+
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+          return cb(null, true);
+        }
+        return cb(new Error('CORS not allowed'), false);
+      },
+      methods: ['GET'],
+      allowedHeaders: ['Content-Type', 'X-Requested-With']
+    })
+  );
+
+  app.use(compression());
+  app.use(express.json({ limit: '128kb' }));
+
+  const apiLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 600,
+    standardHeaders: true,
+    legacyHeaders: false
   });
+  app.use('/api', apiLimiter);
 
-  const gitService = new GitService();
+  const gitService = new GitService(cwd);
 
-  // Middleware
-  app.use(cors(corsOptions));
-  app.use(express.json());
-  
-  // Check if Angular build exists, otherwise use public folder
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
-  
-  if (require('fs').existsSync(angularBuildPath)) {
-    // Serve Angular build files
-    app.use(express.static(angularBuildPath));
-  } else {
-    // Serve public folder as fallback
-    app.use(express.static(publicPath));
-  }
+  const staticDir = fs.existsSync(angularBuildPath) ? angularBuildPath : publicPath;
+  const indexFile = path.join(staticDir, 'index.html');
 
-  // API Routes
-  app.get('/api/commits', async (req, res) => {
-    try {
-      const { file, since, author, page = '1', pageSize = '25' } = req.query;
+  app.use(express.static(staticDir, { etag: true, maxAge: '1h' }));
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime(), pid: process.pid });
+  });
+
+  app.get('/api/version', (_req, res) => {
+    res.json({ name: 'git-history-ui', version: pkgVersion() });
+  });
+
+  app.get(
+    '/api/commits',
+    wrap(async (req, res) => {
       const result = await gitService.getCommits({
-        file: file as string,
-        since: since as string,
-        author: author as string,
-        page: parseInt(page as string),
-        pageSize: parseInt(pageSize as string)
+        file: stringParam(req.query.file),
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
+        author: stringParam(req.query.author),
+        search: stringParam(req.query.search ?? req.query.q),
+        page: numberParam(req.query.page, 1),
+        pageSize: numberParam(req.query.pageSize, 25)
       });
       res.json(result);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      res.status(500).json({ error: errorMessage });
-    }
-  });
+    })
+  );
 
-  app.get('/api/commit/:hash', async (req, res) => {
-    try {
-      const { hash } = req.params;
-      const commit = await gitService.getCommit(hash);
+  app.get(
+    '/api/commit/:hash',
+    wrap(async (req, res) => {
+      const commit = await gitService.getCommit(req.params.hash);
       res.json(commit);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      res.status(500).json({ error: errorMessage });
-    }
-  });
+    })
+  );
 
-  app.get('/api/diff/:hash', async (req, res) => {
-    try {
-      const { hash } = req.params;
-      const diff = await gitService.getDiff(hash);
+  app.get(
+    '/api/diff/:hash',
+    wrap(async (req, res) => {
+      const diff = await gitService.getDiff(req.params.hash);
       res.json(diff);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      res.status(500).json({ error: errorMessage });
-    }
-  });
+    })
+  );
 
-  app.get('/api/blame/:file', async (req, res) => {
-    try {
-      const { file } = req.params;
+  app.get(
+    '/api/blame',
+    wrap(async (req, res) => {
+      const file = stringParam(req.query.file);
+      if (!file) {
+        res.status(400).json({ error: 'file query param is required' });
+        return;
+      }
       const blame = await gitService.getBlame(file);
       res.json(blame);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      res.status(500).json({ error: errorMessage });
-    }
+    })
+  );
+
+  app.get('/api/tags', wrap(async (_req, res) => res.json(await gitService.getTags())));
+  app.get('/api/branches', wrap(async (_req, res) => res.json(await gitService.getBranches())));
+  app.get('/api/authors', wrap(async (_req, res) => res.json(await gitService.getAuthors())));
+
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({ error: 'Not Found' });
   });
 
-  app.get('/api/tags', async (req, res) => {
-    try {
-      const tags = await gitService.getTags();
-      res.json(tags);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      res.status(500).json({ error: errorMessage });
-    }
-  });
-
-  app.get('/api/branches', async (req, res) => {
-    try {
-      const branches = await gitService.getBranches();
-      res.json(branches);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      res.status(500).json({ error: errorMessage });
-    }
-  });
-
-  // Serve the main HTML file for Angular routing
-  app.get('*', (req, res) => {
-    const angularIndexPath = path.join(__dirname, '../../build/frontend/index.html');
-    const publicIndexPath = path.join(__dirname, '../../public/index.html');
-    
-    if (require('fs').existsSync(angularIndexPath)) {
-      res.sendFile(angularIndexPath);
-    } else {
-      res.sendFile(publicIndexPath);
-    }
-  });
-
-  // Socket.IO for real-time updates
-  io.on('connection', (socket) => {
-    console.log('Client connected');
-    
-    socket.on('disconnect', () => {
-      console.log('Client disconnected');
+  app.get('*', (_req, res) => {
+    res.sendFile(indexFile, (err) => {
+      if (err) res.status(404).end();
     });
   });
 
-  return new Promise<void>((resolve) => {
-    server.listen(port, host, () => {
-      console.log(`Server running on http://${host}:${port}`);
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (err instanceof NotARepositoryError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    // eslint-disable-next-line no-console
+    console.error('API error:', message);
+    res.status(500).json({ error: message });
+  });
+
+  const httpServer = createServer(app);
+
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once('error', reject);
+    httpServer.listen(port, host, () => {
+      httpServer.off('error', reject);
       resolve();
     });
   });
+
+  const url = `http://${host}:${port}`;
+
+  const close = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      httpServer.close(() => resolve());
+      setTimeout(() => resolve(), 5_000).unref();
+    });
+
+  return { server: httpServer, url, close };
+}
+
+function wrap(
+  handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>
+) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    handler(req, res, next).catch(next);
+  };
+}
+
+function stringParam(v: unknown): string | undefined {
+  if (typeof v === 'string' && v.length > 0) return v;
+  return undefined;
+}
+
+function numberParam(v: unknown, fallback: number): number {
+  const n = typeof v === 'string' ? parseInt(v, 10) : NaN;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function pkgVersion(): string {
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8');
+    return (JSON.parse(raw) as { version: string }).version;
+  } catch {
+    return '0.0.0';
+  }
+}
+
+if (require.main === module) {
+  const port = parseInt(process.env.PORT || '', 10) || DEFAULT_PORT;
+  const host = process.env.HOST || DEFAULT_HOST;
+  startServer(port, host)
+    .then(({ url, close }) => {
+      // eslint-disable-next-line no-console
+      console.log(`git-history-ui listening on ${url}`);
+      const shutdown = (sig: string) => {
+        // eslint-disable-next-line no-console
+        console.log(`\nReceived ${sig}, shutting down...`);
+        close().then(() => process.exit(0));
+        setTimeout(() => process.exit(1), 10_000).unref();
+      };
+      process.on('SIGINT', () => shutdown('SIGINT'));
+      process.on('SIGTERM', () => shutdown('SIGTERM'));
+    })
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('Failed to start server:', err);
+      process.exit(1);
+    });
 }

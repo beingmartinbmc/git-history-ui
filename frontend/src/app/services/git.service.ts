@@ -1,44 +1,51 @@
-import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Commit, DiffFile, BlameLine, GitOptions, PaginatedCommits } from '../models/git.models';
+import {
+  BlameLine,
+  Commit,
+  DiffFile,
+  GitOptions,
+  PaginatedCommits
+} from '../models/git.models';
 
-@Injectable({
-  providedIn: 'root'
-})
+@Injectable({ providedIn: 'root' })
 export class GitService {
-  private apiUrl = '/api';
-
-  constructor(private http: HttpClient) { }
+  private http = inject(HttpClient);
+  private base = '/api';
 
   getCommits(options: GitOptions = {}): Observable<PaginatedCommits> {
-    const params = new URLSearchParams();
-    if (options.file) params.set('file', options.file);
-    if (options.since) params.set('since', options.since);
-    if (options.author) params.set('author', options.author);
-    if (options.page) params.set('page', options.page.toString());
-    if (options.pageSize) params.set('pageSize', options.pageSize.toString());
-
-    return this.http.get<PaginatedCommits>(`${this.apiUrl}/commits?${params.toString()}`);
+    let params = new HttpParams();
+    for (const [k, v] of Object.entries(options)) {
+      if (v !== undefined && v !== null && v !== '') {
+        params = params.set(k, String(v));
+      }
+    }
+    return this.http.get<PaginatedCommits>(`${this.base}/commits`, { params });
   }
 
   getCommit(hash: string): Observable<Commit> {
-    return this.http.get<Commit>(`${this.apiUrl}/commit/${hash}`);
+    return this.http.get<Commit>(`${this.base}/commit/${hash}`);
   }
 
   getDiff(hash: string): Observable<DiffFile[]> {
-    return this.http.get<DiffFile[]>(`${this.apiUrl}/diff/${hash}`);
+    return this.http.get<DiffFile[]>(`${this.base}/diff/${hash}`);
   }
 
   getBlame(filePath: string): Observable<BlameLine[]> {
-    return this.http.get<BlameLine[]>(`${this.apiUrl}/blame/${encodeURIComponent(filePath)}`);
+    const params = new HttpParams().set('file', filePath);
+    return this.http.get<BlameLine[]>(`${this.base}/blame`, { params });
   }
 
   getTags(): Observable<string[]> {
-    return this.http.get<string[]>(`${this.apiUrl}/tags`);
+    return this.http.get<string[]>(`${this.base}/tags`);
   }
 
   getBranches(): Observable<string[]> {
-    return this.http.get<string[]>(`${this.apiUrl}/branches`);
+    return this.http.get<string[]>(`${this.base}/branches`);
+  }
+
+  getAuthors(): Observable<string[]> {
+    return this.http.get<string[]>(`${this.base}/authors`);
   }
 }

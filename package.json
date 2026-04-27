@@ -1,7 +1,7 @@
 {
   "name": "git-history-ui",
-  "version": "1.0.6",
-  "description": "Beautiful git history visualization in your browser",
+  "version": "2.0.0",
+  "description": "Beautiful, fast git history visualization in your browser \u2014 with deterministic swim-lane graphs, virtualized diffs, and a command palette.",
   "main": "dist/cli.js",
   "bin": {
     "git-history-ui": "dist/cli.js"
@@ -9,24 +9,32 @@
   "files": [
     "dist/**/*",
     "build/**/*",
-    "public/**/*"
+    "public/**/*",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "npm run build:backend && npm run build:frontend && npm run copy-frontend",
     "build:backend": "tsc -p tsconfig.json",
-    "build:frontend": "cd frontend && ng build --configuration production",
+    "build:frontend": "npm run --prefix frontend -s build -- --configuration production",
     "build:production": "NODE_ENV=production npm run build",
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "concurrently -n backend,frontend -c blue,magenta \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:backend": "ts-node-dev --respawn --transpile-only src/backend/dev-server.ts",
-    "dev:frontend": "cd frontend && ng serve --port 4200",
+    "dev:frontend": "npm run --prefix frontend start -- --port 4200 --proxy-config proxy.conf.json",
     "start": "node dist/backend/server.js",
     "start:production": "NODE_ENV=production node dist/backend/server.js",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
-    "lint": "eslint src/**/*.ts",
+    "lint": "eslint \"src/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.ts\" --fix",
+    "format": "prettier --write \"src/**/*.{ts,js}\" \"frontend/src/**/*.{ts,html,css}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,js}\" \"frontend/src/**/*.{ts,html,css}\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist build coverage frontend/dist frontend/.angular",
     "copy-frontend": "mkdir -p build/frontend && cp -r frontend/dist/frontend/browser/* build/frontend/",
-    "prepare": "npm run build"
+    "prepublishOnly": "npm run clean && npm run lint && npm run typecheck && npm test -- --ci && npm run build"
   },
   "keywords": [
     "git",
@@ -37,41 +45,49 @@
     "commit",
     "graph",
     "diff",
-    "angular"
+    "angular",
+    "developer-tools",
+    "git-graph",
+    "git-log",
+    "command-palette"
   ],
-  "author": "beingmartinbmc",
+  "author": "Ankit Sharma <ankit.sharma199803@gmail.com>",
   "license": "MIT",
   "dependencies": {
-    "chalk": "^5.3.0",
-    "commander": "^11.1.0",
+    "chalk": "^4.1.2",
+    "commander": "^12.1.0",
+    "compression": "^1.7.4",
     "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "open": "^9.1.0",
-    "simple-git": "^3.20.0",
-    "socket.io": "^4.7.4"
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^8.0.0",
+    "open": "^8.4.2"
   },
   "devDependencies": {
-    "@types/commander": "^2.12.2",
+    "@types/compression": "^1.7.5",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
-    "@types/jest": "^29.5.0",
-    "@types/node": "^20.10.0",
-    "@types/open": "^6.2.1",
-    "@typescript-eslint/eslint-plugin": "^6.13.0",
-    "@typescript-eslint/parser": "^6.13.0",
-    "concurrently": "^8.2.2",
-    "eslint": "^8.55.0",
+    "@types/jest": "^29.5.13",
+    "@types/node": "^20.16.10",
+    "@types/supertest": "^6.0.2",
+    "@typescript-eslint/eslint-plugin": "^8.8.0",
+    "@typescript-eslint/parser": "^8.8.0",
+    "concurrently": "^9.0.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.0",
     "jest": "^29.7.0",
-    "ts-jest": "^29.1.0",
+    "prettier": "^3.3.3",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.2.5",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.6.2"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/beingmartinbmc/git-history-ui.git"
+    "url": "git+https://github.com/beingmartinbmc/git-history-ui.git"
   },
   "bugs": {
     "url": "https://github.com/beingmartinbmc/git-history-ui/issues"

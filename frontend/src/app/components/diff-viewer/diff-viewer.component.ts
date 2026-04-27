@@ -1,311 +1,361 @@
-import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  Input,
+  computed,
+  signal
+} from '@angular/core';
+import hljs from 'highlight.js/lib/common';
 import { DiffFile } from '../../models/git.models';
+
+type Side = 'left' | 'right';
+
+interface DiffLine {
+  type: 'context' | 'add' | 'del' | 'hunk' | 'meta';
+  oldNo?: number;
+  newNo?: number;
+  text: string;
+}
+
+interface SideLine {
+  type: 'context' | 'add' | 'del' | 'empty' | 'hunk';
+  no?: number;
+  text: string;
+  html?: string;
+}
 
 @Component({
   selector: 'app-diff-viewer',
   standalone: true,
   imports: [CommonModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="diff-viewer">
-      <div class="diff-header">
-        <h3 class="diff-title">Diff: {{ fileName }}</h3>
-        <button (click)="onClose()" class="close-button">
-          <svg class="close-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-          </svg>
-        </button>
+    <div class="header" *ngIf="file">
+      <div class="file-info">
+        <span class="status" [attr.data-status]="file.status">{{ file.status }}</span>
+        <span class="path">{{ file.file }}</span>
+        <span class="path old" *ngIf="file.oldFile && file.oldFile !== file.file">
+          ← {{ file.oldFile }}
+        </span>
       </div>
-      
-      <div class="diff-content">
-        <div class="diff-stats">
-          <span class="stat added">+{{ diffFile?.additions || 0 }} additions</span>
-          <span class="stat removed">-{{ diffFile?.deletions || 0 }} deletions</span>
-        </div>
-        
-        <div class="diff-lines" *ngIf="diffLines.length > 0">
-          <div *ngFor="let line of diffLines; trackBy: trackByLine" 
-               class="diff-line"
-               [class.added]="line.type === 'added'"
-               [class.removed]="line.type === 'removed'"
-               [class.context]="line.type === 'context'">
-            <span class="line-number">{{ line.lineNumber }}</span>
-            <span class="line-content">{{ line.content }}</span>
-          </div>
-        </div>
-        
-        <div class="no-diff" *ngIf="diffLines.length === 0">
-          <p>No diff content available for this file.</p>
+      <div class="stats">
+        <span class="add">+{{ file.additions }}</span>
+        <span class="del">−{{ file.deletions }}</span>
+        <div class="toggle">
+          <button class="btn btn-ghost" [class.active]="mode() === 'unified'"
+                  (click)="mode.set('unified')">Unified</button>
+          <button class="btn btn-ghost" [class.active]="mode() === 'split'"
+                  (click)="mode.set('split')">Split</button>
         </div>
       </div>
     </div>
+
+    <div class="empty" *ngIf="!file">Select a file to see its diff.</div>
+    <div class="empty" *ngIf="file && file.status === 'binary'">
+      Binary file — diff not displayed.
+    </div>
+
+    <ng-container *ngIf="file && file.status !== 'binary'">
+      <pre class="unified" *ngIf="mode() === 'unified'"><code><div
+          *ngFor="let l of unifiedLines(); trackBy: trackByIdx"
+          class="line"
+          [class.add]="l.type === 'add'"
+          [class.del]="l.type === 'del'"
+          [class.hunk]="l.type === 'hunk'"
+          [class.meta]="l.type === 'meta'"
+        ><span class="gutter old">{{ l.oldNo ?? '' }}</span><span
+            class="gutter new">{{ l.newNo ?? '' }}</span><span
+            class="sign">{{ sign(l) }}</span><span class="text" [innerHTML]="render(l.text)"></span></div></code></pre>
+
+      <div class="split" *ngIf="mode() === 'split'">
+        <pre class="side"><code><div
+            *ngFor="let l of splitLines().left; trackBy: trackByIdx"
+            class="line"
+            [class.del]="l.type === 'del'"
+            [class.empty]="l.type === 'empty'"
+            [class.hunk]="l.type === 'hunk'"
+          ><span class="gutter">{{ l.no ?? '' }}</span><span class="text" [innerHTML]="render(l.text)"></span></div></code></pre>
+        <pre class="side"><code><div
+            *ngFor="let l of splitLines().right; trackBy: trackByIdx"
+            class="line"
+            [class.add]="l.type === 'add'"
+            [class.empty]="l.type === 'empty'"
+            [class.hunk]="l.type === 'hunk'"
+          ><span class="gutter">{{ l.no ?? '' }}</span><span class="text" [innerHTML]="render(l.text)"></span></div></code></pre>
+      </div>
+    </ng-container>
   `,
   styles: [`
-    .diff-viewer {
-      background-color: white;
-      border-radius: 0.5rem;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-      max-width: 90vw;
-      width: 100%;
-      max-height: 80vh;
-      overflow: hidden;
+    :host {
       display: flex;
       flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      background: var(--bg-surface);
     }
-
-    .diff-header {
+    .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 1rem 1.5rem;
-      border-bottom: 1px solid #e5e7eb;
-      background-color: #f9fafb;
+      padding: 0.5rem 0.85rem;
+      border-bottom: 1px solid var(--border-soft);
+      background: var(--bg-surface);
+      gap: 0.75rem;
     }
-
-    .diff-title {
-      font-size: 1.125rem;
-      font-weight: 600;
-      color: #111827;
-      margin: 0;
-    }
-
-    .close-button {
-      background: none;
-      border: none;
-      color: #6b7280;
-      cursor: pointer;
-      padding: 0.25rem;
-      border-radius: 0.25rem;
-      transition: color 0.2s;
-    }
-
-    .close-button:hover {
-      color: #374151;
-    }
-
-    .close-icon {
-      width: 1.5rem;
-      height: 1.5rem;
-    }
-
-    .diff-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1rem;
-    }
-
-    .diff-stats {
+    .file-info {
       display: flex;
-      gap: 1rem;
-      margin-bottom: 1rem;
-      padding: 0.5rem;
-      background-color: #f9fafb;
-      border-radius: 0.375rem;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 0;
     }
-
-    .stat {
-      font-size: 0.875rem;
-      font-weight: 500;
-    }
-
-    .stat.added {
-      color: #059669;
-    }
-
-    .stat.removed {
-      color: #dc2626;
-    }
-
-    .diff-lines {
-      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-      font-size: 0.875rem;
-      line-height: 1.5;
-      border: 1px solid #e5e7eb;
-      border-radius: 0.375rem;
+    .path {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--fg-primary);
       overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-
-    .diff-line {
+    .path.old { color: var(--fg-muted); }
+    .status {
+      text-transform: uppercase;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 999px;
+      letter-spacing: 0.04em;
+      color: var(--accent-fg);
+    }
+    .status[data-status='added'] { background: var(--success); }
+    .status[data-status='deleted'] { background: var(--danger); }
+    .status[data-status='modified'] { background: var(--accent); }
+    .status[data-status='renamed'],
+    .status[data-status='copied'] { background: var(--warning); }
+    .status[data-status='binary'] { background: var(--fg-muted); }
+    .stats {
       display: flex;
-      padding: 0.125rem 0.5rem;
-      border-bottom: 1px solid #f3f4f6;
+      gap: 0.5rem;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 12px;
     }
-
-    .diff-line:last-child {
-      border-bottom: none;
+    .stats .add { color: var(--success); }
+    .stats .del { color: var(--danger); }
+    .toggle { display: flex; gap: 2px; padding-left: 0.5rem; }
+    .toggle .btn { padding: 0.25rem 0.6rem; font-size: 12px; }
+    .toggle .btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
     }
-
-    .diff-line.added {
-      background-color: #dcfce7;
-    }
-
-    .diff-line.removed {
-      background-color: #fee2e2;
-    }
-
-    .diff-line.context {
-      background-color: #f9fafb;
-    }
-
-    .line-number {
-      min-width: 3rem;
-      color: #6b7280;
-      font-size: 0.75rem;
-      padding-right: 0.5rem;
-      border-right: 1px solid #e5e7eb;
-      margin-right: 0.5rem;
-    }
-
-    .line-content {
-      flex: 1;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-
-    .diff-line.added .line-content {
-      color: #166534;
-    }
-
-    .diff-line.removed .line-content {
-      color: #991b1b;
-    }
-
-    .diff-line.context .line-content {
-      color: #374151;
-    }
-
-    .no-diff {
+    .empty {
+      padding: 2rem 1rem;
       text-align: center;
-      padding: 2rem;
-      color: #6b7280;
+      color: var(--fg-muted);
     }
 
-    /* Dark mode styles */
-    .dark .diff-viewer {
-      background-color: #2d2d2d;
-      color: #e0e0e0;
+    pre {
+      flex: 1;
+      margin: 0;
+      overflow: auto;
+      padding: 0;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: var(--fg-primary);
+      background: var(--bg-surface-2);
+      min-height: 0;
     }
+    code { display: block; min-width: max-content; }
+    .line {
+      display: grid;
+      grid-template-columns: 48px 48px 14px 1fr;
+      align-items: baseline;
+      padding: 0 0.5rem;
+      white-space: pre;
+    }
+    .split .line {
+      grid-template-columns: 48px 1fr;
+    }
+    .gutter {
+      color: var(--fg-subtle);
+      text-align: right;
+      padding-right: 0.5rem;
+      user-select: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .sign {
+      width: 14px;
+      color: var(--fg-subtle);
+    }
+    .text { white-space: pre; }
+    .line.add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
+    .line.add .gutter { color: var(--diff-add-gutter); }
+    .line.del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
+    .line.del .gutter { color: var(--diff-del-gutter); }
+    .line.hunk { background: var(--diff-hunk-bg); color: var(--diff-hunk-fg); font-style: italic; }
+    .line.meta { color: var(--fg-muted); }
+    .line.empty { background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in oklab, var(--fg-subtle) 14%, transparent) 6px 12px); }
 
-    .dark .diff-header {
-      background-color: #404040;
-      border-color: #555;
+    .split {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1px 1fr;
+      min-height: 0;
     }
-
-    .dark .diff-title {
-      color: #e0e0e0;
+    .split::before {
+      content: '';
+      grid-column: 2;
+      background: var(--border-soft);
     }
-
-    .dark .close-button {
-      color: #9ca3af;
-    }
-
-    .dark .close-button:hover {
-      color: #d1d5db;
-    }
-
-    .dark .diff-stats {
-      background-color: #404040;
-    }
-
-    .dark .diff-lines {
-      border-color: #555;
-    }
-
-    .dark .diff-line {
-      border-color: #404040;
-    }
-
-    .dark .diff-line.added {
-      background-color: #14532d;
-    }
-
-    .dark .diff-line.removed {
-      background-color: #7f1d1d;
-    }
-
-    .dark .diff-line.context {
-      background-color: #404040;
-    }
-
-    .dark .line-number {
-      color: #9ca3af;
-      border-color: #555;
-    }
-
-    .dark .diff-line.added .line-content {
-      color: #bbf7d0;
-    }
-
-    .dark .diff-line.removed .line-content {
-      color: #fecaca;
-    }
-
-    .dark .diff-line.context .line-content {
-      color: #d1d5db;
-    }
-
-    .dark .no-diff {
-      color: #9ca3af;
-    }
+    .split .side { width: 100%; }
   `]
 })
 export class DiffViewerComponent {
-  @Input() fileName: string = '';
-  @Input() diffFile: DiffFile | null = null;
-  @Output() close = new EventEmitter<void>();
-
-  diffLines: Array<{type: 'added' | 'removed' | 'context', lineNumber: string, content: string}> = [];
-
-  ngOnInit() {
-    console.log('DiffViewer ngOnInit called');
-    this.parseDiff();
+  @Input() set fileInput(value: DiffFile | null) {
+    this.file = value;
+    this.parsed.set(value ? this.parse(value.changes) : []);
   }
 
-  ngOnChanges() {
-    console.log('DiffViewer ngOnChanges called');
-    this.parseDiff();
-  }
+  file: DiffFile | null = null;
+  mode = signal<'unified' | 'split'>('unified');
+  parsed = signal<DiffLine[]>([]);
 
-  parseDiff() {
-    console.log('parseDiff called with diffFile:', this.diffFile);
-    
-    if (!this.diffFile?.changes) {
-      console.log('No changes found in diffFile');
-      this.diffLines = [];
-      return;
-    }
+  unifiedLines = computed(() => this.parsed());
 
-    const lines = this.diffFile.changes.split('\n');
-    console.log('Parsed lines:', lines.length);
-    
-    this.diffLines = lines.map((line, index) => {
-      let type: 'added' | 'removed' | 'context' = 'context';
-      let lineNumber = (index + 1).toString();
-      let content = line;
-
-      if (line.startsWith('+')) {
-        type = 'added';
-        content = line.substring(1);
-      } else if (line.startsWith('-')) {
-        type = 'removed';
-        content = line.substring(1);
-      } else if (line.startsWith('@@')) {
-        // Git diff header line
-        lineNumber = '@@';
-        content = line;
+  splitLines = computed(() => {
+    const lines = this.parsed();
+    const left: SideLine[] = [];
+    const right: SideLine[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      const l = lines[i];
+      if (l.type === 'hunk' || l.type === 'meta') {
+        left.push({ type: 'hunk', text: l.text });
+        right.push({ type: 'hunk', text: l.text });
+        i++;
+        continue;
       }
+      if (l.type === 'context') {
+        left.push({ type: 'context', no: l.oldNo, text: l.text });
+        right.push({ type: 'context', no: l.newNo, text: l.text });
+        i++;
+        continue;
+      }
+      // collect contiguous block of dels/adds
+      const dels: DiffLine[] = [];
+      const adds: DiffLine[] = [];
+      while (i < lines.length && lines[i].type === 'del') dels.push(lines[i++]);
+      while (i < lines.length && lines[i].type === 'add') adds.push(lines[i++]);
+      const max = Math.max(dels.length, adds.length);
+      for (let j = 0; j < max; j++) {
+        left.push(
+          dels[j]
+            ? { type: 'del', no: dels[j].oldNo, text: dels[j].text }
+            : { type: 'empty', text: '' }
+        );
+        right.push(
+          adds[j]
+            ? { type: 'add', no: adds[j].newNo, text: adds[j].text }
+            : { type: 'empty', text: '' }
+        );
+      }
+    }
+    return { left, right };
+  });
 
-      return { type, lineNumber, content };
-    });
-    
-    console.log('Parsed diff lines:', this.diffLines.length);
+  trackByIdx(i: number) {
+    return i;
   }
 
-  onClose() {
-    this.close.emit();
+  sign(l: DiffLine): string {
+    return l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' ';
   }
 
-  trackByLine(index: number, line: any): string {
-    return `${line.type}-${index}`;
+  render(text: string): string {
+    if (!text) return '';
+    const lang = this.langForFile(this.file?.file);
+    try {
+      if (lang) {
+        return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+      }
+      return hljs.highlightAuto(text).value;
+    } catch {
+      return this.escape(text);
+    }
+  }
+
+  private langForFile(name?: string): string | null {
+    if (!name) return null;
+    const ext = name.split('.').pop()?.toLowerCase();
+    if (!ext) return null;
+    const map: Record<string, string> = {
+      ts: 'typescript', tsx: 'typescript',
+      js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+      json: 'json', yml: 'yaml', yaml: 'yaml',
+      md: 'markdown', html: 'xml', xml: 'xml', css: 'css', scss: 'scss',
+      py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
+      kt: 'kotlin', swift: 'swift', php: 'php', sh: 'bash', bash: 'bash',
+      sql: 'sql', cpp: 'cpp', cc: 'cpp', c: 'c', h: 'cpp', hpp: 'cpp',
+      cs: 'csharp', dockerfile: 'dockerfile'
+    };
+    if (name.toLowerCase().endsWith('dockerfile')) return 'dockerfile';
+    return map[ext] ?? null;
+  }
+
+  private escape(s: string): string {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  private parse(raw: string): DiffLine[] {
+    const out: DiffLine[] = [];
+    if (!raw) return out;
+    let oldNo = 0;
+    let newNo = 0;
+    for (const line of raw.split('\n')) {
+      if (line.startsWith('@@')) {
+        out.push({ type: 'hunk', text: line });
+        const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (m) {
+          oldNo = parseInt(m[1], 10);
+          newNo = parseInt(m[2], 10);
+        }
+      } else if (
+        line.startsWith('diff --git') ||
+        line.startsWith('index ') ||
+        line.startsWith('--- ') ||
+        line.startsWith('+++ ') ||
+        line.startsWith('new file') ||
+        line.startsWith('deleted file') ||
+        line.startsWith('rename ') ||
+        line.startsWith('copy ') ||
+        line.startsWith('similarity ') ||
+        line.startsWith('Binary files')
+      ) {
+        out.push({ type: 'meta', text: line });
+      } else if (line.startsWith('+')) {
+        out.push({ type: 'add', newNo, text: line.substring(1) });
+        newNo++;
+      } else if (line.startsWith('-')) {
+        out.push({ type: 'del', oldNo, text: line.substring(1) });
+        oldNo++;
+      } else if (line.startsWith(' ')) {
+        out.push({
+          type: 'context',
+          oldNo,
+          newNo,
+          text: line.substring(1)
+        });
+        oldNo++;
+        newNo++;
+      } else if (line === '') {
+        // blank — keep alignment
+        out.push({ type: 'context', oldNo, newNo, text: '' });
+      }
+    }
+    return out;
   }
 }
