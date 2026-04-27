@@ -36,7 +36,7 @@
     "highlight.js": "^11.11.1",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
-    "zone.js": "~0.15.0"
+    "zone.js": "~0.16.1"
   },
   "devDependencies": {
     "@angular-devkit/architect": "^0.2002.0",
