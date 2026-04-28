@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-04-28
+
+### Fixed
+
+- Diff viewer now scrolls correctly in both unified and split modes. The
+  surrounding grid containers were missing `min-height: 0` and explicit
+  `grid-template-rows: minmax(0, 1fr)`, which let the inner `<pre>` panes
+  expand to their content height instead of clipping and scrolling.
+
 ## [2.0.0] - 2026-04-27
 
 A full-stack rewrite focused on extreme performance, correctness, and a polished UI.

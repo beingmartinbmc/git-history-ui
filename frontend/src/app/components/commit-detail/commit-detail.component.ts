@@ -158,7 +158,9 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
       flex: 1;
       display: grid;
       grid-template-columns: 280px 1fr;
+      grid-template-rows: minmax(0, 1fr);
       min-height: 0;
+      overflow: hidden;
     }
     .files {
       display: flex;
@@ -223,7 +225,13 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
     .counts .del { color: var(--danger); }
     .files-empty { padding: 1rem; color: var(--fg-muted); font-size: 12px; text-align: center; }
 
-    .diff { min-width: 0; }
+    .diff {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
     .placeholder {
       flex: 1;
       display: grid;
