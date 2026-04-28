@@ -201,14 +201,22 @@ interface SideLine {
       flex: 1;
       display: grid;
       grid-template-columns: 1fr 1px 1fr;
+      grid-template-rows: minmax(0, 1fr);
       min-height: 0;
+      overflow: hidden;
     }
     .split::before {
       content: '';
       grid-column: 2;
       background: var(--border-soft);
     }
-    .split .side { width: 100%; }
+    .split .side {
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      overflow: auto;
+    }
   `]
 })
 export class DiffViewerComponent {

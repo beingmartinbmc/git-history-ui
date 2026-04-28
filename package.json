@@ -1,7 +1,7 @@
 {
   "name": "git-history-ui",
-  "version": "2.0.0",
-  "description": "Beautiful, fast git history visualization in your browser \u2014 with deterministic swim-lane graphs, virtualized diffs, and a command palette.",
+  "version": "2.0.1",
+  "description": "Beautiful, fast git history visualization in your browser — with deterministic swim-lane graphs, virtualized diffs, and a command palette.",
   "main": "dist/cli.js",
   "bin": {
     "git-history-ui": "dist/cli.js"
