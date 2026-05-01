@@ -7,28 +7,56 @@
 [![GitHub stars](https://img.shields.io/github/stars/beingmartinbmc/git-history-ui.svg)](https://github.com/beingmartinbmc/git-history-ui)
 [![GitHub issues](https://img.shields.io/github/issues/beingmartinbmc/git-history-ui.svg)](https://github.com/beingmartinbmc/git-history-ui/issues)
 
-A beautiful, modern web UI for visualizing git history with interactive commit graphs, search, filtering, and diff visualization. Built with Angular and Node.js.
+A fast, zero-setup web UI to explore your git history visually. Run it in any
+repo and inspect branches, commits, and diffs interactively in your browser.
+
+## 👀 Preview
+
+![Git History UI screenshot](./docs/screenshot.png)
 
 ## 🚀 Quick Start
 
 ```bash
+# Go to the git repository you want to inspect
+cd /path/to/your/project
+
 # Run directly with npx (no installation needed)
 npx git-history-ui@latest
 ```
 
 That's it! The application will start on `http://localhost:3000` and open your browser automatically.
+It reads history from the current working directory, so run it inside the project whose commits you want to visualize.
+
+No installs. No config. Just your commits, visualized.
+
+## 🤔 Why use this?
+
+- `git log` is powerful, but hard to scan when branches, merges, and long-lived work overlap.
+- GitHub's commit UI does not show your local or unpushed commits.
+- Desktop clients can be heavy when you just want a quick read on one repo.
+- `git-history-ui` gives you a fast, local, visual way to explore history from any git repository.
 
 ## ✨ Features
 
-- **🎨 Interactive Commit Graph** - Theme-aware canvas swim-lanes with lane guides, branch/tag pills, hover states, and selection emphasis
-- **🔍 Advanced Search & Filtering** - Search by author, date, commit message, or files
-- **📊 Dual View Modes** - Switch between graph view and list view
-- **🌙 Dark/Light/System Mode** - Toggle manually or follow your OS preference
-- **📱 Responsive Design** - Works on desktop and mobile
+- **Canvas-based commit graph** - Branch lanes, hover states, selected commits, and branch/tag pills.
+- **Real-time filtering** - Filter by author, date range, commit text, or file path.
+- **Diff-first commit review** - Move from graph to commit list to unified or split diffs without leaving the browser.
+- **Local by default** - Runs against the repo on your machine, including unpushed commits.
+- **Dark/light/system mode** - Toggle manually or follow your OS preference.
+- **Zero setup** - Unlike GitKraken or SourceTree, it runs instantly with `npx`.
+
+## ⚖️ How it compares
+
+- **vs GitHub UI**: shows local branches and unpushed commits because it runs inside your repository.
+- **vs `tig` or `git log`**: gives you visual lanes, filters, and browser-based diffs instead of a terminal-only view.
+- **vs desktop Git clients**: starts on demand with no workspace setup, account login, or project import.
 
 ## 📖 Usage
 
 ### CLI Options
+
+Run these commands from inside the git repository you want to inspect.
+
 ```bash
 # Custom port
 npx git-history-ui@latest --port 8080
@@ -72,7 +100,7 @@ docker run -p 3000:3000 git-history-ui
 ### Setup
 ```bash
 # Clone and install
-git clone https://github.com/ankit-sharma/git-history-ui.git
+git clone https://github.com/beingmartinbmc/git-history-ui.git
 cd git-history-ui
 npm install
 
