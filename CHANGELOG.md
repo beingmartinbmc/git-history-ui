@@ -19,6 +19,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Node engine metadata and README requirements now match Angular 20's
   supported Node versions.
 
+### Fixed
+
+- Docker image builds now include the root `public` assets in the builder
+  stage before copying them into the runtime image.
+
 ## [2.0.1] - 2026-04-28
 
 ### Fixed
