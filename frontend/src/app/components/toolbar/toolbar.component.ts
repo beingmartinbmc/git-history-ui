@@ -98,7 +98,8 @@ import { UiStateService } from '../../services/ui-state.service';
         </button>
         <button class="btn btn-ghost btn-icon"
                 (click)="theme.cycle()"
-                [title]="'Theme: ' + theme.preference()">
+                [title]="themeLabel()"
+                [attr.aria-label]="themeLabel()">
           <svg *ngIf="theme.resolved() === 'light'" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path fill="currentColor" d="M12 4V2m0 20v-2m8-8h2M2 12h2m13.66-6.34 1.42-1.42M4.92 19.08l1.42-1.42m0-11.32L4.92 4.92m14.16 14.16-1.42-1.42M12 7a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z"/>
           </svg>
@@ -206,6 +207,7 @@ export class ToolbarComponent {
     if (!t) return '';
     return `${t.toLocaleString()} commits`;
   });
+  themeLabel = computed(() => `Theme: ${this.theme.preference()} (${this.theme.resolved()})`);
 
   private debounce: ReturnType<typeof setTimeout> | null = null;
 
