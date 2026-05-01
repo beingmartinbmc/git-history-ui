@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-05-01
+
+### Added
+
+- Commit graph now uses a theme-aware canvas rendering with lane guides,
+  hover and selection states, and branch/tag pills.
+- Graph-specific light and dark design tokens improve contrast in both themes.
+
+### Changed
+
+- CI now tests the Angular 20 frontend on supported Node 20 and Node 22
+  versions only.
+- Node engine metadata and README requirements now match Angular 20's
+  supported Node versions.
+
+### Fixed
+
+- Docker image builds now include the root `public` assets in the builder
+  stage before copying them into the runtime image.
+
 ## [2.0.1] - 2026-04-28
 
 ### Fixed
