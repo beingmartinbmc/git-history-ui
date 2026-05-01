@@ -1,6 +1,6 @@
 {
   "name": "git-history-ui",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Beautiful, fast git history visualization in your browser — with deterministic swim-lane graphs, virtualized diffs, and a command palette.",
   "main": "dist/cli.js",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "dist/**/*",
     "build/**/*",
+    "docs/**/*",
     "public/**/*",
     "README.md",
     "LICENSE",

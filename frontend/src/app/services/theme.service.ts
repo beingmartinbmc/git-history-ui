@@ -45,7 +45,7 @@ export class ThemeService {
   }
 
   cycle() {
-    const order: ThemePreference[] = ['light', 'dark', 'system'];
+    const order: ThemePreference[] = ['system', 'dark', 'light'];
     const next = order[(order.indexOf(this.preference()) + 1) % order.length];
     this.setPreference(next);
   }
