@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3] - 2026-05-01
+
+### Added
+
+- README now includes a preview screenshot, sharper positioning, a "why use
+  this" section, and comparisons with GitHub UI, terminal tools, and desktop
+  Git clients.
+- Package files now include `docs/**/*` so README preview assets are available
+  in published packages.
+
+### Fixed
+
+- Theme toggle now switches from the default system preference to dark mode on
+  the first click, making dark mode immediately visible on light systems.
+- Theme button accessibility text now reports both the selected preference and
+  resolved theme.
+
 ## [2.0.2] - 2026-05-01
 
 ### Added
