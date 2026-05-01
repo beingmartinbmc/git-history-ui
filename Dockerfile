@@ -18,6 +18,7 @@ RUN npm ci --prefix frontend
 # Sources + build everything
 COPY tsconfig.json ./
 COPY src ./src
+COPY public ./public
 COPY frontend ./frontend
 RUN npm run build:backend \
  && npm run build:frontend \
