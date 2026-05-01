@@ -20,11 +20,10 @@ That's it! The application will start on `http://localhost:3000` and open your b
 
 ## ✨ Features
 
-- **🎨 Interactive Commit Graph** - D3.js-powered visualizations with branch tracking
+- **🎨 Interactive Commit Graph** - Theme-aware canvas swim-lanes with lane guides, branch/tag pills, hover states, and selection emphasis
 - **🔍 Advanced Search & Filtering** - Search by author, date, commit message, or files
 - **📊 Dual View Modes** - Switch between graph view and list view
-- **🎨 Color Palette System** - 6 light and 6 dark themes
-- **🌙 Dark/Light Mode** - Toggle between themes
+- **🌙 Dark/Light/System Mode** - Toggle manually or follow your OS preference
 - **📱 Responsive Design** - Works on desktop and mobile
 
 ## 📖 Usage
@@ -92,7 +91,7 @@ cd frontend && npm test
 
 ## 📋 Requirements
 
-- **Node.js**: 18.0.0 or higher
+- **Node.js**: 20.19.0 or higher, or 22.12.0 or higher
 - **Git**: Any version (must be in a git repository)
 
 ## 🤝 Contributing

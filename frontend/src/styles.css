@@ -41,6 +41,13 @@
   --diff-hunk-bg: #f1f5f9;
   --diff-hunk-fg: #475569;
 
+  --graph-guide: rgba(148, 163, 184, 0.28);
+  --graph-row-alt: rgba(15, 23, 42, 0.025);
+  --graph-row-hover: rgba(79, 70, 229, 0.08);
+  --graph-row-selected: rgba(79, 70, 229, 0.14);
+  --graph-node-ring: #ffffff;
+  --graph-shadow: rgba(15, 23, 42, 0.12);
+
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
   --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12);
@@ -93,6 +100,13 @@
   --diff-del-gutter: #7f1d1d;
   --diff-hunk-bg: #1f2937;
   --diff-hunk-fg: #cbd5e1;
+
+  --graph-guide: rgba(148, 163, 184, 0.22);
+  --graph-row-alt: rgba(248, 250, 252, 0.025);
+  --graph-row-hover: rgba(129, 140, 248, 0.12);
+  --graph-row-selected: rgba(129, 140, 248, 0.2);
+  --graph-node-ring: #111827;
+  --graph-shadow: rgba(0, 0, 0, 0.45);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
   --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.45);
