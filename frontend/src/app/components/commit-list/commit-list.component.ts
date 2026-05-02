@@ -25,7 +25,7 @@ import { UiStateService } from '../../services/ui-state.service';
 
     <cdk-virtual-scroll-viewport
       class="viewport"
-      [itemSize]="64"
+      [itemSize]="58"
       minBufferPx="640"
       maxBufferPx="1280"
     >
@@ -67,18 +67,17 @@ import { UiStateService } from '../../services/ui-state.service';
       flex-direction: column;
       height: 100%;
       min-height: 0;
-      background: var(--bg-surface);
-      border-right: 1px solid var(--border-soft);
+      background: transparent;
     }
     .header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.5rem 0.85rem;
+      padding: 0.6rem 0.85rem;
       border-bottom: 1px solid var(--border-soft);
       font-size: 12px;
       color: var(--fg-muted);
-      background: var(--bg-surface);
+      background: color-mix(in oklab, var(--bg-surface) 92%, transparent);
     }
     .viewport { flex: 1; min-height: 0; }
     .row {
@@ -87,19 +86,25 @@ import { UiStateService } from '../../services/ui-state.service';
       gap: 0.5rem;
       align-items: center;
       width: 100%;
-      height: 64px;
-      padding: 0.45rem 0.85rem;
+      height: 58px;
+      padding: 0.38rem 0.7rem;
       background: transparent;
       border: 0;
       border-bottom: 1px solid var(--border-soft);
+      border-left: 3px solid transparent;
       color: inherit;
       text-align: left;
       cursor: pointer;
-      transition: background 100ms;
+      transition: background 100ms, border-color 100ms, transform 80ms;
     }
-    .row:hover { background: var(--bg-hover); }
+    .row:hover {
+      background: color-mix(in oklab, var(--bg-hover) 70%, transparent);
+      border-left-color: color-mix(in oklab, var(--accent) 48%, transparent);
+    }
     .row.selected {
-      background: var(--bg-selected);
+      background:
+        linear-gradient(90deg, color-mix(in oklab, var(--accent) 18%, transparent), transparent 70%);
+      border-left-color: var(--accent);
     }
     .row.selected .subject { color: var(--fg-primary); }
 
@@ -112,8 +117,8 @@ import { UiStateService } from '../../services/ui-state.service';
       justify-content: center;
     }
     .dot {
-      width: 10px;
-      height: 10px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
       background: var(--accent);
       box-shadow: 0 0 0 2px var(--bg-surface);
@@ -141,6 +146,7 @@ import { UiStateService } from '../../services/ui-state.service';
     }
     .subject {
       font-weight: 500;
+      font-size: 13px;
       color: var(--fg-primary);
       white-space: nowrap;
       overflow: hidden;
@@ -156,21 +162,36 @@ import { UiStateService } from '../../services/ui-state.service';
     .hash { font-family: var(--font-mono); }
     .dot-sep { opacity: 0.5; }
 
-    .badges { display: flex; gap: 4px; flex-wrap: wrap; }
+    .badges {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      max-width: 150px;
+      overflow: hidden;
+      max-height: 42px;
+    }
     .badge {
       font-size: 10px;
       font-weight: 600;
-      padding: 2px 6px;
+      padding: 2px 7px;
       border-radius: 999px;
       letter-spacing: 0.02em;
+      border: 1px solid transparent;
+      max-width: 128px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .badge.tag {
       background: rgba(217, 119, 6, 0.15);
       color: var(--warning);
+      border-color: color-mix(in oklab, var(--warning) 24%, transparent);
     }
     .badge.branch {
       background: var(--accent-soft);
       color: var(--accent);
+      border-color: color-mix(in oklab, var(--accent) 24%, transparent);
     }
     .empty {
       padding: 2rem 1rem;

@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'child_process';
+import { StringDecoder } from 'string_decoder';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
@@ -40,9 +41,14 @@ export interface GitOptions {
   since?: string;
   until?: string;
   author?: string;
+  branch?: string;
   search?: string;
   page?: number;
   pageSize?: number;
+}
+
+export interface GitStreamOptions {
+  signal?: AbortSignal;
 }
 
 export interface PaginatedCommits {
@@ -148,10 +154,11 @@ export class GitService {
     const pageSize = clamp(options.pageSize || 25, 1, 500);
     const skip = (page - 1) * pageSize;
 
+    const revision = this.revisionArg(options);
     const filterArgs = this.buildFilterArgs(options);
-    const cacheKey = filterArgs.join(' ');
+    const cacheKey = [revision, ...filterArgs].join(' ');
 
-    const total = await this.getTotalCount(cacheKey, filterArgs);
+    const total = await this.getTotalCount(cacheKey, filterArgs, revision);
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     const args = [
@@ -159,6 +166,7 @@ export class GitService {
       `--max-count=${pageSize}`,
       `--skip=${skip}`,
       `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
+      revision,
       ...filterArgs
     ];
 
@@ -177,7 +185,7 @@ export class GitService {
     };
   }
 
-  private async getTotalCount(cacheKey: string, filterArgs: string[]): Promise<number> {
+  private async getTotalCount(cacheKey: string, filterArgs: string[], revision: string): Promise<number> {
     const now = Date.now();
     const cached = this.countCache.get(cacheKey);
     if (cached && cached.expiresAt > now) return cached.total;
@@ -187,15 +195,15 @@ export class GitService {
     const sepIdx = filterArgs.indexOf('--');
     const revArgs =
       sepIdx >= 0
-        ? [...filterArgs.slice(0, sepIdx), 'HEAD', ...filterArgs.slice(sepIdx)]
-        : [...filterArgs, 'HEAD'];
+        ? [...filterArgs.slice(0, sepIdx), revision, ...filterArgs.slice(sepIdx)]
+        : [...filterArgs, revision];
 
     let total = 0;
     try {
       const out = await this.git(['rev-list', '--count', ...revArgs]);
       total = parseInt(out.trim(), 10) || 0;
     } catch {
-      const fallback = await this.git(['log', '--oneline', ...filterArgs]).catch(() => '');
+      const fallback = await this.git(['log', '--oneline', revision, ...filterArgs]).catch(() => '');
       total = fallback ? fallback.split('\n').filter(Boolean).length : 0;
     }
 
@@ -211,6 +219,13 @@ export class GitService {
     if (options.search) args.push(`--grep=${options.search}`, '--regexp-ignore-case');
     if (options.file) args.push('--', options.file);
     return args;
+  }
+
+  private revisionArg(options: GitOptions): string {
+    const branch = options.branch?.trim();
+    if (!branch) return 'HEAD';
+    if (!isSafeRef(branch)) throw new Error('Invalid branch');
+    return branch;
   }
 
   private parseLog(raw: string, refs: RefIndex): Commit[] {
@@ -378,10 +393,15 @@ export class GitService {
    */
   async streamRaw(
     args: string[],
-    onChunk: (chunk: Buffer) => void
+    onChunk: (chunk: Buffer) => void,
+    opts: GitStreamOptions = {}
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let settled = false;
+      if (opts.signal?.aborted) {
+        reject(new Error('git stream aborted'));
+        return;
+      }
       const child = spawn('git', args, {
         cwd: this.repoPath,
         env: {
@@ -395,9 +415,12 @@ export class GitService {
       const rejectOnce = (err: unknown) => {
         if (settled) return;
         settled = true;
+        opts.signal?.removeEventListener('abort', onAbort);
         child.kill();
         reject(err instanceof Error ? err : new Error(String(err)));
       };
+      const onAbort = () => rejectOnce(new Error('git stream aborted'));
+      opts.signal?.addEventListener('abort', onAbort, { once: true });
       child.stdout.on('data', (chunk: Buffer) => {
         try {
           onChunk(chunk);
@@ -412,6 +435,7 @@ export class GitService {
       child.on('close', (code) => {
         if (settled) return;
         settled = true;
+        opts.signal?.removeEventListener('abort', onAbort);
         if (code === 0) resolve();
         else reject(new Error(`git ${args[0]} exited ${code}: ${stderr.trim()}`));
       });
@@ -427,43 +451,27 @@ export class GitService {
    * Format: each commit is prefixed by a record separator + commit hash;
    * file lines follow as `additions\tdeletions\tpath`.
    */
-  async getNumstat(options: GitOptions = {}, maxCommits = 2000): Promise<
+  async getNumstat(options: GitOptions = {}, maxCommits = 2000, opts: GitStreamOptions = {}): Promise<
     Map<string, Array<{ file: string; additions: number; deletions: number }>>
   > {
     const filterArgs = this.buildFilterArgs(options);
+    const revision = this.revisionArg(options);
     const cap = clamp(maxCommits, 1, 50_000);
-    const out = await this.git(
-      [
-        'log',
-        `--max-count=${cap}`,
-        '-M',
-        '--numstat',
-        `--pretty=format:${RECORD_SEP}%H`,
-        ...filterArgs
-      ],
-      { maxBuffer: 128 * 1024 * 1024 }
-    );
+    const args = [
+      'log',
+      `--max-count=${cap}`,
+      '-M',
+      '--numstat',
+      `--pretty=format:${RECORD_SEP}%H`,
+      revision,
+      ...filterArgs
+    ];
 
     const result = new Map<string, Array<{ file: string; additions: number; deletions: number }>>();
-    if (!out) return result;
-
-    for (const record of out.split(RECORD_SEP)) {
-      if (!record) continue;
-      const [hashLine, ...fileLines] = record.split('\n');
-      const hash = hashLine.trim();
-      if (!/^[0-9a-fA-F]{40}$/.test(hash)) continue;
-      const files: Array<{ file: string; additions: number; deletions: number }> = [];
-      for (const line of fileLines) {
-        if (!line.trim()) continue;
-        const parts = line.split('\t');
-        if (parts.length < 3) continue;
-        const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10) || 0;
-        const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10) || 0;
-        const file = normalizeNumstatPath(parts.slice(2).join('\t'));
-        if (file) files.push({ file, additions, deletions });
-      }
-      result.set(hash, files);
-    }
+    await this.streamRecords(args, (record) => {
+      const parsed = parseNumstatRecord(record);
+      if (parsed) result.set(parsed.hash, parsed.files);
+    }, opts);
     return result;
   }
 
@@ -474,29 +482,91 @@ export class GitService {
    */
   async *streamCommits(
     options: GitOptions = {},
-    batchSize = 200
+    _batchSize = 200,
+    opts: GitStreamOptions = {}
   ): AsyncGenerator<Commit, void, void> {
     if (!(await this.verifyRepository())) {
       throw new NotARepositoryError();
     }
+    if (opts.signal?.aborted) {
+      throw new Error('git stream aborted');
+    }
     const refs = await this.getRefIndex();
     const filterArgs = this.buildFilterArgs(options);
-    let skip = 0;
-    while (true) {
-      const args = [
+    const revision = this.revisionArg(options);
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+
+    const queue: Commit[] = [];
+    let done = false;
+    let error: Error | null = null;
+    let notify: (() => void) | null = null;
+    const wake = () => {
+      notify?.();
+      notify = null;
+    };
+
+    const streamPromise = this.streamRecords(
+      [
         'log',
-        `--max-count=${batchSize}`,
-        `--skip=${skip}`,
         `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
+        revision,
         ...filterArgs
-      ];
-      const out = await this.git(args, { maxBuffer: 64 * 1024 * 1024 });
-      const commits = this.parseLog(out, refs);
-      if (commits.length === 0) return;
-      for (const c of commits) yield c;
-      if (commits.length < batchSize) return;
-      skip += commits.length;
+      ],
+      (record) => {
+        const commits = this.parseLog(`${record}${RECORD_SEP}`, refs);
+        queue.push(...commits);
+        wake();
+      },
+      { signal: controller.signal }
+    )
+      .catch((err) => {
+        error = err instanceof Error ? err : new Error(String(err));
+      })
+      .finally(() => {
+        done = true;
+        wake();
+      });
+
+    try {
+      while (!done || queue.length) {
+        const next = queue.shift();
+        if (next) {
+          yield next;
+          continue;
+        }
+        if (error) throw error;
+        await new Promise<void>((resolve) => {
+          notify = resolve;
+        });
+      }
+      if (error) throw error;
+      await streamPromise;
+    } finally {
+      opts.signal?.removeEventListener('abort', onAbort);
+      controller.abort();
     }
+  }
+
+  private async streamRecords(
+    args: string[],
+    onRecord: (record: string) => void,
+    opts: GitStreamOptions = {}
+  ): Promise<void> {
+    const decoder = new StringDecoder('utf8');
+    let pending = '';
+    await this.streamRaw(args, (chunk) => {
+      pending += decoder.write(chunk);
+      let idx: number;
+      while ((idx = pending.indexOf(RECORD_SEP)) >= 0) {
+        const record = pending.slice(0, idx);
+        pending = pending.slice(idx + 1);
+        if (record.trim()) onRecord(record);
+      }
+    }, opts);
+    pending += decoder.end();
+    if (pending.trim()) onRecord(pending);
   }
 
   async getBlame(filePath: string): Promise<BlameLine[]> {
@@ -558,6 +628,25 @@ function isIsoLikeDate(s: string): boolean {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function parseNumstatRecord(
+  record: string
+): { hash: string; files: Array<{ file: string; additions: number; deletions: number }> } | null {
+  const [hashLine, ...fileLines] = record.split('\n');
+  const hash = hashLine.trim();
+  if (!/^[0-9a-fA-F]{40}$/.test(hash)) return null;
+  const files: Array<{ file: string; additions: number; deletions: number }> = [];
+  for (const line of fileLines) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10) || 0;
+    const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10) || 0;
+    const file = normalizeNumstatPath(parts.slice(2).join('\t'));
+    if (file) files.push({ file, additions, deletions });
+  }
+  return { hash, files };
 }
 
 function normalizeNumstatPath(file: string): string {
