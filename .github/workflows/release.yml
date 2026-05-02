@@ -31,6 +31,12 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test -- --ci
+      - name: Coverage gate (backend >= 90%)
+        run: >-
+          npx jest --coverage --ci
+          --coverageThreshold='{"global":{"statements":90,"functions":90,"lines":90}}'
+      - name: Test frontend
+        run: npm run --prefix frontend test -- --watch=false --browsers=ChromeHeadless
       - run: npm run build
 
       - name: Publish

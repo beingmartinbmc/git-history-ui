@@ -58,7 +58,11 @@ function loadSqlite(): SqliteCtor | null {
 }
 
 export type GitRunner = (args: string[]) => Promise<string>;
-export type GitStreamRunner = (args: string[], onChunk: (chunk: Buffer) => void) => Promise<void>;
+export type GitStreamRunner = (
+  args: string[],
+  onChunk: (chunk: Buffer) => void,
+  opts?: { signal?: AbortSignal }
+) => Promise<void>;
 
 export class SqliteIndex {
   private dbFile: string;
@@ -134,13 +138,13 @@ export class SqliteIndex {
   }
 
   /** Synchronously build the index from `git log --all`. Idempotent. */
-  async build(): Promise<IndexStats> {
+  async build(opts: { signal?: AbortSignal } = {}): Promise<IndexStats> {
     if (!this.open()) return this.stats();
     if (this.buildPromise) {
       await this.buildPromise;
       return this.stats();
     }
-    this.buildPromise = this.doBuild();
+    this.buildPromise = this.doBuild(opts);
     try {
       await this.buildPromise;
     } finally {
@@ -149,22 +153,29 @@ export class SqliteIndex {
     return this.stats();
   }
 
-  private async doBuild(): Promise<void> {
+  private async doBuild(opts: { signal?: AbortSignal } = {}): Promise<void> {
     if (!this.db) return;
     const sig = await this.refSignature();
     const stored = (this.db.prepare("SELECT v FROM meta WHERE k='refsSig'").get() as { v: string } | undefined)?.v;
     if (stored === sig) return;
+    const head = await this.currentHead();
+    const storedHead =
+      (this.db.prepare("SELECT v FROM meta WHERE k='indexedHead'").get() as { v: string } | undefined)?.v ?? '';
+    const canIncrement = !!storedHead && !!head && await this.isAncestor(storedHead, head);
 
     const args = [
       'log',
       '--all',
+      ...(canIncrement ? ['--not', storedHead] : []),
       `--pretty=format:${SQLITE_LOG_FORMAT}${RECORD_SEP}`
     ];
 
     this.db.exec('BEGIN');
     try {
-      this.db.exec('DELETE FROM commits');
-      try { this.db.exec('DELETE FROM commits_fts'); } catch { /* no fts */ }
+      if (!canIncrement) {
+        this.db.exec('DELETE FROM commits');
+        try { this.db.exec('DELETE FROM commits_fts'); } catch { /* no fts */ }
+      }
       const ins = this.db.prepare(
         'INSERT OR REPLACE INTO commits(hash,short,author,email,date,parents,subject,body) VALUES (?,?,?,?,?,?,?,?)'
       );
@@ -211,7 +222,7 @@ export class SqliteIndex {
             pending = pending.slice(idx + 1);
             ingest(record);
           }
-        });
+        }, { signal: opts.signal });
         pending += decoder.end();
         if (pending.trim()) ingest(pending);
       } else {
@@ -220,6 +231,7 @@ export class SqliteIndex {
       }
 
       this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('refsSig', ?)").run(sig);
+      this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('indexedHead', ?)").run(head);
       this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('builtAt', ?)").run(new Date().toISOString());
       this.db.exec('COMMIT');
     } catch (err) {
@@ -267,7 +279,7 @@ export class SqliteIndex {
   }
 
   private async refSignature(): Promise<string> {
-    const head = await this.runGit(['rev-parse', 'HEAD']).catch(() => '');
+    const head = await this.currentHead();
     let mtimes = '';
     try {
       const refsDir = path.join(this.repoCwd, '.git', 'refs');
@@ -283,5 +295,14 @@ export class SqliteIndex {
       /* ignore */
     }
     return crypto.createHash('sha256').update(head + '|' + mtimes).digest('hex');
+  }
+
+  private async currentHead(): Promise<string> {
+    return this.runGit(['rev-parse', 'HEAD']).then((s) => s.trim()).catch(() => '');
+  }
+
+  private async isAncestor(base: string, head: string): Promise<boolean> {
+    if (!/^[0-9a-fA-F]{4,40}$/.test(base) || !/^[0-9a-fA-F]{4,40}$/.test(head)) return false;
+    return this.runGit(['merge-base', '--is-ancestor', base, head]).then(() => true).catch(() => false);
   }
 }

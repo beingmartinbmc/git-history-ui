@@ -10,8 +10,10 @@ import type { DiffFile, GitService } from './gitService';
 export interface InsightsOptions {
   since?: string;
   until?: string;
+  branch?: string;
   /** Cap on commits scanned to keep dashboards responsive. */
   maxCommits?: number;
+  signal?: AbortSignal;
 }
 
 const CONCURRENCY = 6;
@@ -24,6 +26,7 @@ export async function computeInsights(
   const page = await gitService.getCommits({
     since: opts.since,
     until: opts.until,
+    branch: opts.branch,
     page: 1,
     pageSize: maxCommits
   });
@@ -38,8 +41,9 @@ export async function computeInsights(
   let numstat: Awaited<ReturnType<typeof gitService.getNumstat>> | null = null;
   try {
     numstat = await gitService.getNumstat(
-      { since: opts.since, until: opts.until },
-      maxCommits
+      { since: opts.since, until: opts.until, branch: opts.branch },
+      maxCommits,
+      { signal: opts.signal }
     );
   } catch {
     numstat = null;

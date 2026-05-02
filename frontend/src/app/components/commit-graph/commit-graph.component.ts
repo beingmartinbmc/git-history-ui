@@ -98,19 +98,18 @@ const LANE_COLORS = [
       flex-direction: column;
       height: 100%;
       min-height: 0;
-      background: var(--bg-surface);
-      border-right: 1px solid var(--border-soft);
+      background: transparent;
     }
     .header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 0.75rem;
-      padding: 0.6rem 0.85rem;
+      padding: 0.65rem 0.85rem;
       border-bottom: 1px solid var(--border-soft);
       font-size: 12px;
       color: var(--fg-muted);
-      background: color-mix(in oklab, var(--bg-surface) 96%, var(--bg-surface-2));
+      background: color-mix(in oklab, var(--bg-surface) 88%, transparent);
     }
     .title {
       display: flex;
@@ -145,7 +144,7 @@ const LANE_COLORS = [
       min-height: 0;
       background:
         radial-gradient(circle at 24px 24px, var(--graph-row-alt) 0 1px, transparent 1px 100%),
-        var(--bg-surface);
+        linear-gradient(180deg, color-mix(in oklab, var(--bg-surface) 92%, transparent), color-mix(in oklab, var(--bg-surface-2) 76%, transparent));
       background-size: 24px 24px;
     }
     .phantom {
@@ -196,6 +195,10 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   private rowByHash = new Map<string, Node>();
   private laneCount = 1;
   private hoverRow = -1;
+  private layoutToken = 0;
+  private idleHandle: number | null = null;
+  private canvasSize = { width: 0, height: 0, dpr: 0 };
+  private canvasTransform = '';
   private readonly onCanvasClick = (e: MouseEvent) => this.onClick(e);
   private readonly onCanvasMove = (e: MouseEvent) => this.onMouseMove(e);
   private readonly onCanvasLeave = () => this.onMouseLeave();
@@ -211,8 +214,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   constructor() {
     effect(() => {
       // Recompute when commits change.
-      this.layout(this.state.commits());
-      this.draw();
+      this.scheduleLayout(this.state.commits());
     });
     effect(() => {
       // Re-draw on selection change and theme changes.
@@ -238,6 +240,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     canvas?.removeEventListener('mouseleave', this.onCanvasLeave);
     this.scrollRef?.nativeElement.removeEventListener('scroll', this.onScroll);
     if (this.scrollRaf) cancelAnimationFrame(this.scrollRaf);
+    this.cancelIdleLayout();
   }
 
   @HostListener('window:resize')
@@ -245,12 +248,15 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     this.draw();
   }
 
-  private layout(commits: Commit[]) {
+  private scheduleLayout(commits: Commit[]) {
+    const token = ++this.layoutToken;
+    this.cancelIdleLayout();
     this.nodes = [];
     this.rowByHash.clear();
     this.hoverRow = -1;
     if (!commits.length) {
       this.laneCount = 1;
+      this.draw();
       return;
     }
 
@@ -269,7 +275,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
       return active.length - 1;
     };
 
-    for (let row = 0; row < commits.length; row++) {
+    const processRow = (row: number) => {
       const c = commits[row];
       const lane = allocate(c.hash);
       const node: Node = { commit: c, row, lane };
@@ -292,12 +298,31 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
 
       // Compact trailing nulls to keep laneCount tight.
       while (active.length && active[active.length - 1] === null) active.pop();
+      if (lane + 1 > this.laneCount) this.laneCount = lane + 1;
+    };
+
+    this.laneCount = 1;
+    if (commits.length <= 5_000) {
+      for (let row = 0; row < commits.length; row++) processRow(row);
+      this.draw();
+      return;
     }
 
-    this.laneCount = Math.max(
-      1,
-      this.nodes.reduce((m, n) => Math.max(m, n.lane + 1), 0)
-    );
+    let row = 0;
+    const step = (deadline?: IdleDeadline) => {
+      if (token !== this.layoutToken) return;
+      const started = performance.now();
+      while (row < commits.length) {
+        processRow(row++);
+        const idleRemaining = deadline?.timeRemaining?.() ?? 0;
+        if (row % 250 === 0 && idleRemaining <= 1 && performance.now() - started > 8) break;
+      }
+      this.draw();
+      if (row < commits.length && token === this.layoutToken) {
+        this.idleHandle = this.requestIdle(step);
+      }
+    };
+    this.idleHandle = this.requestIdle(step);
   }
 
   private draw() {
@@ -317,11 +342,12 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     const viewportH = scroll?.clientHeight ?? 0;
     const w = Math.max(contentW, scroll?.clientWidth ?? contentW);
     const h = Math.max(viewportH || ROW_H * 8, ROW_H);
-    canvas.width = Math.floor(w * dpr);
-    canvas.height = Math.floor(h * dpr);
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
-    canvas.style.transform = `translateY(${scrollTop}px)`;
+    this.ensureCanvasSize(canvas, w, h, dpr);
+    const transform = `translateY(${scrollTop}px)`;
+    if (this.canvasTransform !== transform) {
+      this.canvasTransform = transform;
+      canvas.style.transform = transform;
+    }
 
     const ctx = canvas.getContext('2d')!;
     const theme = this.readTheme(canvas);
@@ -351,7 +377,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     const visible = this.nodes.slice(minRow, maxRow + 1);
 
     this.drawRows(ctx, w, xOf, yOf, theme, selectedHash, visible);
-    this.drawGuides(ctx, yOf, theme);
+    this.drawGuides(ctx, scrollTop, h, theme);
 
     // Edges. Iterate visible rows; their parents may be off-screen but
     // are still drawn (truncated by canvas clip) — important for the
@@ -443,19 +469,51 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private drawGuides(ctx: CanvasRenderingContext2D, yOf: (row: number) => number, theme: GraphTheme) {
+  private drawGuides(ctx: CanvasRenderingContext2D, scrollTop: number, height: number, theme: GraphTheme) {
     ctx.save();
     ctx.strokeStyle = theme.guide;
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 5]);
+    const y1 = scrollTop;
+    const y2 = scrollTop + height;
     for (let lane = 0; lane < this.laneCount; lane++) {
       const x = PAD_X + lane * LANE_W + LANE_W / 2;
       ctx.beginPath();
-      ctx.moveTo(x, PAD_Y / 2);
-      ctx.lineTo(x, yOf(this.nodes.length - 1) + ROW_H / 2);
+      ctx.moveTo(x, y1);
+      ctx.lineTo(x, y2);
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  private ensureCanvasSize(canvas: HTMLCanvasElement, width: number, height: number, dpr: number) {
+    const pixelWidth = Math.floor(width * dpr);
+    const pixelHeight = Math.floor(height * dpr);
+    if (
+      this.canvasSize.width === pixelWidth &&
+      this.canvasSize.height === pixelHeight &&
+      this.canvasSize.dpr === dpr
+    ) {
+      return;
+    }
+    this.canvasSize = { width: pixelWidth, height: pixelHeight, dpr };
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+  }
+
+  private requestIdle(cb: (deadline?: IdleDeadline) => void): number {
+    const ric = window.requestIdleCallback;
+    if (ric) return ric(cb, { timeout: 100 });
+    return window.setTimeout(() => cb(), 16);
+  }
+
+  private cancelIdleLayout() {
+    if (this.idleHandle === null) return;
+    if (window.cancelIdleCallback) window.cancelIdleCallback(this.idleHandle);
+    else clearTimeout(this.idleHandle);
+    this.idleHandle = null;
   }
 
   private drawEdge(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
@@ -471,12 +529,14 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   }
 
   private drawRefPill(ctx: CanvasRenderingContext2D, x: number, y: number, commit: Commit, theme: GraphTheme) {
-    const label = commit.tags[0] ?? commit.branches[0];
+    const label = commit.tags[0] ?? commit.branches.find((b) => !isRemoteBranch(b));
     if (!label) return;
 
-    const text = label.length > 16 ? `${label.slice(0, 15)}...` : label;
+    const maxWidth = Math.max(0, ctx.canvas.clientWidth - x - 8);
+    if (maxWidth < 28) return;
+    const text = ellipsize(label, maxWidth > 72 ? 12 : 8);
     ctx.font = '600 10px ui-sans-serif, system-ui, sans-serif';
-    const width = Math.min(96, ctx.measureText(text).width + 14);
+    const width = Math.min(maxWidth, 72, ctx.measureText(text).width + 14);
     const height = 18;
     ctx.fillStyle = commit.tags.length ? theme.warningSoft : theme.accentSoft;
     this.roundRect(ctx, x, y - height / 2, width, height, 999);
@@ -529,7 +589,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
       rowHover: this.css(styles, '--graph-row-hover', 'rgba(79, 70, 229, 0.08)'),
       rowSelected: this.css(styles, '--graph-row-selected', 'rgba(79, 70, 229, 0.14)'),
       shadow: this.css(styles, '--graph-shadow', 'rgba(15, 23, 42, 0.12)'),
-      surface: this.css(styles, '--bg-surface', '#ffffff'),
+      surface: this.css(styles, '--bg-panel', '#ffffff'),
       warning: this.css(styles, '--warning', '#d97706'),
       warningSoft: 'rgba(217, 119, 6, 0.15)'
     };
@@ -556,4 +616,12 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     ctx.arcTo(x, y, x + width, y, r);
     ctx.closePath();
   }
+}
+
+function isRemoteBranch(branch: string): boolean {
+  return branch.startsWith('origin/') || branch.includes('/origin/');
+}
+
+function ellipsize(label: string, maxChars: number): string {
+  return label.length > maxChars ? `${label.slice(0, Math.max(1, maxChars - 1))}...` : label;
 }
