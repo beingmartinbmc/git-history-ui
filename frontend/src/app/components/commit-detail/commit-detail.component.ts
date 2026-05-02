@@ -17,11 +17,12 @@ import { GitService } from '../../services/git.service';
 import { InsightsService } from '../../services/insights.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
+import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
 
 @Component({
   selector: 'app-commit-detail',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, DiffViewerComponent],
+  imports: [CommonModule, DatePipe, FormsModule, DiffViewerComponent, ImpactGraphComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <ng-container *ngIf="commit() as c; else empty">
@@ -70,23 +71,13 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
             {{ imp.relatedCommits.length }} related commits
           </span>
         </div>
+        <app-impact-graph [impact]="imp" />
         <div class="impact-body">
           <div>
             <h4>Modules</h4>
             <ul class="modules">
               <li *ngFor="let m of imp.modules">{{ m }}</li>
             </ul>
-          </div>
-          <div>
-            <h4>Dependency ripple</h4>
-            <ul class="ripple" *ngIf="imp.dependencyRipple.length; else noRipple">
-              <li *ngFor="let r of imp.dependencyRipple.slice(0, 8)">
-                <code>{{ shortPath(r.from) }}</code> → <code>{{ shortPath(r.to) }}</code>
-              </li>
-            </ul>
-            <ng-template #noRipple>
-              <p class="muted">No JS/TS imports detected in changed files.</p>
-            </ng-template>
           </div>
           <div>
             <h4>Related commits</h4>
