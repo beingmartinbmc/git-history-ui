@@ -92,7 +92,7 @@ export async function runNlSearch(
     pageSize: candidateCap
   });
 
-  let scored = await llm.score(
+  const scored = await llm.score(
     options.query,
     candidatesPage.commits.map((c) => ({
       id: c.hash,
