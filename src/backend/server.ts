@@ -14,6 +14,7 @@ import { getDefaultLlmService, type LlmConfig } from './llm';
 import { getCommitImpact } from './impact';
 import { computeInsights } from './insights';
 import { AnnotationsStore } from './annotations';
+import { SqliteIndex } from './cache/sqliteIndex';
 
 export interface ServerOptions {
   port?: number;
@@ -83,6 +84,7 @@ export async function startServer(
   const llmService = getDefaultLlmService(options.llm ?? {});
   const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN;
   const annotations = new AnnotationsStore(cwd);
+  const sqliteIndex = new SqliteIndex(cwd, (args) => gitService.runRaw(args, { maxBuffer: 256 * 1024 * 1024 }));
 
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
@@ -100,8 +102,67 @@ export async function startServer(
       name: 'git-history-ui',
       version: pkgVersion(),
       llm: { provider: llmService.name, isAi: llmService.isAi },
-      githubEnrichment: !!githubToken
+      githubEnrichment: !!githubToken,
+      sqliteAvailable: SqliteIndex.isAvailable()
     });
+  });
+
+  app.get(
+    '/api/index/stats',
+    wrap(async (_req, res) => {
+      const stats = await sqliteIndex.stats();
+      res.json(stats);
+    })
+  );
+
+  app.post(
+    '/api/index/build',
+    wrap(async (_req, res) => {
+      const stats = await sqliteIndex.build();
+      res.json(stats);
+    })
+  );
+
+  app.get('/api/commits/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    const send = (event: string, data: unknown) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    let cancelled = false;
+    req.on('close', () => {
+      cancelled = true;
+    });
+
+    (async () => {
+      try {
+        let count = 0;
+        const author = stringParam(req.query.author);
+        const since = stringParam(req.query.since);
+        const until = stringParam(req.query.until);
+        const file = stringParam(req.query.file);
+        for await (const commit of gitService.streamCommits({ author, since, until, file })) {
+          if (cancelled) break;
+          send('commit', commit);
+          count++;
+          // Yield to the event loop occasionally so we don't block heartbeats.
+          if (count % 50 === 0) await new Promise((r) => setImmediate(r));
+        }
+        if (!cancelled) {
+          send('done', { total: count });
+          res.end();
+        }
+      } catch (err) {
+        send('error', { message: err instanceof Error ? err.message : 'stream error' });
+        res.end();
+      }
+    })();
   });
 
   app.get(
@@ -301,6 +362,36 @@ export async function startServer(
     wrap(async (req, res) => {
       const ok = await annotations.remove(req.params.hash, req.params.id);
       res.status(ok ? 204 : 404).end();
+    })
+  );
+
+  /**
+   * POST /api/share — generate a shareable view-state URL.
+   *
+   * The current implementation is purely local: it echoes the supplied
+   * `viewState` back as a URL with the state encoded in the query string,
+   * so the common case ("send my colleague the link") needs no relay
+   * server. Future versions may forward to an opt-in `--share-server`
+   * (see CHANGELOG for v3.2 plans).
+   */
+  app.post(
+    '/api/share',
+    wrap(async (req, res) => {
+      const state = req.body?.viewState;
+      if (!state || typeof state !== 'object') {
+        res.status(400).json({ error: 'viewState body field is required' });
+        return;
+      }
+      // Build a query string from a flat key/value object.
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(state as Record<string, unknown>)) {
+        if (v === null || v === undefined || v === '') continue;
+        params.set(k, String(v));
+      }
+      const proto = (req.headers['x-forwarded-proto'] as string) || (req.protocol || 'http');
+      const host = req.headers.host || 'localhost';
+      const url = `${proto}://${host}/?${params.toString()}`;
+      res.status(201).json({ url, expiresAt: null, mode: 'local' });
     })
   );
 

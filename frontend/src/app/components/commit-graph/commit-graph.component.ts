@@ -176,6 +176,14 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   private readonly onCanvasClick = (e: MouseEvent) => this.onClick(e);
   private readonly onCanvasMove = (e: MouseEvent) => this.onMouseMove(e);
   private readonly onCanvasLeave = () => this.onMouseLeave();
+  private scrollRaf = 0;
+  private readonly onScroll = () => {
+    if (this.scrollRaf) return;
+    this.scrollRaf = requestAnimationFrame(() => {
+      this.scrollRaf = 0;
+      this.draw();
+    });
+  };
 
   constructor() {
     effect(() => {
@@ -196,6 +204,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     canvas.addEventListener('click', this.onCanvasClick);
     canvas.addEventListener('mousemove', this.onCanvasMove);
     canvas.addEventListener('mouseleave', this.onCanvasLeave);
+    this.scrollRef?.nativeElement.addEventListener('scroll', this.onScroll, { passive: true });
     this.draw();
   }
 
@@ -204,6 +213,8 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     canvas?.removeEventListener('click', this.onCanvasClick);
     canvas?.removeEventListener('mousemove', this.onCanvasMove);
     canvas?.removeEventListener('mouseleave', this.onCanvasLeave);
+    this.scrollRef?.nativeElement.removeEventListener('scroll', this.onScroll);
+    if (this.scrollRaf) cancelAnimationFrame(this.scrollRaf);
   }
 
   @HostListener('window:resize')
@@ -294,13 +305,29 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     const color = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length];
     const selectedHash = this.state.selectedHash();
 
-    this.drawRows(ctx, w, xOf, yOf, theme, selectedHash);
+    // Viewport culling: only draw rows whose center falls within the
+    // currently scrolled-to band of the canvas (plus a 4-row buffer above
+    // and below to keep edges from "popping in"). Lane allocation still
+    // walks every commit because parent threading needs full context.
+    const scrollTop = scroll?.scrollTop ?? 0;
+    const viewportH = scroll?.clientHeight ?? h;
+    const buffer = ROW_H * 4;
+    const minRow = Math.max(0, Math.floor((scrollTop - PAD_Y - buffer) / ROW_H));
+    const maxRow = Math.min(
+      this.nodes.length - 1,
+      Math.ceil((scrollTop + viewportH - PAD_Y + buffer) / ROW_H)
+    );
+    const visible = this.nodes.slice(minRow, maxRow + 1);
+
+    this.drawRows(ctx, w, xOf, yOf, theme, selectedHash, visible);
     this.drawGuides(ctx, yOf, theme);
 
-    // Edges.
+    // Edges. Iterate visible rows; their parents may be off-screen but
+    // are still drawn (truncated by canvas clip) — important for the
+    // "lines coming in from above" visual cue.
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    for (const node of this.nodes) {
+    for (const node of visible) {
       for (const ph of node.commit.parents) {
         const target = this.rowByHash.get(ph);
         if (!target) continue;
@@ -324,8 +351,8 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
       }
     }
 
-    // Nodes.
-    for (const node of this.nodes) {
+    // Nodes (visible only).
+    for (const node of visible) {
       const x = xOf(node.lane);
       const y = yOf(node.row);
       const c = color(node.lane);
@@ -364,9 +391,10 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     xOf: (lane: number) => number,
     yOf: (row: number) => number,
     theme: GraphTheme,
-    selectedHash: string | null
+    selectedHash: string | null,
+    visible: Node[] = this.nodes
   ) {
-    for (const node of this.nodes) {
+    for (const node of visible) {
       const y = yOf(node.row) - ROW_H / 2;
       if (node.row % 2 === 1) {
         ctx.fillStyle = theme.rowAlt;

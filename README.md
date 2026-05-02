@@ -39,6 +39,25 @@ No installs. No config. Just your commits, visualized.
 - Desktop clients can be heavy when you just want a quick read on one repo.
 - `git-history-ui` gives you a fast, local, visual way to explore history from any git repository.
 
+## ⚡ New in v3.2 — Distribution & scale
+
+- **SQLite indexer (optional)** — When `better-sqlite3` is installed, large
+  repos get an FTS5-backed index in `~/.git-history-ui/`. Falls back to
+  git-shelling silently if the native module isn't available.
+  Endpoints: `GET /api/index/stats`, `POST /api/index/build`.
+- **Streaming commits** — `GET /api/commits/stream` (SSE) progressively
+  pushes commits as `git log` produces them.
+- **Virtualized commit graph** — The canvas only paints rows currently on
+  screen, so 50k-commit histories scroll without dropping frames.
+- **Shareable URLs** — `POST /api/share` returns a deep link with view-state
+  encoded in the query string (no relay server needed for the common case).
+- **CLI presets** — `--preset <name>` / `--save-preset <name>` and
+  `git-history-ui presets list|delete`, stored in
+  `~/.git-history-ui/presets.json`.
+- **Embeds** — Chrome extension scaffold (`apps/chrome-extension/`) and
+  GitHub App scaffold (`apps/github-app/`) that add a "View in
+  git-history-ui" button to GitHub PR / commit pages.
+
 ## ✨ What's new in v3 — "Git Intelligence"
 
 - **Natural-language search** — Ask "login bug last month" or "payments by alice".
