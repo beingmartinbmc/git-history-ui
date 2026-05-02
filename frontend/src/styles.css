@@ -9,9 +9,15 @@
   --bg-surface: #ffffff;
   --bg-surface-2: #f3f4f6;
   --bg-elevated: #ffffff;
+  --bg-panel: rgba(255, 255, 255, 0.78);
+  --bg-glass: rgba(255, 255, 255, 0.72);
   --bg-hover: #eef2ff;
   --bg-selected: #e0e7ff;
   --bg-overlay: rgba(15, 23, 42, 0.45);
+  --bg-gradient:
+    radial-gradient(circle at 12% -8%, rgba(79, 70, 229, 0.12), transparent 34%),
+    radial-gradient(circle at 90% 0%, rgba(6, 182, 212, 0.12), transparent 28%),
+    linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
 
   --fg-primary: #0f172a;
   --fg-secondary: #475569;
@@ -27,6 +33,7 @@
   --accent-hover: #4338ca;
   --accent-soft: #eef2ff;
   --accent-fg: #ffffff;
+  --accent-ring: rgba(99, 102, 241, 0.18);
 
   --success: #16a34a;
   --warning: #d97706;
@@ -47,14 +54,20 @@
   --graph-row-selected: rgba(79, 70, 229, 0.14);
   --graph-node-ring: #ffffff;
   --graph-shadow: rgba(15, 23, 42, 0.12);
+  --chart-add: #16a34a;
+  --chart-del: #dc2626;
+  --chart-line: #4f46e5;
+  --chart-fill: rgba(79, 70, 229, 0.16);
 
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
   --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12);
+  --shadow-glow: 0 16px 60px rgba(79, 70, 229, 0.14);
 
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
+  --radius-xl: 18px;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -69,9 +82,15 @@
   --bg-surface: #111827;
   --bg-surface-2: #0f172a;
   --bg-elevated: #1f2937;
+  --bg-panel: rgba(17, 24, 39, 0.74);
+  --bg-glass: rgba(15, 23, 42, 0.72);
   --bg-hover: #1e293b;
   --bg-selected: #312e81;
   --bg-overlay: rgba(2, 6, 23, 0.6);
+  --bg-gradient:
+    radial-gradient(circle at 10% -10%, rgba(129, 140, 248, 0.18), transparent 34%),
+    radial-gradient(circle at 94% 2%, rgba(34, 211, 238, 0.12), transparent 30%),
+    linear-gradient(180deg, #0b1020 0%, #020617 100%);
 
   --fg-primary: #f8fafc;
   --fg-secondary: #cbd5e1;
@@ -87,6 +106,7 @@
   --accent-hover: #a5b4fc;
   --accent-soft: #1e1b4b;
   --accent-fg: #0b1020;
+  --accent-ring: rgba(129, 140, 248, 0.24);
 
   --success: #4ade80;
   --warning: #fbbf24;
@@ -107,10 +127,15 @@
   --graph-row-selected: rgba(129, 140, 248, 0.2);
   --graph-node-ring: #111827;
   --graph-shadow: rgba(0, 0, 0, 0.45);
+  --chart-add: #4ade80;
+  --chart-del: #f87171;
+  --chart-line: #a5b4fc;
+  --chart-fill: rgba(129, 140, 248, 0.18);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
   --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.45);
   --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.55);
+  --shadow-glow: 0 24px 80px rgba(79, 70, 229, 0.18);
 }
 
 /* ------- Reset & base ------- */
@@ -131,7 +156,7 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--fg-primary);
-  background: var(--bg-app);
+  background: var(--bg-gradient);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -176,16 +201,19 @@ button {
   padding: 0.45rem 0.85rem;
   font-size: 13px;
   font-weight: 500;
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface-2);
+  border-radius: calc(var(--radius-sm) + 2px);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg-surface) 92%, white 8%), var(--bg-surface-2));
   color: var(--fg-primary);
   border: 1px solid var(--border-soft);
   cursor: pointer;
-  transition: background 120ms, border-color 120ms, color 120ms, transform 60ms;
+  box-shadow: var(--shadow-sm);
+  transition: background 120ms, border-color 120ms, color 120ms, transform 60ms, box-shadow 120ms;
 }
 .btn:hover {
   background: var(--bg-hover);
   border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
 }
 .btn:active {
   transform: translateY(1px);
@@ -201,6 +229,7 @@ button {
 .btn-ghost {
   background: transparent;
   border-color: transparent;
+  box-shadow: none;
 }
 .btn-ghost:hover {
   background: var(--bg-hover);
@@ -213,10 +242,10 @@ button {
 
 .input,
 .select {
-  background: var(--bg-surface);
+  background: color-mix(in oklab, var(--bg-surface) 88%, transparent);
   color: var(--fg-primary);
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-sm) + 2px);
   padding: 0.4rem 0.6rem;
   font-size: 13px;
   outline: none;
@@ -228,8 +257,45 @@ button {
 .input:focus,
 .select:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
+
+.panel-card {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg-panel) 94%, white 6%), var(--bg-panel));
+  border: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-surface-2);
+  color: var(--fg-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-surface-2);
+  border-radius: var(--radius-sm);
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--fg-muted) 14%, transparent), transparent);
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
 
 .kbd {
   display: inline-flex;

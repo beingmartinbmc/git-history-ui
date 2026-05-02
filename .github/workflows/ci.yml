@@ -42,6 +42,14 @@ jobs:
       - name: Test (backend)
         run: npm test -- --ci
 
+      - name: Coverage gate (backend >= 90%)
+        run: >-
+          npx jest --coverage --ci
+          --coverageThreshold='{"global":{"statements":90,"functions":90,"lines":90}}'
+
+      - name: Test (frontend)
+        run: npm run --prefix frontend test -- --watch=false --browsers=ChromeHeadless
+
       - name: Build backend
         run: npm run build:backend
 

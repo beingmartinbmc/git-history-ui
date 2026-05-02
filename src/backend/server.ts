@@ -89,7 +89,7 @@ export async function startServer(
   const sqliteIndex = new SqliteIndex(
     cwd,
     (args) => gitService.runRaw(args, { maxBuffer: 256 * 1024 * 1024 }),
-    (args, onChunk) => gitService.streamRaw(args, onChunk)
+    (args, onChunk, streamOpts) => gitService.streamRaw(args, onChunk, streamOpts)
   );
 
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
@@ -123,8 +123,9 @@ export async function startServer(
 
   app.post(
     '/api/index/build',
-    wrap(async (_req, res) => {
-      const stats = await sqliteIndex.build();
+    wrap(async (req, res) => {
+      const signal = requestAbortSignal(req);
+      const stats = await sqliteIndex.build({ signal });
       res.json(stats);
     })
   );
@@ -141,9 +142,11 @@ export async function startServer(
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
+    const controller = new AbortController();
     let cancelled = false;
     req.on('close', () => {
       cancelled = true;
+      controller.abort();
     });
 
     (async () => {
@@ -153,7 +156,13 @@ export async function startServer(
         const since = stringParam(req.query.since);
         const until = stringParam(req.query.until);
         const file = stringParam(req.query.file);
-        for await (const commit of gitService.streamCommits({ author, since, until, file })) {
+        const search = stringParam(req.query.search ?? req.query.q);
+        const branch = stringParam(req.query.branch);
+        for await (const commit of gitService.streamCommits(
+          { author, since, until, file, search, branch },
+          200,
+          { signal: controller.signal }
+        )) {
           if (cancelled) break;
           send('commit', commit);
           count++;
@@ -165,6 +174,7 @@ export async function startServer(
           res.end();
         }
       } catch (err) {
+        if (cancelled) return;
         send('error', { message: err instanceof Error ? err.message : 'stream error' });
         res.end();
       }
@@ -179,6 +189,7 @@ export async function startServer(
         since: stringParam(req.query.since),
         until: stringParam(req.query.until),
         author: stringParam(req.query.author),
+        branch: stringParam(req.query.branch),
         search: stringParam(req.query.search ?? req.query.q),
         page: numberParam(req.query.page, 1),
         pageSize: numberParam(req.query.pageSize, 25)
@@ -227,6 +238,11 @@ export async function startServer(
       }
       const result = await runNlSearch(gitService, llmService, {
         query: q,
+        branch: stringParam(req.query.branch),
+        file: stringParam(req.query.file),
+        author: stringParam(req.query.author),
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
         page: numberParam(req.query.page, 1),
         pageSize: numberParam(req.query.pageSize, 25)
       });
@@ -241,6 +257,7 @@ export async function startServer(
         since: stringParam(req.query.since),
         until: stringParam(req.query.until),
         author: stringParam(req.query.author),
+        branch: stringParam(req.query.branch),
         githubToken,
         maxCommits: numberParam(req.query.maxCommits, 1000)
       });
@@ -285,10 +302,13 @@ export async function startServer(
   app.get(
     '/api/insights',
     wrap(async (req, res) => {
+      const signal = requestAbortSignal(req);
       const bundle = await computeInsights(gitService, {
         since: stringParam(req.query.since),
         until: stringParam(req.query.until),
-        maxCommits: numberParam(req.query.maxCommits, 500)
+        branch: stringParam(req.query.branch),
+        maxCommits: numberParam(req.query.maxCommits, 500),
+        signal
       });
       res.json(bundle);
     })
@@ -476,6 +496,12 @@ function stringParam(v: unknown): string | undefined {
 function numberParam(v: unknown, fallback: number): number {
   const n = typeof v === 'string' ? parseInt(v, 10) : NaN;
   return Number.isFinite(n) ? n : fallback;
+}
+
+function requestAbortSignal(req: Request): AbortSignal {
+  const controller = new AbortController();
+  req.on('close', () => controller.abort());
+  return controller.signal;
 }
 
 function pkgVersion(): string {

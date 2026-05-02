@@ -68,6 +68,16 @@ import { UiStateService } from '../../services/ui-state.service';
 
         <select
           class="select"
+          [ngModel]="state.filters().branch ?? ''"
+          (ngModelChange)="onBranch($event)"
+          aria-label="Filter by branch"
+        >
+          <option value="">All branches</option>
+          <option *ngFor="let b of branchOptions()" [value]="b">{{ shortBranch(b) }}</option>
+        </select>
+
+        <select
+          class="select author"
           [ngModel]="state.filters().author ?? ''"
           (ngModelChange)="onAuthor($event)"
           aria-label="Filter by author"
@@ -102,6 +112,14 @@ import { UiStateService } from '../../services/ui-state.service';
       </div>
 
       <div class="actions">
+        <button
+          class="btn btn-ghost clear-filters"
+          *ngIf="activeFilterCount()"
+          (click)="clearFilters()"
+          title="Clear active filters"
+        >
+          Clear {{ activeFilterCount() }}
+        </button>
         <button
           class="btn btn-ghost view-toggle"
           (click)="toggleViewMode()"
@@ -146,6 +164,28 @@ import { UiStateService } from '../../services/ui-state.service';
       <span class="chip" *ngFor="let k of q.keywords">{{ k }}</span>
       <span class="chip muted" *ngIf="q.keywords.length === 0 && !q.author && !q.since">no structured filters detected</span>
     </div>
+
+    <div class="filter-chips" *ngIf="activeFilterCount()">
+      <span class="chip-label">Active filters</span>
+      <button class="chip active" *ngIf="state.filters().branch as b" (click)="onBranch('')">
+        branch: {{ shortBranch(b) }} <span>×</span>
+      </button>
+      <button class="chip active" *ngIf="state.filters().author as a" (click)="onAuthor('')">
+        author: {{ a }} <span>×</span>
+      </button>
+      <button class="chip active" *ngIf="state.filters().since as s" (click)="onSince('')">
+        since: {{ s }} <span>×</span>
+      </button>
+      <button class="chip active" *ngIf="state.filters().until as u" (click)="onUntil('')">
+        until: {{ u }} <span>×</span>
+      </button>
+      <button class="chip active" *ngIf="state.filters().file as f" (click)="onFile('')">
+        file: {{ f }} <span>×</span>
+      </button>
+      <button class="chip active" *ngIf="state.filters().search as q" (click)="onSearchInput('')">
+        search: {{ q }} <span>×</span>
+      </button>
+    </div>
   `,
   styles: [`
     :host {
@@ -153,9 +193,10 @@ import { UiStateService } from '../../services/ui-state.service';
       position: sticky;
       top: 0;
       z-index: 50;
-      background: color-mix(in oklab, var(--bg-surface) 92%, transparent);
-      backdrop-filter: blur(8px);
+      background: color-mix(in oklab, var(--bg-glass) 94%, transparent);
+      backdrop-filter: blur(16px) saturate(1.2);
       border-bottom: 1px solid var(--border-soft);
+      box-shadow: var(--shadow-sm);
     }
     .toolbar {
       display: grid;
@@ -164,7 +205,7 @@ import { UiStateService } from '../../services/ui-state.service';
       align-items: center;
       column-gap: 0.75rem;
       row-gap: 0.4rem;
-      padding: 0.55rem 1rem;
+      padding: 0.65rem 1rem 0.55rem;
     }
     .brand {
       display: flex;
@@ -180,6 +221,7 @@ import { UiStateService } from '../../services/ui-state.service';
       place-items: center;
       background: linear-gradient(135deg, var(--accent), #06b6d4);
       color: var(--accent-fg);
+      box-shadow: var(--shadow-glow);
       font-weight: 700;
       font-size: 18px;
     }
@@ -209,14 +251,15 @@ import { UiStateService } from '../../services/ui-state.service';
       min-width: 0;
       max-width: 360px;
       padding: 0 0.55rem;
-      background: var(--bg-surface);
+      background:
+        linear-gradient(180deg, color-mix(in oklab, var(--bg-surface) 94%, white 6%), var(--bg-surface));
       border: 1px solid var(--border-soft);
-      border-radius: var(--radius-sm);
+      border-radius: 999px;
       color: var(--fg-muted);
     }
     .search:focus-within {
       border-color: var(--border-focus);
-      box-shadow: 0 0 0 3px rgba(99,102,241,.18);
+      box-shadow: 0 0 0 3px var(--accent-ring);
     }
     .search-input {
       flex: 1;
@@ -233,6 +276,8 @@ import { UiStateService } from '../../services/ui-state.service';
     .date { width: 8.25rem; }
     .filters .input,
     .filters .select { font-size: 12px; }
+    .filters .select { max-width: 9.5rem; }
+    .filters .select.author { max-width: 8.5rem; }
     .filters .input.file { width: 9rem; }
 
     .actions { display: flex; gap: 0.3rem; align-items: center; }
@@ -283,6 +328,11 @@ import { UiStateService } from '../../services/ui-state.service';
       text-transform: uppercase;
       padding: 0.35rem 0.6rem;
     }
+    .clear-filters {
+      font-size: 11px;
+      color: var(--danger);
+      border-color: color-mix(in oklab, var(--danger) 24%, transparent);
+    }
 
     .nl-chips {
       display: flex;
@@ -294,6 +344,15 @@ import { UiStateService } from '../../services/ui-state.service';
       background: var(--bg-surface);
       font-size: 11px;
     }
+    .filter-chips {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0 1rem 0.55rem;
+      background: color-mix(in oklab, var(--bg-glass) 94%, transparent);
+      font-size: 11px;
+    }
     .chip-label { color: var(--fg-muted); margin-right: 0.2rem; }
     .chip {
       background: var(--bg-elevated);
@@ -302,6 +361,18 @@ import { UiStateService } from '../../services/ui-state.service';
       border-radius: 999px;
       color: var(--fg-secondary);
     }
+    button.chip {
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .chip.active {
+      display: inline-flex;
+      gap: 0.35rem;
+      align-items: center;
+      border-color: color-mix(in oklab, var(--accent) 35%, var(--border-soft));
+      color: var(--fg-primary);
+    }
+    .chip.active span { color: var(--fg-muted); font-weight: 700; }
     .chip.muted { font-style: italic; color: var(--fg-subtle); }
 
     /* Responsive: drop secondary controls before things wrap awkwardly. */
@@ -353,6 +424,15 @@ export class ToolbarComponent {
       ? 'Showing PR / feature groups. Click for flat list.'
       : 'Showing flat commit list. Click for PR / feature groups.'
   );
+  branchOptions = computed(() => {
+    const branches = this.state.branches();
+    const local = branches.filter((b) => !isRemoteBranch(b));
+    return local.length ? local : branches;
+  });
+  activeFilterCount = computed(() => {
+    const f = this.state.filters();
+    return [f.branch, f.author, f.since, f.until, f.file, f.search].filter(Boolean).length;
+  });
 
   private debounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -383,6 +463,9 @@ export class ToolbarComponent {
   onAuthor(v: string) {
     this.state.patchFilters({ author: v || undefined });
   }
+  onBranch(v: string) {
+    this.state.patchFilters({ branch: v || undefined });
+  }
   onSince(v: string) {
     this.state.patchFilters({ since: v || undefined });
   }
@@ -405,9 +488,29 @@ export class ToolbarComponent {
     this.state.viewMode.set(this.state.viewMode() === 'flat' ? 'grouped' : 'flat');
   }
 
+  clearFilters() {
+    this.state.patchFilters({
+      branch: undefined,
+      author: undefined,
+      since: undefined,
+      until: undefined,
+      file: undefined,
+      search: undefined
+    });
+    this.searchValue.set('');
+  }
+
   private isTyping(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
     return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
       target.isContentEditable;
   }
+
+  shortBranch(branch: string): string {
+    return branch.startsWith('origin/') ? branch.slice('origin/'.length) : branch;
+  }
+}
+
+function isRemoteBranch(branch: string): boolean {
+  return branch.startsWith('origin/') || branch.includes('/origin/');
 }
