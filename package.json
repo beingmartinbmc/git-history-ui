@@ -1,7 +1,7 @@
 {
   "name": "git-history-ui",
-  "version": "2.0.3",
-  "description": "Beautiful, fast git history visualization in your browser — with deterministic swim-lane graphs, virtualized diffs, and a command palette.",
+  "version": "3.0.0",
+  "description": "Git Intelligence in your browser — natural-language search, PR/feature grouping, time-travel snapshots, file history, blame, commit impact, and an insights dashboard. Optional AI integration (Anthropic / OpenAI).",
   "main": "dist/cli.js",
   "bin": {
     "git-history-ui": "dist/cli.js"
@@ -50,7 +50,16 @@
     "developer-tools",
     "git-graph",
     "git-log",
-    "command-palette"
+    "command-palette",
+    "natural-language-search",
+    "ai",
+    "anthropic",
+    "openai",
+    "claude",
+    "blame",
+    "code-insights",
+    "time-travel",
+    "pull-request"
   ],
   "author": "Ankit Sharma <ankit.sharma199803@gmail.com>",
   "license": "MIT",
