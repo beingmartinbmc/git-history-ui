@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>git-history-ui</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; padding: 14px; width: 280px; }
+      h1 { font-size: 14px; margin: 0 0 8px; }
+      label { font-size: 12px; color: #555; display: block; margin-top: 8px; }
+      input { width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; box-sizing: border-box; }
+      button { margin-top: 10px; background: #6366f1; color: #fff; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+      .hint { font-size: 11px; color: #666; line-height: 1.4; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>git-history-ui</h1>
+    <div class="hint">
+      The button appears on GitHub PR and commit pages. Clicking it tries the
+      <code>git-history-ui://</code> protocol first, then falls back to your
+      hosted instance.
+    </div>
+    <label>Hosted instance URL (optional)</label>
+    <input id="hostedUrl" type="url" placeholder="https://gh-ui.example.com" />
+    <button id="save">Save</button>
+    <script src="popup.js"></script>
+  </body>
+</html>

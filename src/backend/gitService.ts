@@ -365,6 +365,43 @@ export class GitService {
     return this.git(['show', `${hash}:${filePath}`], { maxBuffer: 16 * 1024 * 1024 });
   }
 
+  /** Pass-through git runner for trusted callers (e.g., SqliteIndex builder). */
+  async runRaw(args: string[], opts: { maxBuffer?: number } = {}): Promise<string> {
+    return this.git(args, opts);
+  }
+
+  /**
+   * Stream commits one at a time via async iteration. Used by the SSE
+   * endpoint to feed huge repos to the UI progressively without buffering
+   * the entire `git log` output in memory.
+   */
+  async *streamCommits(
+    options: GitOptions = {},
+    batchSize = 200
+  ): AsyncGenerator<Commit, void, void> {
+    if (!(await this.verifyRepository())) {
+      throw new NotARepositoryError();
+    }
+    const refs = await this.getRefIndex();
+    const filterArgs = this.buildFilterArgs(options);
+    let skip = 0;
+    while (true) {
+      const args = [
+        'log',
+        `--max-count=${batchSize}`,
+        `--skip=${skip}`,
+        `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
+        ...filterArgs
+      ];
+      const out = await this.git(args, { maxBuffer: 64 * 1024 * 1024 });
+      const commits = this.parseLog(out, refs);
+      if (commits.length === 0) return;
+      for (const c of commits) yield c;
+      if (commits.length < batchSize) return;
+      skip += commits.length;
+    }
+  }
+
   async getBlame(filePath: string): Promise<BlameLine[]> {
     if (filePath.includes('\0')) throw new Error('Invalid path');
     const raw = await this.git(['blame', '--porcelain', '--', filePath]);

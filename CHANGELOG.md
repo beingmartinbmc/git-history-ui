@@ -4,6 +4,51 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-05-02
+
+The "Distribution & scale" release. This phase makes the tool faster on big
+repos, easier to embed elsewhere, and easier to share a view with a teammate
+— all without breaking the zero-config promise.
+
+### Added
+
+- **SQLite commit index (optional).** New `src/backend/cache/sqliteIndex.ts`
+  builds a per-repo index in `~/.git-history-ui/<hash>.db` keyed off
+  `git rev-list --all` and an FTS5 virtual table over subject/body. Falls
+  back to git-shelling when `better-sqlite3` is not installed. Surfaced via
+  `GET /api/index/stats` and `POST /api/index/build`.
+- **SSE streaming endpoint.** `GET /api/commits/stream` streams commits as
+  they are produced from `git log`, so very large repos render incrementally
+  instead of waiting for the full payload.
+- **Virtualized commit graph.** `CommitGraphComponent` now culls offscreen
+  rows on each draw and re-paints on scroll via `requestAnimationFrame`,
+  keeping the canvas paint cost bounded by viewport height instead of total
+  commit count.
+- **Shareable URLs.** `POST /api/share` returns a URL with the supplied
+  view-state encoded in the query string. The common case ("send my
+  colleague the link") needs no relay server.
+- **Annotations & "Explain this change".** Local-first per-commit comment
+  threads stored under `~/.git-history-ui/<repo>/annotations.json`, plus a
+  one-click ✨ Explain card that calls the configured LLM to summarize a
+  commit's intent.
+- **CLI presets.** New `--preset <name>` and `--save-preset <name>` flags
+  plus a `git-history-ui presets list|delete` subcommand, all backed by
+  `~/.git-history-ui/presets.json`.
+- **Embeddable distribution.** Scaffolds for a Chrome extension
+  (`apps/chrome-extension/`) that injects a "View in git-history-ui" button
+  on GitHub PR / commit pages, a placeholder GitHub App
+  (`apps/github-app/`), and an opportunistic `git-history-ui://` protocol
+  registration script (`scripts/register-protocol.js`, opt-in).
+
+### Changed
+
+- Bumped to `v3.2.0`.
+
+### Notes
+
+- `better-sqlite3` is declared as an `optionalDependency`; install failures
+  are silent and the server continues to operate with the git-shelling path.
+
 ## [3.1.0] - 2026-05-02
 
 Visual polish on top of v3.0 — d3 visualizations replace the placeholder
