@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.2] - 2026-05-02
+
+### Changed
+
+- Hardened large-repo performance: insights now use a single `git log --numstat`
+  pass, SQLite indexing streams git output instead of buffering full logs, and
+  the commit graph keeps its canvas viewport-sized so it remains smooth beyond
+  browser canvas-height limits.
+
+### Fixed
+
+- Preserved rename semantics in churn calculations, safely rejected streaming
+  callback failures, and protected streamed index builds from UTF-8 chunk
+  boundary corruption.
+
 ## [3.2.1] - 2026-05-02
 
 ### Fixed

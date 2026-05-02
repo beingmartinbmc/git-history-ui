@@ -72,6 +72,16 @@ const LANE_COLORS = [
       </div>
     </div>
     <div class="scroll" #scroll>
+      <!--
+        The phantom div carries the full content height so the browser
+        renders a real scrollbar. The canvas itself is sized to the
+        viewport only and follows the scroll via a transform. Drawing
+        translates the world by -scrollTop so visible rows land at the
+        correct pixels. This is the only pattern that scales to repos
+        with 50k+ commits — browsers cap canvas height at ~32k px, so a
+        naive content-sized canvas goes blank past ~960 commits.
+      -->
+      <div class="phantom" [style.height.px]="contentHeight()"></div>
       <canvas
         #canvas
         aria-label="Commit graph"
@@ -138,8 +148,17 @@ const LANE_COLORS = [
         var(--bg-surface);
       background-size: 24px 24px;
     }
+    .phantom {
+      width: 1px;
+      pointer-events: none;
+    }
     canvas {
       display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: auto;
+      will-change: transform;
     }
     .empty {
       position: absolute;
@@ -164,6 +183,10 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     return commits
       ? `${commits.toLocaleString()} commits across ${lanes} lane${lanes === 1 ? '' : 's'}`
       : 'Swim-lane visualization';
+  });
+  readonly contentHeight = computed(() => {
+    const n = this.state.commits().length;
+    return n ? PAD_Y * 2 + n * ROW_H : 0;
   });
 
   @ViewChild('canvas', { static: true }) canvasRef!: ElementRef<HTMLCanvasElement>;
@@ -284,20 +307,30 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     const scroll = this.scrollRef?.nativeElement;
     const dpr = window.devicePixelRatio || 1;
     const contentW = PAD_X * 2 + this.laneCount * LANE_W;
-    const contentH = PAD_Y * 2 + Math.max(this.nodes.length, 1) * ROW_H;
+
+    // The canvas is sized to the viewport (NOT the full content) so it
+    // never exceeds the browser's ~32k px max canvas dimension regardless
+    // of repo size. We follow the scroll via a transform and translate
+    // the drawing context by -scrollTop so world coordinates still map
+    // to the right pixels on screen.
+    const scrollTop = scroll?.scrollTop ?? 0;
+    const viewportH = scroll?.clientHeight ?? 0;
     const w = Math.max(contentW, scroll?.clientWidth ?? contentW);
-    const h = Math.max(contentH, scroll?.clientHeight ?? contentH);
+    const h = Math.max(viewportH || ROW_H * 8, ROW_H);
     canvas.width = Math.floor(w * dpr);
     canvas.height = Math.floor(h * dpr);
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
+    canvas.style.transform = `translateY(${scrollTop}px)`;
 
     const ctx = canvas.getContext('2d')!;
     const theme = this.readTheme(canvas);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+    // Pre-translate by -scrollTop so all world-coordinate draws land in
+    // the correct viewport pixels.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, -scrollTop * dpr);
+    ctx.clearRect(0, scrollTop, w, h);
     ctx.fillStyle = theme.surface;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, scrollTop, w, h);
     if (!this.nodes.length) return;
 
     const xOf = (lane: number) => PAD_X + lane * LANE_W + LANE_W / 2;
@@ -309,13 +342,11 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     // currently scrolled-to band of the canvas (plus a 4-row buffer above
     // and below to keep edges from "popping in"). Lane allocation still
     // walks every commit because parent threading needs full context.
-    const scrollTop = scroll?.scrollTop ?? 0;
-    const viewportH = scroll?.clientHeight ?? h;
     const buffer = ROW_H * 4;
     const minRow = Math.max(0, Math.floor((scrollTop - PAD_Y - buffer) / ROW_H));
     const maxRow = Math.min(
       this.nodes.length - 1,
-      Math.ceil((scrollTop + viewportH - PAD_Y + buffer) / ROW_H)
+      Math.ceil((scrollTop + h - PAD_Y + buffer) / ROW_H)
     );
     const visible = this.nodes.slice(minRow, maxRow + 1);
 
@@ -476,8 +507,13 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   }
 
   private nodeFromEvent(e: MouseEvent): Node | undefined {
-    const rect = this.canvasRef.nativeElement.getBoundingClientRect();
-    const y = e.clientY - rect.top;
+    // Canvas is positioned at (0, 0) inside a relative .scroll container
+    // and shifted via transform by scrollTop. We need world coordinates,
+    // so add scrollTop back to the click offset.
+    const scroll = this.scrollRef?.nativeElement;
+    const rect = scroll?.getBoundingClientRect();
+    if (!rect) return undefined;
+    const y = e.clientY - rect.top + (scroll?.scrollTop ?? 0);
     const row = Math.floor((y - PAD_Y) / ROW_H);
     return this.nodes[row];
   }

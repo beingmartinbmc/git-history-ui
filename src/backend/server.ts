@@ -10,7 +10,7 @@ import { GitService, NotARepositoryError } from './gitService';
 import { runNlSearch } from './search/nlSearch';
 import { buildCommitGroups } from './grouping/prGrouping';
 import { getSnapshot } from './snapshot';
-import { getDefaultLlmService, type LlmConfig } from './llm';
+import { getDefaultLlmService, type LlmConfig, type LlmService } from './llm';
 import { getCommitImpact } from './impact';
 import { computeInsights } from './insights';
 import { AnnotationsStore } from './annotations';
@@ -24,6 +24,8 @@ export interface ServerOptions {
   author?: string;
   cwd?: string;
   llm?: LlmConfig;
+  /** Inject a pre-built LLM service (escape hatch for tests). Overrides `llm`. */
+  llmService?: LlmService;
   githubToken?: string;
 }
 
@@ -81,10 +83,14 @@ export async function startServer(
   app.use('/api', apiLimiter);
 
   const gitService = new GitService(cwd);
-  const llmService = getDefaultLlmService(options.llm ?? {});
+  const llmService = options.llmService ?? getDefaultLlmService(options.llm ?? {});
   const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN;
   const annotations = new AnnotationsStore(cwd);
-  const sqliteIndex = new SqliteIndex(cwd, (args) => gitService.runRaw(args, { maxBuffer: 256 * 1024 * 1024 }));
+  const sqliteIndex = new SqliteIndex(
+    cwd,
+    (args) => gitService.runRaw(args, { maxBuffer: 256 * 1024 * 1024 }),
+    (args, onChunk) => gitService.streamRaw(args, onChunk)
+  );
 
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
@@ -477,10 +483,12 @@ function pkgVersion(): string {
     const raw = fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8');
     return (JSON.parse(raw) as { version: string }).version;
   } catch {
+    /* istanbul ignore next -- only triggers when package.json is unreadable; verified manually */
     return '0.0.0';
   }
 }
 
+/* istanbul ignore next -- bootstrap path; covered by the spawned-process cli.test.ts */
 if (require.main === module) {
   const port = parseInt(process.env.PORT || '', 10) || DEFAULT_PORT;
   const host = process.env.HOST || DEFAULT_HOST;
