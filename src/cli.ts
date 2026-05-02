@@ -27,7 +27,13 @@ program
   .option('--cwd <path>', 'path to the git repository (defaults to cwd)')
   .option('--llm <provider>', 'LLM provider: heuristic, anthropic, openai (default: auto)')
   .option('--preset <name>', 'load filters from a saved preset')
-  .option('--save-preset <name>', 'save the current flags as a preset for next time');
+  .option('--save-preset <name>', 'save the current flags as a preset for next time')
+  // Default action: when the user runs `git-history-ui` with no subcommand,
+  // start the server. Without this, commander v12 prints help and exits as
+  // soon as any subcommand (e.g. `presets`) is registered.
+  .action(() => {
+    void main();
+  });
 
 program
   .command('presets')
@@ -69,11 +75,10 @@ program
     process.exit(1);
   });
 
-program.parseAsync().then(() => {
-  // Skip default-action if a subcommand ran.
-  if (program.args[0] === 'presets') return;
-  void main();
-});
+// `main()` runs from the root `.action()` when no subcommand is given,
+// or the `presets` handler runs for that subcommand. Either way, parseAsync
+// drives the right path.
+void program.parseAsync();
 
 interface MainOptions {
   port: string;
