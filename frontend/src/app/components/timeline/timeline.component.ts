@@ -29,6 +29,10 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
       </header>
 
       <div class="slider-wrap">
+        <div class="rail">
+          <div class="rail-fill" [style.width.%]="tickPct()"></div>
+          <div class="rail-knob" [style.left.%]="tickPct()"></div>
+        </div>
         <input
           type="range"
           class="slider"
@@ -100,7 +104,7 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
   `,
   styles: [`
     :host { display: block; flex: 1; min-height: 0; overflow-y: auto; }
-    .page { padding: 1rem 1.25rem; max-width: 1200px; margin: 0 auto; }
+    .page { padding: 1.1rem 1.25rem 1.4rem; max-width: 1240px; margin: 0 auto; }
     .head {
       display: flex;
       justify-content: space-between;
@@ -108,27 +112,66 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
       gap: 1rem;
       margin-bottom: 1rem;
     }
-    .head h2 { margin: 0; font-size: 18px; }
+    .head h2 { margin: 0; font-size: clamp(20px, 2vw, 28px); letter-spacing: -0.03em; }
     .head .sub { margin: 0.2rem 0 0; color: var(--fg-muted); font-size: 13px; }
     .now {
       font-family: var(--font-mono, monospace);
       font-size: 13px;
       padding: 0.4rem 0.7rem;
-      background: var(--bg-elevated);
+      background: var(--bg-panel);
       border: 1px solid var(--border-soft);
-      border-radius: var(--radius-sm);
+      border-radius: 999px;
+      box-shadow: var(--shadow-sm);
     }
 
     .slider-wrap {
-      background: var(--bg-surface);
+      position: relative;
+      background:
+        radial-gradient(circle at 20% 0%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 42%),
+        var(--bg-panel);
       border: 1px solid var(--border-soft);
-      border-radius: var(--radius-md);
+      border-radius: var(--radius-lg);
       padding: 1rem 1.25rem;
       margin-bottom: 1rem;
+      box-shadow: var(--shadow-sm);
+    }
+    .rail {
+      position: relative;
+      height: 10px;
+      margin: 0.25rem 0 0.85rem;
+      border-radius: 999px;
+      background: var(--bg-surface-2);
+      overflow: visible;
+    }
+    .rail-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), #06b6d4);
+      transition: width 120ms ease;
+    }
+    .rail-knob {
+      position: absolute;
+      top: 50%;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--bg-surface);
+      border: 3px solid var(--accent);
+      box-shadow: var(--shadow-md);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
     }
     .slider {
       width: 100%;
       accent-color: var(--accent);
+      opacity: 0.01;
+      position: absolute;
+      left: 1.25rem;
+      right: 1.25rem;
+      top: 0.95rem;
+      width: calc(100% - 2.5rem);
+      height: 34px;
+      cursor: ew-resize;
     }
     .ticks {
       display: flex;
@@ -153,10 +196,18 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
       margin-bottom: 1rem;
     }
     .snap-card {
-      background: var(--bg-surface);
+      background:
+        linear-gradient(180deg, color-mix(in oklab, var(--bg-panel) 96%, white 4%), var(--bg-panel));
       border: 1px solid var(--border-soft);
-      border-radius: var(--radius-md);
+      border-radius: var(--radius-lg);
       padding: 0.75rem 1rem;
+      box-shadow: var(--shadow-sm);
+      transition: border-color 120ms, box-shadow 120ms, transform 120ms;
+    }
+    .snap-card:hover {
+      border-color: color-mix(in oklab, var(--accent) 28%, var(--border-soft));
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
     }
     .snap-label {
       display: block;
@@ -183,10 +234,11 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
     .ref-hash { font-family: var(--font-mono, monospace); color: var(--fg-muted); font-size: 11px; }
 
     .diff-panel {
-      background: var(--bg-surface);
+      background: var(--bg-panel);
       border: 1px solid var(--border-soft);
-      border-radius: var(--radius-md);
+      border-radius: var(--radius-lg);
       overflow: hidden;
+      box-shadow: var(--shadow-sm);
     }
     .diff-head {
       padding: 0.75rem 1rem;
@@ -198,29 +250,44 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
     .diff-head h3 { margin: 0; font-size: 14px; }
     .diff-status { font-size: 12px; color: var(--fg-muted); }
     .diff-status.muted { font-style: italic; }
-    .files { padding: 0.5rem 0; max-height: 220px; overflow-y: auto; }
-    .file {
+    .files {
       display: flex;
+      gap: 0.4rem;
+      padding: 0.65rem;
+      max-height: 170px;
+      overflow: auto;
+      flex-wrap: wrap;
+      background: color-mix(in oklab, var(--bg-surface-2) 56%, transparent);
+    }
+    .file {
+      display: inline-flex;
       align-items: center;
       gap: 0.6rem;
-      padding: 0.35rem 1rem;
+      padding: 0.38rem 0.65rem;
       cursor: pointer;
       font-size: 12px;
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      background: var(--bg-surface);
+      max-width: 100%;
     }
-    .file:hover { background: var(--bg-elevated); }
-    .file.selected { background: color-mix(in oklab, var(--accent) 18%, transparent); }
+    .file:hover { background: var(--bg-hover); }
+    .file.selected {
+      background: color-mix(in oklab, var(--accent) 18%, transparent);
+      border-color: color-mix(in oklab, var(--accent) 40%, var(--border-soft));
+    }
     .status {
       font-size: 10px;
       padding: 1px 6px;
-      border-radius: 3px;
-      background: var(--bg-elevated);
+      border-radius: 999px;
+      background: var(--bg-surface-2);
       color: var(--fg-muted);
       text-transform: uppercase;
     }
     .status-added { background: rgba(16, 185, 129, 0.18); color: #10b981; }
     .status-deleted { background: rgba(239, 68, 68, 0.18); color: #ef4444; }
     .status-modified { background: rgba(99, 102, 241, 0.18); color: var(--accent); }
-    .path { flex: 1; font-family: var(--font-mono, monospace); }
+    .path { flex: 1; font-family: var(--font-mono, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .changes { font-size: 11px; color: var(--fg-muted); }
     .diff-body { border-top: 1px solid var(--border-soft); padding: 0.5rem 0; }
   `]
@@ -245,6 +312,10 @@ export class TimelineComponent {
   readonly lastTickLabel = computed(
     () => this.ticks()[this.ticks().length - 1]?.label ?? ''
   );
+  readonly tickPct = computed(() => {
+    const max = Math.max(1, this.ticks().length - 1);
+    return Math.round((this.tickIndex() / max) * 100);
+  });
 
   constructor() {
     // Default to the latest tick (most recent).

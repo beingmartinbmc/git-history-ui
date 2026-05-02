@@ -121,15 +121,15 @@ interface SideLine {
       flex-direction: column;
       height: 100%;
       min-height: 0;
-      background: var(--bg-surface);
+      background: transparent;
     }
     .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0.5rem 0.85rem;
+      padding: 0.58rem 0.85rem;
       border-bottom: 1px solid var(--border-soft);
-      background: var(--bg-surface);
+      background: color-mix(in oklab, var(--bg-surface) 88%, transparent);
       gap: 0.75rem;
     }
     .file-info {
@@ -153,6 +153,7 @@ interface SideLine {
       font-weight: 700;
       padding: 2px 6px;
       border-radius: 999px;
+      border: 1px solid transparent;
       letter-spacing: 0.04em;
       color: var(--accent-fg);
     }
@@ -216,7 +217,7 @@ interface SideLine {
       font-size: 12.5px;
       line-height: 1.55;
       color: var(--fg-primary);
-      background: var(--bg-surface-2);
+      background: color-mix(in oklab, var(--bg-surface-2) 82%, transparent);
       min-height: 0;
     }
     code { display: block; min-width: max-content; }
@@ -224,8 +225,11 @@ interface SideLine {
       display: grid;
       grid-template-columns: 48px 48px 14px 1fr;
       align-items: baseline;
-      padding: 0 0.5rem;
+      padding: 0 0.6rem;
       white-space: pre;
+    }
+    .line:hover {
+      background: color-mix(in oklab, var(--accent) 7%, transparent);
     }
     .split .line {
       grid-template-columns: 48px 1fr;

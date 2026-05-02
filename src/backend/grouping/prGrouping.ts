@@ -30,6 +30,7 @@ export interface GroupingOptions {
   since?: string;
   until?: string;
   author?: string;
+  branch?: string;
   /** When set + remote is GitHub, fetch PR metadata. */
   githubToken?: string;
   /** Cap to keep result responsive on huge repos. */
@@ -53,6 +54,7 @@ export async function buildCommitGroups(
     since: opts.since,
     until: opts.until,
     author: opts.author,
+    branch: opts.branch,
     page: 1,
     pageSize: maxCommits
   });
