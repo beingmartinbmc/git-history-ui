@@ -9,11 +9,13 @@ import {
 import { Router } from '@angular/router';
 import { InsightsBundle } from '../../models/git.models';
 import { InsightsService } from '../../services/insights.service';
+import { ChurnChartComponent } from './churn-chart.component';
+import { HotspotsTreemapComponent } from './hotspots-treemap.component';
 
 @Component({
   selector: 'app-insights',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, HotspotsTreemapComponent, ChurnChartComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page">
@@ -44,10 +46,11 @@ import { InsightsService } from '../../services/insights.service';
           </ul>
         </section>
 
-        <section class="card">
-          <h3>Hotspots <span class="card-sub">(most-changed files)</span></h3>
-          <ul class="hot-list">
-            <li *ngFor="let h of b.hotspots">
+        <section class="card wide">
+          <h3>Hotspots <span class="card-sub">(treemap sized by commit count — click to drill in)</span></h3>
+          <app-hotspots-treemap [data]="b.hotspots" (fileClick)="openFile($event)" />
+          <ul class="hot-list compact">
+            <li *ngFor="let h of b.hotspots.slice(0, 5)">
               <a class="path" (click)="openFile(h.file)">{{ h.file }}</a>
               <span class="count">{{ h.commits }}c · {{ h.authors }}a</span>
               <span class="churn">+{{ h.additions }} −{{ h.deletions }}</span>
@@ -71,15 +74,7 @@ import { InsightsService } from '../../services/insights.service';
 
         <section class="card wide">
           <h3>Churn over time</h3>
-          <div class="churn-chart">
-            <div class="day"
-                 *ngFor="let d of b.churnByDay; trackBy: trackByDate"
-                 [title]="d.date + ': ' + d.commits + ' commits, +' + d.additions + ' / -' + d.deletions">
-              <div class="day-bar"
-                   [style.height.%]="dayPct(d.commits, maxDayCommits())"></div>
-              <div class="day-label" *ngIf="shouldShowLabel(d.date)">{{ d.date | slice:5:10 }}</div>
-            </div>
-          </div>
+          <app-churn-chart [data]="b.churnByDay" />
         </section>
       </div>
     </div>
@@ -117,6 +112,7 @@ import { InsightsService } from '../../services/insights.service';
     .bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
 
     .hot-list, .risk-list { list-style: none; margin: 0; padding: 0; }
+    .hot-list.compact { margin-top: 0.5rem; max-height: 130px; overflow-y: auto; }
     .hot-list li, .risk-list li {
       display: grid;
       grid-template-columns: 1fr auto auto;

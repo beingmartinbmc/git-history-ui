@@ -1,8 +1,13 @@
 import { CommonModule } from '@angular/common';
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   Input,
+  OnDestroy,
+  ViewChildren,
+  QueryList,
   computed,
   inject,
   signal
@@ -93,20 +98,20 @@ interface SideLine {
             class="sign">{{ sign(l) }}</span><span class="text" [innerHTML]="render(l.text)"></span></div></code></pre>
 
       <div class="split" *ngIf="mode() === 'split'">
-        <pre class="side"><code><div
+        <pre #splitPane class="side"><code><div
             *ngFor="let l of splitLines().left; trackBy: trackByIdx"
             class="line"
             [class.del]="l.type === 'del'"
             [class.empty]="l.type === 'empty'"
             [class.hunk]="l.type === 'hunk'"
-          ><span class="gutter">{{ l.no ?? '' }}</span><span class="text" [innerHTML]="render(l.text)"></span></div></code></pre>
-        <pre class="side"><code><div
+          ><span class="gutter">{{ l.no ?? '' }}</span><span class="text" [innerHTML]="renderSide(l)"></span></div></code></pre>
+        <pre #splitPane class="side"><code><div
             *ngFor="let l of splitLines().right; trackBy: trackByIdx"
             class="line"
             [class.add]="l.type === 'add'"
             [class.empty]="l.type === 'empty'"
             [class.hunk]="l.type === 'hunk'"
-          ><span class="gutter">{{ l.no ?? '' }}</span><span class="text" [innerHTML]="render(l.text)"></span></div></code></pre>
+          ><span class="gutter">{{ l.no ?? '' }}</span><span class="text" [innerHTML]="renderSide(l)"></span></div></code></pre>
       </div>
     </ng-container>
   `,
@@ -239,8 +244,10 @@ interface SideLine {
     .text { white-space: pre; }
     .line.add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
     .line.add .gutter { color: var(--diff-add-gutter); }
+    .line.add .text :global(.word-changed) { background: color-mix(in oklab, var(--success) 35%, transparent); border-radius: 2px; }
     .line.del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
     .line.del .gutter { color: var(--diff-del-gutter); }
+    .line.del .text :global(.word-changed) { background: color-mix(in oklab, var(--danger) 35%, transparent); border-radius: 2px; }
     .line.hunk { background: var(--diff-hunk-bg); color: var(--diff-hunk-fg); font-style: italic; }
     .line.meta { color: var(--fg-muted); }
     .line.empty { background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in oklab, var(--fg-subtle) 14%, transparent) 6px 12px); }
@@ -267,11 +274,15 @@ interface SideLine {
     }
   `]
 })
-export class DiffViewerComponent {
+export class DiffViewerComponent implements AfterViewInit, OnDestroy {
   @Input() set fileInput(value: DiffFile | null) {
     this.file = value;
     this.parsed.set(value ? this.parse(value.changes) : []);
   }
+
+  @ViewChildren('splitPane') splitPanes?: QueryList<ElementRef<HTMLPreElement>>;
+  private syncing = false;
+  private syncListeners: Array<() => void> = [];
 
   private insightsApi = inject(InsightsService);
 
@@ -338,21 +349,23 @@ export class DiffViewerComponent {
         i++;
         continue;
       }
-      // collect contiguous block of dels/adds
       const dels: DiffLine[] = [];
       const adds: DiffLine[] = [];
       while (i < lines.length && lines[i].type === 'del') dels.push(lines[i++]);
       while (i < lines.length && lines[i].type === 'add') adds.push(lines[i++]);
       const max = Math.max(dels.length, adds.length);
       for (let j = 0; j < max; j++) {
+        const d = dels[j];
+        const a = adds[j];
+        const wordPair = d && a ? wordDiff(d.text, a.text) : null;
         left.push(
-          dels[j]
-            ? { type: 'del', no: dels[j].oldNo, text: dels[j].text }
+          d
+            ? { type: 'del', no: d.oldNo, text: d.text, html: wordPair?.left }
             : { type: 'empty', text: '' }
         );
         right.push(
-          adds[j]
-            ? { type: 'add', no: adds[j].newNo, text: adds[j].text }
+          a
+            ? { type: 'add', no: a.newNo, text: a.text, html: wordPair?.right }
             : { type: 'empty', text: '' }
         );
       }
@@ -360,8 +373,52 @@ export class DiffViewerComponent {
     return { left, right };
   });
 
+  /**
+   * Variant of `render()` that prefers a precomputed word-diff HTML when
+   * available, falling back to the regular syntax-highlighted text.
+   */
+  renderSide(l: SideLine): string {
+    if (l.html) return l.html;
+    return this.render(l.text);
+  }
+
   trackByIdx(i: number) {
     return i;
+  }
+
+  ngAfterViewInit() {
+    this.splitPanes?.changes.subscribe(() => this.attachScrollSync());
+    this.attachScrollSync();
+  }
+
+  ngOnDestroy() {
+    this.detachScrollSync();
+  }
+
+  /** When in split mode, mirror scroll between the two <pre>s. */
+  private attachScrollSync() {
+    this.detachScrollSync();
+    const panes = this.splitPanes?.toArray() ?? [];
+    if (panes.length !== 2) return;
+    const [a, b] = panes.map((p) => p.nativeElement);
+    const sync = (src: HTMLElement, dst: HTMLElement) => () => {
+      if (this.syncing) return;
+      this.syncing = true;
+      dst.scrollTop = src.scrollTop;
+      dst.scrollLeft = src.scrollLeft;
+      requestAnimationFrame(() => (this.syncing = false));
+    };
+    const onA = sync(a, b);
+    const onB = sync(b, a);
+    a.addEventListener('scroll', onA, { passive: true });
+    b.addEventListener('scroll', onB, { passive: true });
+    this.syncListeners.push(() => a.removeEventListener('scroll', onA));
+    this.syncListeners.push(() => b.removeEventListener('scroll', onB));
+  }
+
+  private detachScrollSync() {
+    for (const off of this.syncListeners) off();
+    this.syncListeners = [];
   }
 
   onSummarize() {
@@ -424,6 +481,8 @@ export class DiffViewerComponent {
       .replace(/>/g, '&gt;');
   }
 
+  // (wordDiff helper is defined at module scope below)
+
   private parse(raw: string): DiffLine[] {
     const out: DiffLine[] = [];
     if (!raw) return out;
@@ -472,4 +531,74 @@ export class DiffViewerComponent {
     }
     return out;
   }
+}
+
+/**
+ * Compute a word-level diff between two lines and return HTML-safe markup
+ * with `.word-changed` spans wrapping the differing tokens. Uses a simple
+ * O(n*m) LCS — fine for typical line lengths under a few hundred chars.
+ *
+ * Returns `null` if either side is empty (no benefit from word-level diff).
+ */
+function wordDiff(left: string, right: string): { left: string; right: string } | null {
+  if (!left || !right) return null;
+
+  const la = tokenizeWords(left);
+  const ra = tokenizeWords(right);
+
+  // Build LCS table.
+  const m = la.length;
+  const n = ra.length;
+  if (m === 0 || n === 0) return null;
+  // Bail if very long to keep this cheap.
+  if (m * n > 20000) return null;
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = la[i] === ra[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  // Walk to emit pieces.
+  const leftOut: string[] = [];
+  const rightOut: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (la[i] === ra[j]) {
+      const t = escapeHtml(la[i]);
+      leftOut.push(t);
+      rightOut.push(t);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      leftOut.push(`<span class="word-changed">${escapeHtml(la[i])}</span>`);
+      i++;
+    } else {
+      rightOut.push(`<span class="word-changed">${escapeHtml(ra[j])}</span>`);
+      j++;
+    }
+  }
+  while (i < m) {
+    leftOut.push(`<span class="word-changed">${escapeHtml(la[i++])}</span>`);
+  }
+  while (j < n) {
+    rightOut.push(`<span class="word-changed">${escapeHtml(ra[j++])}</span>`);
+  }
+  return { left: leftOut.join(''), right: rightOut.join('') };
+}
+
+function tokenizeWords(s: string): string[] {
+  // Split keeping whitespace and punctuation as their own tokens so the
+  // visible reconstruction is exact.
+  return s.match(/(\s+|[A-Za-z0-9_]+|[^A-Za-z0-9_\s])/g) ?? [];
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

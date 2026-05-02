@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-05-02
+
+Visual polish on top of v3.0 — d3 visualizations replace the placeholder
+HTML/CSS charts, and the split diff view gets the niceties developers expect
+from elite diff tools.
+
+### Added
+
+- **d3 force-directed impact graph.** New `ImpactGraphComponent` renders
+  changed files, their JS/TS imports, and module groupings as a draggable
+  force-directed graph in the commit detail panel.
+- **d3 hotspots treemap.** The Insights dashboard now renders hotspots as a
+  proportional treemap (cell size = commit count, color = saturation).
+  Cells are clickable and open the file's history view.
+- **d3 churn chart.** Insights "Churn over time" upgraded from CSS bars to a
+  proper time-axis area chart with a smooth curve.
+- **Side-by-side diff scroll-sync.** The split diff view now mirrors scroll
+  position and direction across both panes.
+- **Intra-line word highlighting.** When a `del`/`add` line pair is shown
+  side-by-side, only the changed words are accented (not the whole line) —
+  uses an LCS word-tokenizer with a 20k character cap to stay snappy.
+
+### Changed
+
+- The previous "list of dependency-ripple lines" inside the impact card has
+  been replaced with the interactive graph; the related-commits and modules
+  lists stay below it for screen-reader / keyboard users.
+
 ## [3.0.0] - 2026-05-02
 
 This release transforms `git-history-ui` from a "pretty git log" into a
