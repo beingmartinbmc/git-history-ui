@@ -7,17 +7,21 @@ import {
   inject,
   signal
 } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { catchError, of, switchMap } from 'rxjs';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
-import { DiffFile } from '../../models/git.models';
+import { AnnotationComment, CommitImpact, DiffFile } from '../../models/git.models';
+import { AnnotationsService } from '../../services/annotations.service';
 import { GitService } from '../../services/git.service';
+import { InsightsService } from '../../services/insights.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 
 @Component({
   selector: 'app-commit-detail',
   standalone: true,
-  imports: [CommonModule, DatePipe, DiffViewerComponent],
+  imports: [CommonModule, DatePipe, FormsModule, DiffViewerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <ng-container *ngIf="commit() as c; else empty">
@@ -37,7 +41,65 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
           <span>{{ c.date | date: 'medium' }}</span>
         </div>
         <pre class="body" *ngIf="c.body">{{ c.body }}</pre>
+
+        <div class="actions">
+          <button class="btn btn-ghost btn-sm" (click)="onExplain()" [disabled]="explaining()">
+            {{ explaining() ? '...' : '✨ Explain change' }}
+          </button>
+          <button class="btn btn-ghost btn-sm" (click)="onLoadImpact()" [disabled]="loadingImpact()">
+            {{ loadingImpact() ? '...' : impact() ? 'Refresh impact' : 'Show impact' }}
+          </button>
+          <button class="btn btn-ghost btn-sm" (click)="copyShareLink()">
+            {{ shareCopied() ? 'Copied!' : '🔗 Share' }}
+          </button>
+        </div>
+
+        <div class="ai-card" *ngIf="explanation() as e">
+          <span class="ai-pill">AI</span>
+          <span class="ai-text">{{ e }}</span>
+          <button class="btn btn-ghost btn-icon close" (click)="explanation.set(null)">×</button>
+        </div>
+        <div class="ai-card error" *ngIf="explainError() as e">{{ e }}</div>
       </header>
+
+      <div class="impact-card" *ngIf="impact() as imp">
+        <div class="impact-head">
+          <span>Impact</span>
+          <span class="impact-meta">
+            {{ imp.files.length }} files · {{ imp.modules.length }} modules ·
+            {{ imp.relatedCommits.length }} related commits
+          </span>
+        </div>
+        <div class="impact-body">
+          <div>
+            <h4>Modules</h4>
+            <ul class="modules">
+              <li *ngFor="let m of imp.modules">{{ m }}</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Dependency ripple</h4>
+            <ul class="ripple" *ngIf="imp.dependencyRipple.length; else noRipple">
+              <li *ngFor="let r of imp.dependencyRipple.slice(0, 8)">
+                <code>{{ shortPath(r.from) }}</code> → <code>{{ shortPath(r.to) }}</code>
+              </li>
+            </ul>
+            <ng-template #noRipple>
+              <p class="muted">No JS/TS imports detected in changed files.</p>
+            </ng-template>
+          </div>
+          <div>
+            <h4>Related commits</h4>
+            <ul class="related">
+              <li *ngFor="let r of imp.relatedCommits"
+                  (click)="state.selectHash(r.hash)">
+                <code>{{ r.hash.slice(0, 7) }}</code>
+                <span>{{ r.subject }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
 
       <div class="split">
         <aside class="files">
@@ -46,17 +108,21 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
             <span class="count" *ngIf="files().length">{{ files().length }}</span>
           </div>
           <div class="files-list">
-            <button *ngFor="let f of files(); trackBy: trackByFile"
-                    class="file"
-                    [class.selected]="f.file === activeFile()?.file"
-                    (click)="selectFile(f)">
-              <span class="status-dot" [attr.data-status]="f.status"></span>
-              <span class="path" [title]="f.file">{{ f.file }}</span>
-              <span class="counts">
-                <span class="add" *ngIf="f.additions">+{{ f.additions }}</span>
-                <span class="del" *ngIf="f.deletions">−{{ f.deletions }}</span>
-              </span>
-            </button>
+            <div *ngFor="let f of files(); trackBy: trackByFile" class="file-row">
+              <button class="file"
+                      [class.selected]="f.file === activeFile()?.file"
+                      (click)="selectFile(f)">
+                <span class="status-dot" [attr.data-status]="f.status"></span>
+                <span class="path" [title]="f.file">{{ f.file }}</span>
+                <span class="counts">
+                  <span class="add" *ngIf="f.additions">+{{ f.additions }}</span>
+                  <span class="del" *ngIf="f.deletions">−{{ f.deletions }}</span>
+                </span>
+              </button>
+              <button class="file-history" (click)="openFileHistory(f.file)" title="View file history">
+                ⏱
+              </button>
+            </div>
             <div class="files-empty" *ngIf="!files().length && !loading()">
               No files changed.
             </div>
@@ -64,6 +130,26 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
           </div>
         </aside>
         <section class="diff">
+          <details class="annotations" [open]="annotationsOpen()">
+            <summary (click)="toggleAnnotations($event)">
+              💬 Notes ({{ comments().length }})
+            </summary>
+            <div class="annot-body">
+              <div class="comment" *ngFor="let c of comments()">
+                <div class="comment-head">
+                  <strong>{{ c.author }}</strong>
+                  <span class="comment-date">{{ c.createdAt | date:'short' }}</span>
+                  <button class="btn btn-ghost btn-icon" (click)="deleteComment(c.id)" title="Delete">×</button>
+                </div>
+                <p class="comment-body">{{ c.body }}</p>
+              </div>
+              <div class="comment-form">
+                <input class="input" placeholder="Your name" [(ngModel)]="commentAuthor" />
+                <textarea class="input" placeholder="Add a note for your team…" [(ngModel)]="commentDraft"></textarea>
+                <button class="btn" (click)="addComment()" [disabled]="!commentDraft.trim()">Post</button>
+              </div>
+            </div>
+          </details>
           <app-diff-viewer [fileInput]="activeFile()" />
         </section>
       </div>
@@ -241,13 +327,137 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
     }
     .placeholder .title { font-size: 16px; margin-bottom: 4px; color: var(--fg-secondary); }
     .placeholder .hint { font-size: 13px; }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.6rem;
+    }
+    .btn-sm { font-size: 11px; padding: 0.3rem 0.65rem; }
+
+    .ai-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      padding: 0.55rem 0.75rem;
+      margin-top: 0.5rem;
+      background: color-mix(in oklab, var(--accent) 12%, transparent);
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      color: var(--fg-secondary);
+    }
+    .ai-card.error { background: rgba(239, 68, 68, 0.12); color: var(--danger); }
+    .ai-pill {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      background: var(--accent);
+      color: var(--accent-fg);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .ai-text { flex: 1; line-height: 1.5; }
+    .ai-card .close { font-size: 14px; line-height: 1; padding: 0 6px; }
+
+    .impact-card {
+      margin: 0.6rem 1rem;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-md);
+      padding: 0.75rem 1rem;
+    }
+    .impact-head { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 0.5rem; font-size: 13px; }
+    .impact-meta { color: var(--fg-muted); font-weight: 400; font-size: 11px; }
+    .impact-body {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 0.75rem;
+      font-size: 12px;
+    }
+    .impact-body h4 { margin: 0 0 0.4rem; font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .impact-body ul { list-style: none; margin: 0; padding: 0; }
+    .impact-body li { padding: 2px 0; word-break: break-all; }
+    .modules li { font-family: var(--font-mono, monospace); }
+    .ripple li { font-size: 11px; color: var(--fg-secondary); }
+    .related li { cursor: pointer; display: flex; gap: 0.4rem; }
+    .related li:hover { color: var(--accent); }
+    .related code { font-family: var(--font-mono, monospace); color: var(--fg-muted); flex-shrink: 0; }
+    .impact-body .muted { color: var(--fg-muted); font-style: italic; margin: 0; font-size: 11px; }
+
+    .file-row { display: flex; }
+    .file-row .file { flex: 1; }
+    .file-history {
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--border-soft);
+      cursor: pointer;
+      color: var(--fg-muted);
+      padding: 0 0.6rem;
+      font-size: 12px;
+    }
+    .file-history:hover { background: var(--bg-elevated); color: var(--accent); }
+
+    .annotations {
+      margin: 0.5rem;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+    }
+    .annotations summary {
+      padding: 0.4rem 0.7rem;
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--fg-secondary);
+      user-select: none;
+    }
+    .annotations[open] summary { border-bottom: 1px solid var(--border-soft); }
+    .annot-body { padding: 0.5rem 0.7rem; }
+    .comment {
+      padding: 0.4rem 0;
+      border-bottom: 1px dashed var(--border-soft);
+      font-size: 12px;
+    }
+    .comment:last-of-type { border-bottom: 0; }
+    .comment-head { display: flex; align-items: center; gap: 0.5rem; }
+    .comment-date { color: var(--fg-muted); font-size: 11px; flex: 1; }
+    .comment-body { margin: 0.2rem 0 0; line-height: 1.4; white-space: pre-wrap; }
+    .comment-form { display: flex; gap: 0.4rem; flex-direction: column; margin-top: 0.5rem; }
+    .comment-form .input {
+      width: 100%;
+      padding: 0.35rem 0.5rem;
+      background: var(--bg-app);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+      color: var(--fg-primary);
+      font-family: inherit;
+      font-size: 12px;
+    }
+    .comment-form textarea { min-height: 60px; resize: vertical; }
+    .comment-form .btn { align-self: flex-end; }
   `]
 })
 export class CommitDetailComponent {
-  private state = inject(UiStateService);
+  state = inject(UiStateService);
   private git = inject(GitService);
+  private insightsApi = inject(InsightsService);
+  private annotationsApi = inject(AnnotationsService);
+  private router = inject(Router);
 
   commit = this.state.selected;
+
+  readonly impact = signal<CommitImpact | null>(null);
+  readonly loadingImpact = signal<boolean>(false);
+  readonly explanation = signal<string | null>(null);
+  readonly explainError = signal<string | null>(null);
+  readonly explaining = signal<boolean>(false);
+  readonly comments = signal<AnnotationComment[]>([]);
+  readonly annotationsOpen = signal<boolean>(false);
+  readonly shareCopied = signal<boolean>(false);
+
+  commentDraft = '';
+  commentAuthor = 'me';
 
   loading = signal(false);
 
@@ -277,10 +487,26 @@ export class CommitDetailComponent {
 
   constructor() {
     effect(() => {
-      // reset selection when files list changes
       void this.files();
       this.activeFileIndex.set(0);
       this.loading.set(false);
+    });
+
+    // Whenever the selected commit changes, reset side-panel state and load annotations.
+    effect(() => {
+      const c = this.commit();
+      this.impact.set(null);
+      this.explanation.set(null);
+      this.explainError.set(null);
+      this.shareCopied.set(false);
+      if (!c) {
+        this.comments.set([]);
+        return;
+      }
+      this.annotationsApi.list(c.hash).subscribe({
+        next: (list) => this.comments.set(list),
+        error: () => this.comments.set([])
+      });
     });
   }
 
@@ -291,5 +517,81 @@ export class CommitDetailComponent {
   selectFile(f: DiffFile) {
     const idx = this.files().findIndex((x) => x.file === f.file);
     if (idx >= 0) this.activeFileIndex.set(idx);
+  }
+
+  openFileHistory(file: string) {
+    this.router.navigate(['/file', encodeURIComponent(file)]);
+  }
+
+  shortPath(p: string): string {
+    if (p.length <= 32) return p;
+    const parts = p.split('/');
+    if (parts.length <= 2) return p;
+    return parts[0] + '/.../' + parts.slice(-2).join('/');
+  }
+
+  onLoadImpact() {
+    const c = this.commit();
+    if (!c) return;
+    this.loadingImpact.set(true);
+    this.insightsApi.impact(c.hash).subscribe({
+      next: (i) => {
+        this.impact.set(i);
+        this.loadingImpact.set(false);
+      },
+      error: () => this.loadingImpact.set(false)
+    });
+  }
+
+  onExplain() {
+    const c = this.commit();
+    if (!c || this.explaining()) return;
+    this.explaining.set(true);
+    this.explainError.set(null);
+    this.insightsApi.explainCommit(c.hash).subscribe({
+      next: (r) => {
+        this.explanation.set(r.summary);
+        this.explaining.set(false);
+      },
+      error: (err) => {
+        this.explainError.set(err?.error?.error ?? 'AI explanation unavailable. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.');
+        this.explaining.set(false);
+      }
+    });
+  }
+
+  copyShareLink() {
+    const c = this.commit();
+    if (!c) return;
+    const url = `${window.location.origin}/?commit=${c.hash}`;
+    navigator.clipboard?.writeText(url).then(() => {
+      this.shareCopied.set(true);
+      setTimeout(() => this.shareCopied.set(false), 1500);
+    }).catch(() => {
+      this.shareCopied.set(false);
+    });
+  }
+
+  toggleAnnotations(_event: Event) {
+    setTimeout(() => this.annotationsOpen.set(!this.annotationsOpen()), 0);
+  }
+
+  addComment() {
+    const c = this.commit();
+    if (!c || !this.commentDraft.trim()) return;
+    this.annotationsApi.add(c.hash, this.commentAuthor || 'anonymous', this.commentDraft.trim()).subscribe({
+      next: (created) => {
+        this.comments.set([...this.comments(), created]);
+        this.commentDraft = '';
+      }
+    });
+  }
+
+  deleteComment(id: string) {
+    const c = this.commit();
+    if (!c) return;
+    this.annotationsApi.remove(c.hash, id).subscribe({
+      next: () => this.comments.set(this.comments().filter((x) => x.id !== id))
+    });
   }
 }

@@ -7,6 +7,13 @@ import { createServer, type Server as HttpServer } from 'http';
 import path from 'path';
 import fs from 'fs';
 import { GitService, NotARepositoryError } from './gitService';
+import { runNlSearch } from './search/nlSearch';
+import { buildCommitGroups } from './grouping/prGrouping';
+import { getSnapshot } from './snapshot';
+import { getDefaultLlmService, type LlmConfig } from './llm';
+import { getCommitImpact } from './impact';
+import { computeInsights } from './insights';
+import { AnnotationsStore } from './annotations';
 
 export interface ServerOptions {
   port?: number;
@@ -15,6 +22,8 @@ export interface ServerOptions {
   since?: string;
   author?: string;
   cwd?: string;
+  llm?: LlmConfig;
+  githubToken?: string;
 }
 
 export interface BootResult {
@@ -54,7 +63,7 @@ export async function startServer(
         }
         return cb(new Error('CORS not allowed'), false);
       },
-      methods: ['GET'],
+      methods: ['GET', 'POST', 'DELETE'],
       allowedHeaders: ['Content-Type', 'X-Requested-With']
     })
   );
@@ -71,6 +80,9 @@ export async function startServer(
   app.use('/api', apiLimiter);
 
   const gitService = new GitService(cwd);
+  const llmService = getDefaultLlmService(options.llm ?? {});
+  const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN;
+  const annotations = new AnnotationsStore(cwd);
 
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
@@ -84,7 +96,12 @@ export async function startServer(
   });
 
   app.get('/api/version', (_req, res) => {
-    res.json({ name: 'git-history-ui', version: pkgVersion() });
+    res.json({
+      name: 'git-history-ui',
+      version: pkgVersion(),
+      llm: { provider: llmService.name, isAi: llmService.isAi },
+      githubEnrichment: !!githubToken
+    });
   });
 
   app.get(
@@ -116,6 +133,174 @@ export async function startServer(
     wrap(async (req, res) => {
       const diff = await gitService.getDiff(req.params.hash);
       res.json(diff);
+    })
+  );
+
+  app.get(
+    '/api/diff',
+    wrap(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      if (!from || !to) {
+        res.status(400).json({ error: 'from and to query params are required' });
+        return;
+      }
+      const diff = await gitService.getRangeDiff(from, to);
+      res.json(diff);
+    })
+  );
+
+  app.get(
+    '/api/search',
+    wrap(async (req, res) => {
+      const q = stringParam(req.query.q ?? req.query.query);
+      if (!q) {
+        res.status(400).json({ error: 'q query param is required' });
+        return;
+      }
+      const result = await runNlSearch(gitService, llmService, {
+        query: q,
+        page: numberParam(req.query.page, 1),
+        pageSize: numberParam(req.query.pageSize, 25)
+      });
+      res.json(result);
+    })
+  );
+
+  app.get(
+    '/api/groups',
+    wrap(async (req, res) => {
+      const groups = await buildCommitGroups(gitService, {
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
+        author: stringParam(req.query.author),
+        githubToken,
+        maxCommits: numberParam(req.query.maxCommits, 1000)
+      });
+      res.json(groups);
+    })
+  );
+
+  app.get(
+    '/api/snapshot',
+    wrap(async (req, res) => {
+      const at = stringParam(req.query.at);
+      if (!at) {
+        res.status(400).json({ error: 'at query param is required' });
+        return;
+      }
+      const snap = await getSnapshot(gitService, at);
+      res.json(snap);
+    })
+  );
+
+  app.get(
+    '/api/file-stats',
+    wrap(async (req, res) => {
+      const file = stringParam(req.query.file);
+      if (!file) {
+        res.status(400).json({ error: 'file query param is required' });
+        return;
+      }
+      const stats = await gitService.getFileStats(file);
+      res.json(stats);
+    })
+  );
+
+  app.get(
+    '/api/impact/:hash',
+    wrap(async (req, res) => {
+      const impact = await getCommitImpact(gitService, req.params.hash);
+      res.json(impact);
+    })
+  );
+
+  app.get(
+    '/api/insights',
+    wrap(async (req, res) => {
+      const bundle = await computeInsights(gitService, {
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
+        maxCommits: numberParam(req.query.maxCommits, 500)
+      });
+      res.json(bundle);
+    })
+  );
+
+  app.post(
+    '/api/summarize-diff',
+    wrap(async (req, res) => {
+      const text = typeof req.body?.text === 'string' ? req.body.text : '';
+      if (!text) {
+        res.status(400).json({ error: 'text body field is required' });
+        return;
+      }
+      if (!llmService.isAi) {
+        res.status(503).json({ error: 'No AI provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' });
+        return;
+      }
+      const summary = await llmService.summarize(text, {
+        hint: 'Summarize this code diff in 2-3 sentences for a developer skimming the change.'
+      });
+      res.json({ summary, provider: llmService.name });
+    })
+  );
+
+  app.post(
+    '/api/explain-commit/:hash',
+    wrap(async (req, res) => {
+      if (!llmService.isAi) {
+        res.status(503).json({ error: 'No AI provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' });
+        return;
+      }
+      const commit = await gitService.getCommit(req.params.hash);
+      const diff = await gitService.getDiff(req.params.hash);
+      const text = [
+        `Subject: ${commit.subject}`,
+        commit.body ? `Body:\n${commit.body}` : '',
+        'Changed files:',
+        ...diff.slice(0, 25).map((f) => `- ${f.file} (+${f.additions} -${f.deletions})`)
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const summary = await llmService.summarize(text, {
+        hint: 'Explain in plain English what this commit changes and why a reviewer should care.'
+      });
+      res.json({ summary, provider: llmService.name });
+    })
+  );
+
+  app.get(
+    '/api/annotations/:hash',
+    wrap(async (req, res) => {
+      const list = await annotations.list(req.params.hash);
+      res.json(list);
+    })
+  );
+
+  app.post(
+    '/api/annotations/:hash',
+    wrap(async (req, res) => {
+      const author = typeof req.body?.author === 'string' ? req.body.author : 'anonymous';
+      const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+      if (!body) {
+        res.status(400).json({ error: 'body is required' });
+        return;
+      }
+      if (body.length > 5000) {
+        res.status(413).json({ error: 'comment too long' });
+        return;
+      }
+      const created = await annotations.add(req.params.hash, { author, body });
+      res.status(201).json(created);
+    })
+  );
+
+  app.delete(
+    '/api/annotations/:hash/:id',
+    wrap(async (req, res) => {
+      const ok = await annotations.remove(req.params.hash, req.params.id);
+      res.status(ok ? 204 : 404).end();
     })
   );
 

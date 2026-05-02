@@ -4,6 +4,76 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-05-02
+
+This release transforms `git-history-ui` from a "pretty git log" into a
+**Git Intelligence** platform. Everything is still zero-config; new AI
+features are opt-in via your own API key.
+
+### Added — Headline features
+
+- **Natural-language search.** A new `/api/search` endpoint and toggle in the
+  toolbar accept queries like "login bug last month" or "payments by alice".
+  A built-in heuristic intent parser handles dates, authors, and synonym
+  expansion (`fix` → `bug, hotfix, patch`, `auth` → `login, oauth, jwt`,
+  etc.). When `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, results are
+  semantically re-ranked. The interpreted query is shown as removable chips
+  so you always know how the tool understood your request.
+- **PR / feature grouping.** A new `/api/groups` endpoint clusters commits by
+  GitHub merge commits (`Merge pull request #N from ...`), squash merges
+  (`subject (#N)`), and Conventional Commits scope (`feat(auth):`,
+  `fix(payments):`). Toggle the flat / grouped view from the toolbar.
+  Optional `GITHUB_TOKEN` enriches groups with PR title, author, labels.
+- **Time travel.** New `/timeline` route with a horizontal slider. Drag to any
+  point in history to see HEAD, branch, and tag positions at that moment, and
+  a live diff against current HEAD.
+- **File history & blame.** Click any file in a commit's Files panel to open
+  `/file/:path` — full history of every commit that touched the file, plus a
+  tabbed blame view (the existing `/api/blame` endpoint now has a UI).
+- **Commit impact analysis.** New `/api/impact/:hash` endpoint shows files
+  touched, modules affected, dependency ripple parsed from JS/TS imports, and
+  related commits that touched the same files.
+- **Insights dashboard.** New `/insights` route with top contributors,
+  hotspots (most-changed files), churn over time, and a heuristic risky-files
+  score that blends churn × contributor diversity × recency.
+- **AI extras (optional).** "Explain this change" on commits and "Summarize"
+  on diffs, both powered by `LlmService.summarize()`. Disabled with a clear
+  tooltip when no provider key is configured.
+- **Local-first annotations.** Add notes to any commit; stored at
+  `~/.git-history-ui/<repo-hash>/annotations.json`. New endpoints under
+  `/api/annotations/:hash`.
+- **Shareable links.** A "Share" button on the commit detail copies a URL
+  with the commit hash encoded.
+- **Collapse unchanged blocks.** Diffs default to ±3 lines of context with an
+  Expand button to reveal the rest.
+
+### Added — Plumbing
+
+- New `LlmService` abstraction (`src/backend/llm/`) with three providers:
+  `HeuristicProvider` (always-on, pure heuristic), `AnthropicProvider`
+  (claude-3-5-haiku by default), and `OpenAiProvider` (gpt-4o-mini by
+  default). Provider selected via `GHUI_LLM_PROVIDER` + key auto-detection.
+- New aggregations module (`src/backend/aggregations.ts`) with pure functions
+  for contributor stats, file churn, churn-by-day, and risky-file scoring.
+- Real Angular routing replaces the previous single-page layout. New routes:
+  `/`, `/timeline`, `/file/:path`, `/insights`. Components are lazy-loaded.
+- Backend POST/DELETE endpoints (annotations, summarize, explain). CORS
+  updated to allow these methods on local origins only.
+
+### Changed
+
+- Toolbar adds nav links (History / Timeline / Insights), a search-mode
+  toggle (literal vs. AI-flavored), and a flat/grouped toggle.
+- Commit detail panel now has Explain / Show Impact / Share action buttons,
+  per-file "View history" buttons, an Impact card, and an Annotations
+  collapsible panel.
+- Diff viewer adds Collapse / Summarize buttons.
+
+### Tests
+
+- 24 new tests for the LLM heuristic provider, NL query parser, aggregation
+  functions, and PR grouping. Total suite: 43 tests.
+
 ## [2.0.3] - 2026-05-01
 
 ### Added

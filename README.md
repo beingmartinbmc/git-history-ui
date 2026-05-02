@@ -7,8 +7,11 @@
 [![GitHub stars](https://img.shields.io/github/stars/beingmartinbmc/git-history-ui.svg)](https://github.com/beingmartinbmc/git-history-ui)
 [![GitHub issues](https://img.shields.io/github/issues/beingmartinbmc/git-history-ui.svg)](https://github.com/beingmartinbmc/git-history-ui/issues)
 
-A fast, zero-setup web UI to explore your git history visually. Run it in any
-repo and inspect branches, commits, and diffs interactively in your browser.
+**Git Intelligence in your browser.** A fast, zero-setup web UI that turns your
+git history from a flat log into a navigable narrative — with natural-language
+search, PR/feature grouping, time-travel snapshots, file-level history, blame,
+commit impact analysis, and an insights dashboard. Optional AI integration
+(Anthropic / OpenAI) supercharges search and explanations.
 
 ## 👀 Preview
 
@@ -36,20 +39,49 @@ No installs. No config. Just your commits, visualized.
 - Desktop clients can be heavy when you just want a quick read on one repo.
 - `git-history-ui` gives you a fast, local, visual way to explore history from any git repository.
 
-## ✨ Features
+## ✨ What's new in v3 — "Git Intelligence"
 
-- **Canvas-based commit graph** - Branch lanes, hover states, selected commits, and branch/tag pills.
-- **Real-time filtering** - Filter by author, date range, commit text, or file path.
-- **Diff-first commit review** - Move from graph to commit list to unified or split diffs without leaving the browser.
-- **Local by default** - Runs against the repo on your machine, including unpushed commits.
-- **Dark/light/system mode** - Toggle manually or follow your OS preference.
-- **Zero setup** - Unlike GitKraken or SourceTree, it runs instantly with `npx`.
+- **Natural-language search** — Ask "login bug last month" or "payments by alice".
+  A built-in heuristic intent parser extracts dates, authors, and keyword
+  synonyms; if you set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, it adds
+  semantic re-ranking on top.
+- **PR & feature grouping** — Switch the commit list to "Grouped" mode to see
+  commits clustered by pull request (GitHub merge & squash patterns) or
+  Conventional Commits scope (`feat(auth):`, `fix(payments):`). Optional
+  GitHub PR enrichment when `GITHUB_TOKEN` is set.
+- **Time travel** — A horizontal timeline slider that shows the repo state
+  (HEAD, branches, tags) at any point and computes a live diff vs HEAD.
+- **File history & blame** — Click any file in a commit's Files panel to see
+  every commit that touched it, with a tabbed blame view powered by
+  `highlight.js`.
+- **Commit impact analysis** — One click reveals files touched, modules
+  affected, dependency ripple (parsed from JS/TS imports), and other commits
+  that touched the same files.
+- **Insights dashboard** — Top contributors, hotspots, churn over time, and
+  a heuristic risky-files score for code reviewers and tech leads.
+- **AI extras (optional)** — "Explain this change" on commits and "Summarize"
+  on diffs, both gated on a configured API key.
+- **Local-first annotations** — Add notes to commits stored at
+  `~/.git-history-ui/<repo>/annotations.json`.
+
+Plus everything from v2:
+
+- **Canvas commit graph** with branch lanes, ref pills, hover/selected states
+- **Real-time filtering** by author, date, text, file path
+- **Unified & split diffs** with `highlight.js`, plus collapse-unchanged blocks
+- **Dark / light / system theme** with single-click toggle
+- **Zero setup** — `npx git-history-ui@latest`, that's it
 
 ## ⚖️ How it compares
 
-- **vs GitHub UI**: shows local branches and unpushed commits because it runs inside your repository.
-- **vs `tig` or `git log`**: gives you visual lanes, filters, and browser-based diffs instead of a terminal-only view.
-- **vs desktop Git clients**: starts on demand with no workspace setup, account login, or project import.
+- **vs GitHub UI**: NL search and PR grouping work *with* your unpushed
+  commits, and time travel + impact analysis aren't on GitHub at all.
+- **vs `tig` or `git log`**: visual lanes, browser diffs, AI explanations,
+  insights dashboard.
+- **vs desktop clients (GitKraken, SourceTree, Fork)**: starts on demand with
+  no project import, no account, no native install. AI features are
+  pay-as-you-go on *your* key — nothing about your code leaves your machine
+  unless you opt in.
 
 ## 📖 Usage
 
@@ -75,6 +107,36 @@ npx git-history-ui@latest --no-open
 
 # Show help
 npx git-history-ui@latest --help
+```
+
+### Optional: bring your own AI key
+
+Natural-language search and "Explain change" / "Summarize diff" actions all
+work without an API key (heuristic mode). Set one of these to upgrade them
+with a real model — your code never leaves the host running git-history-ui
+except for the prompt you explicitly trigger:
+
+```bash
+# Anthropic (recommended; uses claude-3-5-haiku by default)
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Or OpenAI (uses gpt-4o-mini by default)
+export OPENAI_API_KEY=sk-...
+
+# Force a specific provider when both are set
+export GHUI_LLM_PROVIDER=anthropic   # or openai, or heuristic
+
+npx git-history-ui@latest
+```
+
+### Optional: GitHub PR enrichment
+
+Set `GITHUB_TOKEN` (a fine-grained PAT with read access to your repo) to
+hydrate the grouped view with PR titles, authors, and labels:
+
+```bash
+export GITHUB_TOKEN=ghp_...
+npx git-history-ui@latest
 ```
 
 ## 🏭 Production
