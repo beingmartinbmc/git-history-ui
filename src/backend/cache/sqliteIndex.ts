@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { StringDecoder } from 'string_decoder';
 import type { Commit } from '../gitService';
 
 const FIELD_SEP = '\x1f';
@@ -57,15 +58,22 @@ function loadSqlite(): SqliteCtor | null {
 }
 
 export type GitRunner = (args: string[]) => Promise<string>;
+export type GitStreamRunner = (args: string[], onChunk: (chunk: Buffer) => void) => Promise<void>;
 
 export class SqliteIndex {
   private dbFile: string;
   private repoCwd: string;
   private db: SqliteDB | null = null;
   private buildPromise: Promise<void> | null = null;
+  private streamGit: GitStreamRunner | null;
 
-  constructor(repoCwd: string, private runGit: GitRunner) {
+  constructor(
+    repoCwd: string,
+    private runGit: GitRunner,
+    streamGit?: GitStreamRunner
+  ) {
     this.repoCwd = repoCwd;
+    this.streamGit = streamGit ?? null;
     const id = crypto.createHash('sha256').update(path.resolve(repoCwd)).digest('hex').slice(0, 16);
     this.dbFile = path.join(ROOT_DIR, `${id}.db`);
   }
@@ -147,11 +155,11 @@ export class SqliteIndex {
     const stored = (this.db.prepare("SELECT v FROM meta WHERE k='refsSig'").get() as { v: string } | undefined)?.v;
     if (stored === sig) return;
 
-    const out = await this.runGit([
+    const args = [
       'log',
       '--all',
       `--pretty=format:${SQLITE_LOG_FORMAT}${RECORD_SEP}`
-    ]);
+    ];
 
     this.db.exec('BEGIN');
     try {
@@ -170,11 +178,11 @@ export class SqliteIndex {
         }
       })();
 
-      for (const record of out.split(RECORD_SEP)) {
+      const ingest = (record: string) => {
         const trimmed = record.trim();
-        if (!trimmed) continue;
+        if (!trimmed) return;
         const fields = trimmed.split(FIELD_SEP);
-        if (fields.length < 8) continue;
+        if (fields.length < 8) return;
         const [hash, shortHash, author, email, date, parentsStr, subject, ...rest] = fields;
         const body = rest.join(FIELD_SEP);
         ins.run(hash, shortHash, author, email, date, parentsStr, subject, body);
@@ -185,6 +193,30 @@ export class SqliteIndex {
             /* ignore */
           }
         }
+      };
+
+      // Streaming path: incremental parse keeps memory bounded regardless
+      // of repo size. Falls back to buffered runGit when no streamer was
+      // injected (e.g. legacy callers, tests).
+      if (this.streamGit) {
+        let pending = '';
+        const decoder = new StringDecoder('utf8');
+        await this.streamGit(args, (chunk) => {
+          pending += decoder.write(chunk);
+          let idx: number;
+          // Process every complete record as it arrives so we never hold
+          // more than one record's worth of git output in memory.
+          while ((idx = pending.indexOf(RECORD_SEP)) >= 0) {
+            const record = pending.slice(0, idx);
+            pending = pending.slice(idx + 1);
+            ingest(record);
+          }
+        });
+        pending += decoder.end();
+        if (pending.trim()) ingest(pending);
+      } else {
+        const out = await this.runGit(args);
+        for (const record of out.split(RECORD_SEP)) ingest(record);
       }
 
       this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('refsSig', ?)").run(sig);
