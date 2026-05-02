@@ -37,6 +37,7 @@ export interface GitOptions {
   since?: string;
   until?: string;
   author?: string;
+  branch?: string;
   search?: string;
   page?: number;
   pageSize?: number;

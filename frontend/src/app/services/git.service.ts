@@ -24,6 +24,71 @@ export class GitService {
     return this.http.get<PaginatedCommits>(`${this.base}/commits`, { params });
   }
 
+  streamCommits(options: GitOptions = {}): Observable<PaginatedCommits> {
+    return new Observable<PaginatedCommits>((subscriber) => {
+      const url = new URL(`${window.location.origin}${this.base}/commits/stream`);
+      for (const [k, v] of Object.entries(options)) {
+        if (v !== undefined && v !== null && v !== '') {
+          url.searchParams.set(k, String(v));
+        }
+      }
+
+      const source = new EventSource(url.toString());
+      const commits: Commit[] = [];
+      const pending: Commit[] = [];
+      const page = Math.max(1, options.page ?? 1);
+      let total = 0;
+      let raf = 0;
+      let completed = false;
+
+      const emit = () => {
+        raf = 0;
+        if (!pending.length && !completed) return;
+        if (pending.length) {
+          commits.push(...pending.splice(0));
+        }
+        subscriber.next({
+          commits: commits.slice(),
+          total: completed ? total || commits.length : commits.length,
+          page,
+          pageSize: commits.length || options.pageSize || 100,
+          totalPages: 1,
+          hasNext: false,
+          hasPrevious: page > 1
+        });
+        if (completed) {
+          source.close();
+          subscriber.complete();
+        }
+      };
+
+      const scheduleEmit = () => {
+        if (!raf) raf = requestAnimationFrame(emit);
+      };
+
+      source.addEventListener('commit', (event) => {
+        pending.push(JSON.parse((event as MessageEvent).data) as Commit);
+        scheduleEmit();
+      });
+      source.addEventListener('done', (event) => {
+        const data = JSON.parse((event as MessageEvent).data) as { total?: number };
+        total = data.total ?? commits.length + pending.length;
+        completed = true;
+        scheduleEmit();
+      });
+      source.addEventListener('error', (event) => {
+        source.close();
+        if (raf) cancelAnimationFrame(raf);
+        subscriber.error(event);
+      });
+
+      return () => {
+        source.close();
+        if (raf) cancelAnimationFrame(raf);
+      };
+    });
+  }
+
   getCommit(hash: string): Observable<Commit> {
     return this.http.get<Commit>(`${this.base}/commit/${hash}`);
   }

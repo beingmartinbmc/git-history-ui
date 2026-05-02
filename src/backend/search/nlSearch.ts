@@ -53,6 +53,11 @@ export function parseNlQuery(query: string, opts: ParseOptions = {}): NlInterpre
 
 export interface NlSearchOptions {
   query: string;
+  author?: string;
+  since?: string;
+  until?: string;
+  branch?: string;
+  file?: string;
   page?: number;
   pageSize?: number;
   /** Cap on candidates pulled from git for LLM rerank. */
@@ -84,9 +89,11 @@ export async function runNlSearch(
 
   // Pull candidate set. We deliberately ignore pagination here so we can re-rank.
   const candidatesPage = await gitService.getCommits({
-    author: parsed.author,
-    since: parsed.since,
-    until: parsed.until,
+    author: parsed.author ?? options.author,
+    since: parsed.since ?? options.since,
+    until: parsed.until ?? options.until,
+    branch: options.branch,
+    file: options.file,
     search: grep,
     page: 1,
     pageSize: candidateCap

@@ -72,12 +72,17 @@ type Tab = 'history' | 'blame';
   `,
   styles: [`
     :host { display: block; flex: 1; min-height: 0; overflow-y: auto; }
-    .page { padding: 1rem 1.25rem; max-width: 1200px; margin: 0 auto; }
+    .page { padding: 1.1rem 1.25rem; max-width: 1200px; margin: 0 auto; }
     .head {
       display: flex;
       align-items: center;
       gap: 1rem;
       margin-bottom: 1rem;
+      padding: 0.9rem 1rem;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
     }
     .head h2 {
       margin: 0;
@@ -89,8 +94,12 @@ type Tab = 'history' | 'blame';
     .tabs {
       display: flex;
       gap: 0.5rem;
-      border-bottom: 1px solid var(--border-soft);
+      padding: 0.25rem;
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      background: var(--bg-panel);
       margin-bottom: 1rem;
+      width: fit-content;
     }
     .tab {
       background: transparent;
@@ -98,19 +107,27 @@ type Tab = 'history' | 'blame';
       padding: 0.5rem 0.75rem;
       cursor: pointer;
       color: var(--fg-muted);
-      border-bottom: 2px solid transparent;
+      border-radius: 999px;
       font-size: 13px;
     }
-    .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .tab.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
     .empty { padding: 1.5rem; color: var(--fg-muted); text-align: center; font-size: 13px; }
     .empty.error { color: var(--danger); }
-    .commits { list-style: none; margin: 0; padding: 0; }
+    .commits {
+      list-style: none;
+      margin: 0;
+      padding: 0.35rem;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+    }
     .commit {
       display: flex;
       gap: 0.75rem;
       align-items: flex-start;
       padding: 0.55rem 0.85rem;
-      border-radius: var(--radius-sm);
+      border-radius: var(--radius-md);
       cursor: pointer;
     }
     .commit:hover { background: var(--bg-elevated); }

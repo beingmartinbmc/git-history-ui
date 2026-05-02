@@ -61,7 +61,7 @@ import { UiStateService } from '../../services/ui-state.service';
       justify-content: space-between;
       padding: 0.6rem 0.85rem;
       border-bottom: 1px solid var(--border-soft);
-      background: var(--bg-surface);
+      background: color-mix(in oklab, var(--bg-surface) 92%, transparent);
     }
     .title { font-weight: 600; font-size: 13px; }
     .meta { font-size: 11px; color: var(--fg-muted); }
@@ -78,20 +78,26 @@ import { UiStateService } from '../../services/ui-state.service';
       overflow-y: auto;
       flex: 1;
     }
-    .group { border-bottom: 1px solid var(--border-soft); }
+    .group {
+      border-bottom: 1px solid var(--border-soft);
+      transition: background 120ms;
+    }
+    .group.expanded {
+      background: color-mix(in oklab, var(--accent) 5%, transparent);
+    }
     .group-head {
       width: 100%;
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      padding: 0.55rem 0.85rem;
+      padding: 0.58rem 0.85rem;
       background: transparent;
       border: 0;
       color: var(--fg-primary);
       cursor: pointer;
       text-align: left;
     }
-    .group-head:hover { background: var(--bg-elevated); }
+    .group-head:hover { background: color-mix(in oklab, var(--bg-hover) 72%, transparent); }
     .caret {
       display: inline-block;
       width: 10px;
@@ -103,8 +109,8 @@ import { UiStateService } from '../../services/ui-state.service';
       font-size: 10px;
       letter-spacing: 0.04em;
       padding: 1px 6px;
-      border-radius: 3px;
-      background: var(--bg-elevated);
+      border-radius: 999px;
+      background: var(--bg-surface-2);
       color: var(--fg-secondary);
       text-transform: uppercase;
     }
@@ -122,7 +128,8 @@ import { UiStateService } from '../../services/ui-state.service';
     .count {
       font-size: 11px;
       color: var(--fg-muted);
-      background: var(--bg-elevated);
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border-soft);
       padding: 1px 6px;
       border-radius: 999px;
     }
@@ -130,18 +137,21 @@ import { UiStateService } from '../../services/ui-state.service';
       list-style: none;
       margin: 0;
       padding: 0 0 0.4rem 0;
-      background: var(--bg-app);
+      background: color-mix(in oklab, var(--bg-surface-2) 72%, transparent);
     }
     .commit {
       display: flex;
       gap: 0.6rem;
       align-items: center;
-      padding: 0.3rem 0.85rem 0.3rem 2rem;
+      padding: 0.34rem 0.85rem 0.34rem 2rem;
       cursor: pointer;
       font-size: 12px;
     }
-    .commit:hover { background: var(--bg-elevated); }
-    .commit.selected { background: color-mix(in oklab, var(--accent) 20%, transparent); }
+    .commit:hover { background: var(--bg-hover); }
+    .commit.selected {
+      background: color-mix(in oklab, var(--accent) 18%, transparent);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
     .commit .hash {
       font-family: var(--font-mono, monospace);
       font-size: 11px;
@@ -174,7 +184,7 @@ export class GroupedListComponent {
   constructor() {
     effect(() => {
       const f = this.state.filters();
-      this.load(f.since, f.until, f.author);
+      this.load(f.since, f.until, f.author, f.branch);
     });
   }
 
@@ -206,10 +216,10 @@ export class GroupedListComponent {
     }
   }
 
-  private load(since?: string, until?: string, author?: string) {
+  private load(since?: string, until?: string, author?: string, branch?: string) {
     this.loading.set(true);
     this.error.set(null);
-    this.groupsApi.list({ since, until, author }).subscribe({
+    this.groupsApi.list({ since, until, author, branch }).subscribe({
       next: (g) => {
         this.groups.set(g);
         this.loading.set(false);
