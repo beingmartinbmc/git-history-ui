@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-05-02
+
+### Added
+
+- Modern interactive UI refresh across history, commit detail, insights,
+  timeline, command palette, and shared design primitives.
+- Branch filtering as a first-class filter across commit loading, grouped views,
+  streaming requests, and search flows.
+- CI and release workflow coverage gates requiring at least 90% backend test
+  coverage, plus focused frontend specs for the new interactive UI behavior.
+
+### Changed
+
+- Promoted Git Intelligence UI modernization and large-repository performance
+  safeguards into a major release.
+
 ## [3.2.2] - 2026-05-02
 
 ### Changed
