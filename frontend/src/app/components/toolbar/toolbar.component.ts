@@ -207,7 +207,7 @@ export class ToolbarComponent {
     if (!t) return '';
     return `${t.toLocaleString()} commits`;
   });
-  themeLabel = computed(() => `Theme: ${this.theme.preference()} (${this.theme.resolved()})`);
+  themeLabel = computed(() => `Switch to ${this.theme.resolved() === 'light' ? 'dark' : 'light'} mode`);
 
   private debounce: ReturnType<typeof setTimeout> | null = null;
 
