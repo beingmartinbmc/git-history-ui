@@ -8,7 +8,7 @@ export class GroupsService {
   private http = inject(HttpClient);
   private base = '/api';
 
-  list(opts: { since?: string; until?: string; author?: string } = {}): Observable<CommitGroup[]> {
+  list(opts: { since?: string; until?: string; author?: string; branch?: string } = {}): Observable<CommitGroup[]> {
     let params = new HttpParams();
     for (const [k, v] of Object.entries(opts)) {
       if (v) params = params.set(k, String(v));

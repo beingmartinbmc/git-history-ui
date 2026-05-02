@@ -20,10 +20,12 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
   template: `
     <div class="page">
       <header class="head">
-        <h2>Insights</h2>
+        <div>
+          <p class="eyebrow">Repository intelligence</p>
+          <h2>Insights</h2>
+        </div>
         <p class="sub" *ngIf="bundle() as b">
-          {{ b.totalCommits }} commits, {{ b.totalAuthors }} contributors —
-          window {{ b.windowStart | slice:0:10 }} → {{ b.windowEnd | slice:0:10 }}
+          {{ b.windowStart | slice:0:10 }} → {{ b.windowEnd | slice:0:10 }}
         </p>
       </header>
 
@@ -31,6 +33,29 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
       <div class="empty error" *ngIf="error() as e">{{ e }}</div>
 
       <div class="grid" *ngIf="bundle() as b">
+        <section class="kpis">
+          <button class="kpi">
+            <span class="label">Commits analyzed</span>
+            <strong>{{ b.totalCommits }}</strong>
+            <span class="hint">current insight window</span>
+          </button>
+          <button class="kpi">
+            <span class="label">Contributors</span>
+            <strong>{{ b.totalAuthors }}</strong>
+            <span class="hint">{{ topContributor(b) }}</span>
+          </button>
+          <button class="kpi" (click)="openTopHotspot(b)">
+            <span class="label">Hotspots</span>
+            <strong>{{ b.hotspots.length }}</strong>
+            <span class="hint">click to open the top file</span>
+          </button>
+          <button class="kpi" (click)="openTopRisk(b)">
+            <span class="label">Risk alerts</span>
+            <strong>{{ b.riskyFiles.length }}</strong>
+            <span class="hint">highest churn and ownership risk</span>
+          </button>
+        </section>
+
         <section class="card">
           <h3>Top contributors</h3>
           <ul class="bars">
@@ -46,7 +71,7 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
           </ul>
         </section>
 
-        <section class="card wide">
+        <section class="card wide hotspot-card">
           <h3>Hotspots <span class="card-sub">(treemap sized by commit count — click to drill in)</span></h3>
           <app-hotspots-treemap [data]="b.hotspots" (fileClick)="openFile($event)" />
           <ul class="hot-list compact">
@@ -72,7 +97,7 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
           </ul>
         </section>
 
-        <section class="card wide">
+        <section class="card wide chart-card">
           <h3>Churn over time</h3>
           <app-churn-chart [data]="b.churnByDay" />
         </section>
@@ -81,10 +106,24 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
   `,
   styles: [`
     :host { display: block; flex: 1; min-height: 0; overflow-y: auto; }
-    .page { padding: 1rem 1.25rem; max-width: 1300px; margin: 0 auto; }
-    .head { margin-bottom: 1rem; }
-    .head h2 { margin: 0; font-size: 18px; }
-    .head .sub { margin: 0.25rem 0 0; color: var(--fg-muted); font-size: 13px; }
+    .page { padding: 1.1rem 1.25rem 1.4rem; max-width: 1320px; margin: 0 auto; }
+    .head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .eyebrow {
+      margin: 0 0 0.2rem;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .head h2 { margin: 0; font-size: clamp(20px, 2vw, 28px); letter-spacing: -0.03em; }
+    .head .sub { margin: 0; color: var(--fg-muted); font-size: 13px; }
 
     .empty { padding: 2rem; color: var(--fg-muted); text-align: center; }
     .empty.error { color: var(--danger); }
@@ -94,11 +133,41 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       gap: 1rem;
     }
-    .card {
-      background: var(--bg-surface);
+    .kpis {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.75rem;
+    }
+    .kpi {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.25rem;
+      padding: 0.85rem 1rem;
+      color: var(--fg-primary);
+      background:
+        radial-gradient(circle at 85% 0%, color-mix(in oklab, var(--accent) 16%, transparent), transparent 44%),
+        var(--bg-panel);
       border: 1px solid var(--border-soft);
-      border-radius: var(--radius-md);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      cursor: pointer;
+      text-align: left;
+    }
+    .kpi:hover {
+      border-color: color-mix(in oklab, var(--accent) 36%, var(--border-soft));
+      box-shadow: var(--shadow-md);
+    }
+    .kpi .label { color: var(--fg-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi strong { font-size: 24px; letter-spacing: -0.04em; }
+    .kpi .hint { color: var(--fg-muted); font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-lg);
       padding: 1rem 1.25rem;
+      box-shadow: var(--shadow-sm);
     }
     .card.wide { grid-column: 1 / -1; }
     .card h3 { margin: 0 0 0.75rem; font-size: 14px; }
@@ -108,8 +177,8 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
     .bar-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
     .bar-label { color: var(--fg-primary); }
     .bar-value { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-    .bar-track { height: 6px; background: var(--bg-elevated); border-radius: 3px; overflow: hidden; }
-    .bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+    .bar-track { height: 7px; background: var(--bg-surface-2); border-radius: 999px; overflow: hidden; }
+    .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #06b6d4); border-radius: 999px; }
 
     .hot-list, .risk-list { list-style: none; margin: 0; padding: 0; }
     .hot-list.compact { margin-top: 0.5rem; max-height: 130px; overflow-y: auto; }
@@ -140,8 +209,8 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
     .risk-bar {
       position: relative;
       height: 16px;
-      background: var(--bg-elevated);
-      border-radius: 3px;
+      background: var(--bg-surface-2);
+      border-radius: 999px;
       overflow: hidden;
     }
     .risk-fill {
@@ -231,6 +300,21 @@ export class InsightsComponent {
 
   openFile(file: string) {
     this.router.navigate(['/file', encodeURIComponent(file)]);
+  }
+
+  topContributor(bundle: InsightsBundle): string {
+    const top = bundle.topContributors[0];
+    return top ? top.author : 'No author data';
+  }
+
+  openTopHotspot(bundle: InsightsBundle) {
+    const file = bundle.hotspots[0]?.file;
+    if (file) this.openFile(file);
+  }
+
+  openTopRisk(bundle: InsightsBundle) {
+    const file = bundle.riskyFiles[0]?.file;
+    if (file) this.openFile(file);
   }
 
   private load() {

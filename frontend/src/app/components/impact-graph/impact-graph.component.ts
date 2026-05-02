@@ -60,8 +60,10 @@ interface Link extends d3.SimulationLinkDatum<Node> {
     .dot-module { background: #8b5cf6; }
     .canvas-wrap {
       position: relative;
-      background: var(--bg-app);
-      border-radius: var(--radius-sm);
+      background:
+        radial-gradient(circle at 20% 0%, color-mix(in oklab, var(--accent) 12%, transparent), transparent 34%),
+        var(--bg-surface-2);
+      border-radius: var(--radius-md);
       border: 1px solid var(--border-soft);
       overflow: hidden;
     }
@@ -74,11 +76,15 @@ interface Link extends d3.SimulationLinkDatum<Node> {
       font-size: 11px;
       pointer-events: none;
     }
-    svg :global(.node-label) {
+    :host ::ng-deep .node-label {
       font-size: 9px;
       fill: var(--fg-secondary);
       font-family: var(--font-mono, monospace);
       pointer-events: none;
+      paint-order: stroke;
+      stroke: var(--bg-app);
+      stroke-width: 2px;
+      stroke-linejoin: round;
     }
   `]
 })
@@ -116,6 +122,9 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
 
     const width = svgEl.clientWidth || 600;
     const height = 280;
+    const styles = getComputedStyle(svgEl);
+    const labelColor = css(styles, '--fg-secondary', '#cbd5e1');
+    const labelHalo = css(styles, '--bg-surface-2', '#0b1020');
 
     const nodeMap = new Map<string, Node>();
     const ensure = (id: string, group: Node['group'], label: string): Node => {
@@ -173,7 +182,7 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
           ? '#f59e0b'
           : '#8b5cf6'
       )
-      .attr('stroke', 'var(--bg-app)')
+      .attr('stroke', 'var(--bg-surface-2)')
       .attr('stroke-width', 1.5)
       .call(drag());
 
@@ -187,6 +196,10 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
       .attr('class', 'node-label')
       .attr('dx', 8)
       .attr('dy', 3)
+      .attr('fill', labelColor)
+      .attr('stroke', labelHalo)
+      .attr('stroke-width', 2)
+      .attr('paint-order', 'stroke')
       .text((d) => d.label);
 
     this.simulation?.stop();
@@ -248,4 +261,8 @@ function detectModule(file: string): string {
   const parts = file.split('/');
   if (parts.length === 1) return '(root)';
   return parts.slice(0, Math.min(parts.length - 1, 3)).join('/');
+}
+
+function css(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+  return styles.getPropertyValue(name).trim() || fallback;
 }

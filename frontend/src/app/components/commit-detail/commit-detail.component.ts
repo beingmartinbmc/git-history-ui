@@ -162,12 +162,16 @@ import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
       flex-direction: column;
       height: 100%;
       min-height: 0;
-      background: var(--bg-app);
+      background: transparent;
     }
     .head {
-      padding: 0.85rem 1rem;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      padding: 0.9rem 1rem 0.8rem;
       border-bottom: 1px solid var(--border-soft);
-      background: var(--bg-surface);
+      background: color-mix(in oklab, var(--bg-glass) 95%, transparent);
+      backdrop-filter: blur(14px);
     }
     .row {
       display: flex;
@@ -181,31 +185,44 @@ import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
       font-size: 12px;
       color: var(--fg-muted);
       padding: 2px 6px;
-      background: var(--bg-surface-2);
+      background: color-mix(in oklab, var(--bg-surface-2) 78%, transparent);
       border: 1px solid var(--border-soft);
-      border-radius: 4px;
+      border-radius: 999px;
     }
-    .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      max-height: 44px;
+      overflow: hidden;
+    }
     .badge {
       font-size: 10px;
       font-weight: 600;
-      padding: 2px 6px;
+      padding: 2px 7px;
       border-radius: 999px;
+      border: 1px solid transparent;
+      max-width: 180px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .badge.tag {
       background: rgba(217, 119, 6, 0.15);
       color: var(--warning);
+      border-color: color-mix(in oklab, var(--warning) 24%, transparent);
     }
     .badge.branch {
       background: var(--accent-soft);
       color: var(--accent);
+      border-color: color-mix(in oklab, var(--accent) 24%, transparent);
     }
     .badge.merge {
       background: rgba(139, 92, 246, 0.18);
       color: #8b5cf6;
     }
     .subject {
-      font-size: 18px;
+      font-size: clamp(17px, 1.6vw, 22px);
       margin: 0 0 4px;
       font-weight: 600;
     }
@@ -234,8 +251,10 @@ import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
     .split {
       flex: 1;
       display: grid;
-      grid-template-columns: 280px 1fr;
+      grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
       grid-template-rows: minmax(0, 1fr);
+      gap: 0.75rem;
+      padding: 0.75rem;
       min-height: 0;
       overflow: hidden;
     }
@@ -243,16 +262,20 @@ import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
       display: flex;
       flex-direction: column;
       min-height: 0;
-      background: var(--bg-surface);
-      border-right: 1px solid var(--border-soft);
+      background: var(--bg-panel);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
     }
     .files-header {
       display: flex;
       justify-content: space-between;
-      padding: 0.5rem 0.85rem;
+      padding: 0.6rem 0.85rem;
       font-size: 12px;
       color: var(--fg-muted);
       border-bottom: 1px solid var(--border-soft);
+      background: color-mix(in oklab, var(--bg-surface) 82%, transparent);
     }
     .count {
       background: var(--bg-surface-2);
@@ -267,7 +290,7 @@ import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
       gap: 0.5rem;
       align-items: center;
       width: 100%;
-      padding: 0.5rem 0.85rem;
+      padding: 0.5rem 0.75rem;
       border: 0;
       background: transparent;
       color: inherit;
@@ -276,8 +299,11 @@ import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
       border-bottom: 1px solid var(--border-soft);
       font-size: 12px;
     }
-    .file:hover { background: var(--bg-hover); }
-    .file.selected { background: var(--bg-selected); }
+    .file:hover { background: color-mix(in oklab, var(--bg-hover) 74%, transparent); }
+    .file.selected {
+      background: color-mix(in oklab, var(--accent) 15%, transparent);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
     .file .path {
       font-family: var(--font-mono);
       white-space: nowrap;
@@ -308,6 +334,10 @@ import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      border-radius: var(--radius-md);
+      background: var(--bg-panel);
+      border: 1px solid var(--border-soft);
+      box-shadow: var(--shadow-sm);
     }
     .placeholder {
       flex: 1;
@@ -354,10 +384,11 @@ import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
 
     .impact-card {
       margin: 0.6rem 1rem;
-      background: var(--bg-surface);
+      background: var(--bg-panel);
       border: 1px solid var(--border-soft);
-      border-radius: var(--radius-md);
+      border-radius: var(--radius-lg);
       padding: 0.75rem 1rem;
+      box-shadow: var(--shadow-sm);
     }
     .impact-head { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 0.5rem; font-size: 13px; }
     .impact-meta { color: var(--fg-muted); font-weight: 400; font-size: 11px; }

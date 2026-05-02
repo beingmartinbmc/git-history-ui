@@ -100,9 +100,12 @@ export class AppComponent {
         this.state.error.set(null);
         const mode = this.state.searchMode();
         const useNl = mode === 'nl' && (f.search || '').trim().length > 0;
+        const useStream = !useNl && (f.page ?? 1) === 1;
         const obs = useNl
-          ? this.search.naturalLanguage(f.search || '', f.page, f.pageSize)
-          : this.git.getCommits(f);
+          ? this.search.naturalLanguage(f.search || '', f)
+          : useStream
+            ? this.git.streamCommits(f)
+            : this.git.getCommits(f);
         return obs.pipe(
           catchError((err) => {
             this.state.error.set(this.errorMessage(err));

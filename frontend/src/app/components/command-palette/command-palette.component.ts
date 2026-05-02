@@ -66,10 +66,11 @@ import { UiStateService } from '../../services/ui-state.service';
       left: 50%;
       transform: translateX(-50%);
       width: min(640px, calc(100vw - 32px));
-      background: var(--bg-elevated);
+      background: color-mix(in oklab, var(--bg-glass) 96%, transparent);
       border: 1px solid var(--border-soft);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-lg);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-lg), var(--shadow-glow);
+      backdrop-filter: blur(18px) saturate(1.2);
       z-index: 100;
       overflow: hidden;
     }
@@ -77,7 +78,7 @@ import { UiStateService } from '../../services/ui-state.service';
       width: 100%;
       border: 0;
       outline: 0;
-      padding: 0.85rem 1rem;
+      padding: 1rem 1.1rem;
       background: transparent;
       color: var(--fg-primary);
       font-size: 14px;
@@ -95,11 +96,14 @@ import { UiStateService } from '../../services/ui-state.service';
       grid-template-columns: 70px 1fr auto;
       align-items: center;
       gap: 0.6rem;
-      padding: 0.45rem 1rem;
+      padding: 0.52rem 1rem;
       cursor: pointer;
       font-size: 13px;
     }
-    .result.active { background: var(--bg-hover); }
+    .result.active {
+      background: color-mix(in oklab, var(--accent) 12%, transparent);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
     .result.empty {
       grid-template-columns: 1fr;
       color: var(--fg-muted);
@@ -117,7 +121,7 @@ import { UiStateService } from '../../services/ui-state.service';
       display: flex;
       gap: 1rem;
       padding: 0.4rem 0.75rem;
-      background: var(--bg-surface-2);
+      background: color-mix(in oklab, var(--bg-surface-2) 84%, transparent);
       border-top: 1px solid var(--border-soft);
       font-size: 11px;
       color: var(--fg-muted);

@@ -122,6 +122,61 @@ describe('SqliteIndex', () => {
     });
   });
 
+  it('incrementally indexes commits when HEAD fast-forwards', async () => {
+    await withTempHomeAsync(async () => {
+      const { SqliteIndex } = fresh();
+      const repo = makeRepo();
+      try {
+        const h1 = '1'.repeat(40);
+        const h2 = '2'.repeat(40);
+        let head = h1;
+        const logArgs: string[][] = [];
+        const runner = async (args: string[]): Promise<string> => {
+          if (args[0] === 'rev-parse') return `${head}\n`;
+          if (args[0] === 'merge-base') return '';
+          if (args[0] === 'log') {
+            logArgs.push(args);
+            const incremental = args.includes('--not');
+            return fakeLog([
+              incremental
+                ? {
+                    hash: h2,
+                    short: '2222222',
+                    author: 'b',
+                    email: 'b@x',
+                    date: '2026-05-02T00:00:00Z',
+                    parents: h1,
+                    subject: 'second incremental',
+                    body: ''
+                  }
+                : {
+                    hash: h1,
+                    short: '1111111',
+                    author: 'a',
+                    email: 'a@x',
+                    date: '2026-05-01T00:00:00Z',
+                    parents: '',
+                    subject: 'first full',
+                    body: ''
+                  }
+            ]);
+          }
+          return '';
+        };
+
+        const idx = new SqliteIndex(repo.dir, runner);
+        expect((await idx.build()).total).toBe(1);
+        head = h2;
+        expect((await idx.build()).total).toBe(2);
+        expect(logArgs[1]).toEqual(expect.arrayContaining(['--not', h1]));
+        expect((await idx.search('incremental')).map((h) => h.hash)).toContain(h2);
+        idx.close();
+      } finally {
+        repo.cleanup();
+      }
+    });
+  });
+
   it('coalesces concurrent build() calls', async () => {
     await withTempHomeAsync(async () => {
       const { SqliteIndex } = fresh();
