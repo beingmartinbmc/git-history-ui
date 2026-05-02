@@ -1,5 +1,5 @@
 import { Injectable, computed, signal } from '@angular/core';
-import { Commit, GitOptions } from '../models/git.models';
+import { Commit, GitOptions, NlInterpretation } from '../models/git.models';
 
 @Injectable({ providedIn: 'root' })
 export class UiStateService {
@@ -31,6 +31,13 @@ export class UiStateService {
 
   // viewport for graph
   readonly graphVisible = signal(true);
+
+  // commit list view: 'flat' = traditional list, 'grouped' = PR/feature groups
+  readonly viewMode = signal<'flat' | 'grouped'>('flat');
+
+  // search mode: 'classic' (literal grep) or 'nl' (natural language)
+  readonly searchMode = signal<'classic' | 'nl'>('classic');
+  readonly nlInterpretation = signal<NlInterpretation | null>(null);
 
   patchFilters(patch: Partial<GitOptions>) {
     this.filters.update((f) => ({ ...f, ...patch, page: patch.page ?? 1 }));

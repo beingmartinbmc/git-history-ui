@@ -4,10 +4,12 @@ import {
   Component,
   Input,
   computed,
+  inject,
   signal
 } from '@angular/core';
 import hljs from 'highlight.js/lib/common';
 import { DiffFile } from '../../models/git.models';
+import { InsightsService } from '../../services/insights.service';
 
 type Side = 'left' | 'right';
 
@@ -42,6 +44,21 @@ interface SideLine {
       <div class="stats">
         <span class="add">+{{ file.additions }}</span>
         <span class="del">−{{ file.deletions }}</span>
+        <button
+          class="btn btn-ghost btn-toggle"
+          (click)="collapsed.set(!collapsed())"
+          [title]="collapsed() ? 'Expand all unchanged context' : 'Collapse unchanged blocks'"
+        >
+          {{ collapsed() ? 'Expand' : 'Collapse' }}
+        </button>
+        <button
+          class="btn btn-ghost btn-toggle"
+          (click)="onSummarize()"
+          [disabled]="summarizing() || !file"
+          title="Summarize this diff with AI (requires API key)"
+        >
+          {{ summarizing() ? '...' : 'Summarize' }}
+        </button>
         <div class="toggle">
           <button class="btn btn-ghost" [class.active]="mode() === 'unified'"
                   (click)="mode.set('unified')">Unified</button>
@@ -51,6 +68,13 @@ interface SideLine {
       </div>
     </div>
 
+    <div class="ai-summary" *ngIf="summary() as s">
+      <span class="ai-pill">AI</span>
+      <span class="summary-text">{{ s }}</span>
+      <button class="btn btn-ghost btn-icon close" (click)="summary.set(null)">×</button>
+    </div>
+    <div class="ai-summary error" *ngIf="summaryError() as e">{{ e }}</div>
+
     <div class="empty" *ngIf="!file">Select a file to see its diff.</div>
     <div class="empty" *ngIf="file && file.status === 'binary'">
       Binary file — diff not displayed.
@@ -58,7 +82,7 @@ interface SideLine {
 
     <ng-container *ngIf="file && file.status !== 'binary'">
       <pre class="unified" *ngIf="mode() === 'unified'"><code><div
-          *ngFor="let l of unifiedLines(); trackBy: trackByIdx"
+          *ngFor="let l of visibleUnifiedLines(); trackBy: trackByIdx"
           class="line"
           [class.add]="l.type === 'add'"
           [class.del]="l.type === 'del'"
@@ -148,6 +172,30 @@ interface SideLine {
       background: var(--accent-soft);
       color: var(--accent);
     }
+    .btn-toggle { font-size: 11px; padding: 0.25rem 0.6rem; }
+    .ai-summary {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      padding: 0.55rem 0.85rem;
+      background: color-mix(in oklab, var(--accent) 10%, transparent);
+      border-bottom: 1px solid var(--border-soft);
+      font-size: 12px;
+      color: var(--fg-secondary);
+    }
+    .ai-summary.error { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+    .ai-pill {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      background: var(--accent);
+      color: var(--accent-fg);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .summary-text { flex: 1; line-height: 1.5; }
+    .ai-summary .close { font-size: 14px; line-height: 1; padding: 0 6px; }
     .empty {
       padding: 2rem 1rem;
       text-align: center;
@@ -225,11 +273,51 @@ export class DiffViewerComponent {
     this.parsed.set(value ? this.parse(value.changes) : []);
   }
 
+  private insightsApi = inject(InsightsService);
+
   file: DiffFile | null = null;
   mode = signal<'unified' | 'split'>('unified');
   parsed = signal<DiffLine[]>([]);
+  collapsed = signal<boolean>(true);
+  summary = signal<string | null>(null);
+  summaryError = signal<string | null>(null);
+  summarizing = signal<boolean>(false);
+
+  private static readonly CONTEXT_RADIUS = 3;
 
   unifiedLines = computed(() => this.parsed());
+
+  visibleUnifiedLines = computed<DiffLine[]>(() => {
+    const lines = this.parsed();
+    if (!this.collapsed() || lines.length === 0) return lines;
+    const keep = new Array<boolean>(lines.length).fill(false);
+    const r = DiffViewerComponent.CONTEXT_RADIUS;
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].type;
+      if (t === 'add' || t === 'del' || t === 'hunk' || t === 'meta') {
+        for (let j = Math.max(0, i - r); j <= Math.min(lines.length - 1, i + r); j++) {
+          keep[j] = true;
+        }
+      }
+    }
+    const out: DiffLine[] = [];
+    let skipped = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (keep[i]) {
+        if (skipped > 0) {
+          out.push({ type: 'hunk', text: `... ${skipped} unchanged line${skipped === 1 ? '' : 's'} hidden ...` });
+          skipped = 0;
+        }
+        out.push(lines[i]);
+      } else {
+        skipped++;
+      }
+    }
+    if (skipped > 0) {
+      out.push({ type: 'hunk', text: `... ${skipped} unchanged line${skipped === 1 ? '' : 's'} hidden ...` });
+    }
+    return out;
+  });
 
   splitLines = computed(() => {
     const lines = this.parsed();
@@ -274,6 +362,24 @@ export class DiffViewerComponent {
 
   trackByIdx(i: number) {
     return i;
+  }
+
+  onSummarize() {
+    if (!this.file || this.summarizing()) return;
+    this.summarizing.set(true);
+    this.summaryError.set(null);
+    const text = this.file.changes.length > 12000 ? this.file.changes.slice(0, 12000) : this.file.changes;
+    this.insightsApi.summarizeDiff(`File: ${this.file.file}\n${text}`).subscribe({
+      next: (r) => {
+        this.summary.set(r.summary);
+        this.summarizing.set(false);
+      },
+      error: (err) => {
+        this.summary.set(null);
+        this.summaryError.set(err?.error?.error ?? 'Summarize failed');
+        this.summarizing.set(false);
+      }
+    });
   }
 
   sign(l: DiffLine): string {

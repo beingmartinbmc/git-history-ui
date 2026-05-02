@@ -11,13 +11,14 @@ import {
   signal
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink, RouterLinkActive } from '@angular/router';
 import { ThemeService } from '../../services/theme.service';
 import { UiStateService } from '../../services/ui-state.service';
 
 @Component({
   selector: 'app-toolbar',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterLink, RouterLinkActive],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <header class="toolbar">
@@ -29,16 +30,35 @@ import { UiStateService } from '../../services/ui-state.service';
         </div>
       </div>
 
+      <nav class="nav">
+        <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">History</a>
+        <a routerLink="/timeline" routerLinkActive="active">Timeline</a>
+        <a routerLink="/insights" routerLinkActive="active">Insights</a>
+      </nav>
+
       <div class="filters">
-        <label class="search">
-          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
-            <path fill="currentColor" d="M9 2a7 7 0 1 1-4.32 12.5l-3.1 3.09a1 1 0 0 1-1.42-1.42l3.1-3.09A7 7 0 0 1 9 2Zm0 2a5 5 0 1 0 0 10A5 5 0 0 0 9 4Z"/>
-          </svg>
+        <label class="search" [class.search-nl]="state.searchMode() === 'nl'">
+          <button
+            type="button"
+            class="search-mode"
+            (click)="toggleSearchMode()"
+            [title]="searchModeTooltip()"
+            [attr.aria-label]="searchModeTooltip()"
+          >
+            <ng-container *ngIf="state.searchMode() === 'classic'">
+              <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+                <path fill="currentColor" d="M9 2a7 7 0 1 1-4.32 12.5l-3.1 3.09a1 1 0 0 1-1.42-1.42l3.1-3.09A7 7 0 0 1 9 2Zm0 2a5 5 0 1 0 0 10A5 5 0 0 0 9 4Z"/>
+              </svg>
+            </ng-container>
+            <ng-container *ngIf="state.searchMode() === 'nl'">
+              <span class="ai-pill">AI</span>
+            </ng-container>
+          </button>
           <input
             #searchInput
             class="search-input"
             type="text"
-            placeholder="Search commits…   ( / )"
+            [placeholder]="searchPlaceholder()"
             [ngModel]="searchValue()"
             (ngModelChange)="onSearchInput($event)"
             aria-label="Search commits"
@@ -82,6 +102,14 @@ import { UiStateService } from '../../services/ui-state.service';
       </div>
 
       <div class="actions">
+        <button
+          class="btn btn-ghost view-toggle"
+          (click)="toggleViewMode()"
+          [title]="viewModeTooltip()"
+          [attr.aria-label]="viewModeTooltip()"
+        >
+          {{ state.viewMode() === 'grouped' ? 'Grouped' : 'Flat' }}
+        </button>
         <button class="btn btn-ghost btn-icon"
                 (click)="state.paletteOpen.set(true)"
                 title="Command palette (⌘K)">
@@ -109,6 +137,15 @@ import { UiStateService } from '../../services/ui-state.service';
         </button>
       </div>
     </header>
+
+    <div class="nl-chips" *ngIf="state.searchMode() === 'nl' && state.nlInterpretation() as q">
+      <span class="chip-label">Interpreted as</span>
+      <span class="chip" *ngIf="q.author">author: {{ q.author }}</span>
+      <span class="chip" *ngIf="q.since">since: {{ q.since }}</span>
+      <span class="chip" *ngIf="q.until">until: {{ q.until }}</span>
+      <span class="chip" *ngFor="let k of q.keywords">{{ k }}</span>
+      <span class="chip muted" *ngIf="q.keywords.length === 0 && !q.author && !q.since">no structured filters detected</span>
+    </div>
   `,
   styles: [`
     :host {
@@ -192,7 +229,74 @@ import { UiStateService } from '../../services/ui-state.service';
 
     .date { width: 9rem; }
 
-    .actions { display: flex; gap: 0.3rem; }
+    .actions { display: flex; gap: 0.3rem; align-items: center; }
+
+    .nav {
+      display: flex;
+      gap: 0.25rem;
+      padding: 0.5rem 1rem 0;
+    }
+    .nav a {
+      font-size: 12px;
+      color: var(--fg-muted);
+      text-decoration: none;
+      padding: 0.3rem 0.7rem;
+      border-radius: var(--radius-sm);
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .nav a:hover { background: var(--bg-elevated); color: var(--fg-primary); }
+    .nav a.active { background: var(--bg-elevated); color: var(--accent); font-weight: 600; }
+
+    .search-mode {
+      background: transparent;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+      color: var(--fg-muted);
+      display: flex;
+      align-items: center;
+    }
+    .search-mode:hover { color: var(--fg-primary); }
+    .search.search-nl {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 20%, transparent);
+    }
+    .ai-pill {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      background: var(--accent);
+      color: var(--accent-fg);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .view-toggle {
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0.35rem 0.6rem;
+    }
+
+    .nl-chips {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 1rem;
+      border-bottom: 1px solid var(--border-soft);
+      background: var(--bg-surface);
+      font-size: 11px;
+    }
+    .chip-label { color: var(--fg-muted); margin-right: 0.2rem; }
+    .chip {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-soft);
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: var(--fg-secondary);
+    }
+    .chip.muted { font-style: italic; color: var(--fg-subtle); }
   `]
 })
 export class ToolbarComponent {
@@ -208,6 +312,21 @@ export class ToolbarComponent {
     return `${t.toLocaleString()} commits`;
   });
   themeLabel = computed(() => `Switch to ${this.theme.resolved() === 'light' ? 'dark' : 'light'} mode`);
+  searchPlaceholder = computed(() =>
+    this.state.searchMode() === 'nl'
+      ? 'Ask anything: "login bug last month", "payments by alice"…'
+      : 'Search commits…   ( / )'
+  );
+  searchModeTooltip = computed(() =>
+    this.state.searchMode() === 'nl'
+      ? 'Natural-language search active. Click to switch to literal search.'
+      : 'Literal git-grep search. Click to switch to natural-language search.'
+  );
+  viewModeTooltip = computed(() =>
+    this.state.viewMode() === 'grouped'
+      ? 'Showing PR / feature groups. Click for flat list.'
+      : 'Showing flat commit list. Click for PR / feature groups.'
+  );
 
   private debounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -246,6 +365,18 @@ export class ToolbarComponent {
   }
   onFile(v: string) {
     this.state.patchFilters({ file: v || undefined });
+  }
+
+  toggleSearchMode() {
+    const next = this.state.searchMode() === 'classic' ? 'nl' : 'classic';
+    this.state.searchMode.set(next);
+    if (next === 'classic') this.state.nlInterpretation.set(null);
+    // Re-trigger query
+    this.state.patchFilters({});
+  }
+
+  toggleViewMode() {
+    this.state.viewMode.set(this.state.viewMode() === 'flat' ? 'grouped' : 'flat');
   }
 
   private isTyping(target: EventTarget | null): boolean {

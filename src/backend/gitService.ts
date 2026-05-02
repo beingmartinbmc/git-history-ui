@@ -290,6 +290,81 @@ export class GitService {
     return parseUnifiedDiff(raw);
   }
 
+  async getRangeDiff(from: string, to: string): Promise<DiffFile[]> {
+    if (!isPlausibleHash(from) || !isPlausibleHash(to)) {
+      throw new Error('Invalid commit hash');
+    }
+    const raw = await this.git(['diff', '-M', '--no-color', from, to], {
+      maxBuffer: 64 * 1024 * 1024
+    });
+    return parseUnifiedDiff(raw);
+  }
+
+  /** Resolve any ref (branch/tag/HEAD) to its commit at or before `atIso`. */
+  async revAt(ref: string, atIso: string): Promise<string | null> {
+    if (!isSafeRef(ref)) throw new Error('Invalid ref');
+    if (!isIsoLikeDate(atIso)) throw new Error('Invalid date');
+    try {
+      const out = await this.git([
+        'rev-list',
+        '-1',
+        `--before=${atIso}`,
+        ref
+      ]);
+      const hash = out.trim();
+      return hash || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Origin URL of the first remote (typically `origin`). */
+  async getRemoteUrl(name: string = 'origin'): Promise<string> {
+    const out = await this.git(['remote', 'get-url', name]);
+    return out.trim();
+  }
+
+  async getFileStats(filePath: string): Promise<{
+    file: string;
+    firstSeen: string;
+    lastTouched: string;
+    totalCommits: number;
+    contributors: string[];
+  }> {
+    if (filePath.includes('\0')) throw new Error('Invalid path');
+    const out = await this.git([
+      'log',
+      '--follow',
+      '--pretty=format:%aI%x1f%an',
+      '--',
+      filePath
+    ]);
+    const dates: string[] = [];
+    const authors = new Set<string>();
+    for (const line of out.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const [date, author] = trimmed.split('\x1f');
+      if (date) dates.push(date);
+      if (author) authors.add(author);
+    }
+    dates.sort();
+    return {
+      file: filePath,
+      firstSeen: dates[0] ?? '',
+      lastTouched: dates[dates.length - 1] ?? '',
+      totalCommits: dates.length,
+      contributors: Array.from(authors).sort((a, b) => a.localeCompare(b))
+    };
+  }
+
+  /** Read the contents of a file at a specific commit. */
+  async getFileAtCommit(hash: string, filePath: string): Promise<string> {
+    if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
+    if (filePath.includes('\0')) throw new Error('Invalid path');
+    return this.git(['show', `${hash}:${filePath}`], { maxBuffer: 16 * 1024 * 1024 });
+  }
+
   async getBlame(filePath: string): Promise<BlameLine[]> {
     if (filePath.includes('\0')) throw new Error('Invalid path');
     const raw = await this.git(['blame', '--porcelain', '--', filePath]);
@@ -335,6 +410,16 @@ export class GitService {
 
 function isPlausibleHash(hash: string): boolean {
   return typeof hash === 'string' && /^[0-9a-fA-F]{4,40}$/.test(hash);
+}
+
+function isSafeRef(ref: string): boolean {
+  // Allow alphanumerics, slash, dot, dash, underscore, plus HEAD shorthand chars.
+  return typeof ref === 'string' && /^[A-Za-z0-9_./@^~+-]{1,200}$/.test(ref);
+}
+
+function isIsoLikeDate(s: string): boolean {
+  // Accept YYYY-MM-DD or full ISO-8601, plus a small set of git-friendly relative tokens.
+  return typeof s === 'string' && /^[0-9T:Z+\-.\s]{4,40}$/.test(s);
 }
 
 function clamp(value: number, min: number, max: number): number {
