@@ -1,6 +1,6 @@
 {
   "name": "git-history-ui",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "description": "Git Intelligence in your browser — natural-language search, PR/feature grouping, time-travel snapshots, file history, blame, commit impact, and an insights dashboard. Optional AI integration (Anthropic / OpenAI).",
   "main": "dist/cli.js",
   "bin": {
@@ -85,10 +85,12 @@
     "@types/supertest": "^6.0.2",
     "@typescript-eslint/eslint-plugin": "^8.8.0",
     "@typescript-eslint/parser": "^8.8.0",
+    "better-sqlite3": "^12.9.0",
     "concurrently": "^9.0.0",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^9.1.0",
     "jest": "^29.7.0",
+    "nock": "^14.0.14",
     "prettier": "^3.3.3",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
