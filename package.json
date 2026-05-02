@@ -1,6 +1,6 @@
 {
   "name": "git-history-ui",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Git Intelligence in your browser — natural-language search, PR/feature grouping, time-travel snapshots, file history, blame, commit impact, and an insights dashboard. Optional AI integration (Anthropic / OpenAI).",
   "main": "dist/cli.js",
   "bin": {

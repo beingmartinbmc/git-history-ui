@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-05-02
+
+### Fixed
+
+- **`npx git-history-ui` no longer prints help and exits.** When the
+  `presets` subcommand was added in v3.2.0, the root commander program
+  was left without a default `.action()`. Commander v12 reacts to that
+  by printing help and exiting whenever the user invokes the binary
+  without a subcommand. A no-args invocation now correctly starts the
+  server, matching pre-v3.2.0 behavior.
+- Added a CLI smoke test (`src/__tests__/cli.test.ts`) that runs the
+  built binary with `--help`, `--version`, and no args so this kind of
+  regression can't ship silently again.
+
 ## [3.2.0] - 2026-05-02
 
 The "Distribution & scale" release. This phase makes the tool faster on big
