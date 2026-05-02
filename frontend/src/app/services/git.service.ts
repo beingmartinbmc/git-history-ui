@@ -40,6 +40,7 @@ export class GitService {
       let total = 0;
       let raf = 0;
       let completed = false;
+      let fallbackSub: { unsubscribe(): void } | null = null;
 
       const emit = () => {
         raf = 0;
@@ -79,12 +80,17 @@ export class GitService {
       source.addEventListener('error', (event) => {
         source.close();
         if (raf) cancelAnimationFrame(raf);
-        subscriber.error(event);
+        fallbackSub = this.getCommits(options).subscribe({
+          next: (resp) => subscriber.next(resp),
+          error: (err) => subscriber.error(hasStreamErrorMessage(event) ? streamError(event) : err),
+          complete: () => subscriber.complete()
+        });
       });
 
       return () => {
         source.close();
         if (raf) cancelAnimationFrame(raf);
+        fallbackSub?.unsubscribe();
       };
     });
   }
@@ -113,4 +119,21 @@ export class GitService {
   getAuthors(): Observable<string[]> {
     return this.http.get<string[]>(`${this.base}/authors`);
   }
+}
+
+function hasStreamErrorMessage(event: Event): boolean {
+  return event instanceof MessageEvent && typeof event.data === 'string' && event.data.length > 0;
+}
+
+function streamError(event: Event): Error {
+  if (event instanceof MessageEvent && typeof event.data === 'string' && event.data) {
+    try {
+      const parsed = JSON.parse(event.data) as { message?: string; error?: string };
+      const message = parsed.message || parsed.error;
+      if (message) return new Error(message);
+    } catch {
+      return new Error(event.data);
+    }
+  }
+  return new Error('Failed to load commits.');
 }
