@@ -24,5 +24,16 @@ module.exports = {
       { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
     ],
     '@typescript-eslint/explicit-module-boundary-types': 'off'
-  }
+  },
+  overrides: [
+    {
+      // Tests need dynamic require() to re-load modules after jest.resetModules()
+      // (e.g. presets.ts and annotations.ts capture os.homedir() at module load).
+      files: ['src/__tests__/**/*.ts'],
+      rules: {
+        '@typescript-eslint/no-require-imports': 'off',
+        '@typescript-eslint/no-var-requires': 'off'
+      }
+    }
+  ]
 };

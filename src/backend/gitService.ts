@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
@@ -371,6 +371,103 @@ export class GitService {
   }
 
   /**
+   * Spawn `git` and stream its stdout line-by-line. Used by callers that
+   * must process huge logs (millions of commits) without buffering the
+   * entire output in memory. The callback receives each line; resolves
+   * when the subprocess exits cleanly, rejects on non-zero exit.
+   */
+  async streamRaw(
+    args: string[],
+    onChunk: (chunk: Buffer) => void
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const child = spawn('git', args, {
+        cwd: this.repoPath,
+        env: {
+          ...process.env,
+          GIT_PAGER: 'cat',
+          GIT_TERMINAL_PROMPT: '0',
+          LC_ALL: 'C'
+        }
+      });
+      let stderr = '';
+      const rejectOnce = (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        child.kill();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+      child.stdout.on('data', (chunk: Buffer) => {
+        try {
+          onChunk(chunk);
+        } catch (err) {
+          rejectOnce(err);
+        }
+      });
+      child.stderr.on('data', (chunk: Buffer) => {
+        if (stderr.length < 4096) stderr += chunk.toString('utf8');
+      });
+      child.on('error', rejectOnce);
+      child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        if (code === 0) resolve();
+        else reject(new Error(`git ${args[0]} exited ${code}: ${stderr.trim()}`));
+      });
+    });
+  }
+
+  /**
+   * Per-commit numstat (additions, deletions, file path) for a window of
+   * recent commits. Single `git log` invocation — orders of magnitude
+   * faster than fanning out N `git diff` calls. Used by the insights
+   * dashboard so it stays responsive on huge repos.
+   *
+   * Format: each commit is prefixed by a record separator + commit hash;
+   * file lines follow as `additions\tdeletions\tpath`.
+   */
+  async getNumstat(options: GitOptions = {}, maxCommits = 2000): Promise<
+    Map<string, Array<{ file: string; additions: number; deletions: number }>>
+  > {
+    const filterArgs = this.buildFilterArgs(options);
+    const cap = clamp(maxCommits, 1, 50_000);
+    const out = await this.git(
+      [
+        'log',
+        `--max-count=${cap}`,
+        '-M',
+        '--numstat',
+        `--pretty=format:${RECORD_SEP}%H`,
+        ...filterArgs
+      ],
+      { maxBuffer: 128 * 1024 * 1024 }
+    );
+
+    const result = new Map<string, Array<{ file: string; additions: number; deletions: number }>>();
+    if (!out) return result;
+
+    for (const record of out.split(RECORD_SEP)) {
+      if (!record) continue;
+      const [hashLine, ...fileLines] = record.split('\n');
+      const hash = hashLine.trim();
+      if (!/^[0-9a-fA-F]{40}$/.test(hash)) continue;
+      const files: Array<{ file: string; additions: number; deletions: number }> = [];
+      for (const line of fileLines) {
+        if (!line.trim()) continue;
+        const parts = line.split('\t');
+        if (parts.length < 3) continue;
+        const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10) || 0;
+        const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10) || 0;
+        const file = normalizeNumstatPath(parts.slice(2).join('\t'));
+        if (file) files.push({ file, additions, deletions });
+      }
+      result.set(hash, files);
+    }
+    return result;
+  }
+
+  /**
    * Stream commits one at a time via async iteration. Used by the SSE
    * endpoint to feed huge repos to the UI progressively without buffering
    * the entire `git log` output in memory.
@@ -461,6 +558,23 @@ function isIsoLikeDate(s: string): boolean {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeNumstatPath(file: string): string {
+  if (!file.includes(' => ')) return file;
+
+  // Git numstat renders renames as either:
+  //   old/path.ts => new/path.ts
+  // or, when only part of the path changed:
+  //   src/{old.ts => new.ts}
+  // For churn dashboards, key the touch under the destination path.
+  const brace = file.match(/^(.*)\{(.+?) => (.+?)\}(.*)$/);
+  if (brace) {
+    return `${brace[1]}${brace[3]}${brace[4]}`;
+  }
+
+  const arrow = file.lastIndexOf(' => ');
+  return arrow >= 0 ? file.slice(arrow + 4) : file;
 }
 
 function parseUnifiedDiff(raw: string): DiffFile[] {

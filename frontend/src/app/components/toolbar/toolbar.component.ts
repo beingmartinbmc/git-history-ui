@@ -92,7 +92,7 @@ import { UiStateService } from '../../services/ui-state.service';
         />
 
         <input
-          class="input"
+          class="input file"
           type="text"
           placeholder="path/to/file"
           [ngModel]="state.filters().file ?? ''"
@@ -159,16 +159,18 @@ import { UiStateService } from '../../services/ui-state.service';
     }
     .toolbar {
       display: grid;
-      grid-template-columns: auto 1fr auto;
+      /* brand | nav | filters (flexes) | actions */
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
       align-items: center;
-      gap: 1rem;
-      padding: 0.6rem 1rem;
+      column-gap: 0.75rem;
+      row-gap: 0.4rem;
+      padding: 0.55rem 1rem;
     }
     .brand {
       display: flex;
       align-items: center;
       gap: 0.6rem;
-      padding-right: 0.5rem;
+      padding-right: 0.25rem;
     }
     .brand-mark {
       width: 32px;
@@ -191,21 +193,22 @@ import { UiStateService } from '../../services/ui-state.service';
 
     .filters {
       display: flex;
-      gap: 0.5rem;
+      gap: 0.4rem;
       align-items: center;
-      flex-wrap: wrap;
       min-width: 0;
+      justify-content: flex-end;
     }
+    .filters > * { min-width: 0; }
 
     .search {
       position: relative;
       display: flex;
       align-items: center;
-      gap: 0.4rem;
-      flex: 1 1 240px;
-      min-width: 200px;
-      max-width: 420px;
-      padding: 0 0.6rem;
+      gap: 0.35rem;
+      flex: 1 1 220px;
+      min-width: 0;
+      max-width: 360px;
+      padding: 0 0.55rem;
       background: var(--bg-surface);
       border: 1px solid var(--border-soft);
       border-radius: var(--radius-sm);
@@ -227,20 +230,23 @@ import { UiStateService } from '../../services/ui-state.service';
     .search-input::placeholder { color: var(--fg-subtle); }
     .search .kbd { margin-left: 0.4rem; }
 
-    .date { width: 9rem; }
+    .date { width: 8.25rem; }
+    .filters .input,
+    .filters .select { font-size: 12px; }
+    .filters .input.file { width: 9rem; }
 
     .actions { display: flex; gap: 0.3rem; align-items: center; }
 
     .nav {
       display: flex;
-      gap: 0.25rem;
-      padding: 0.5rem 1rem 0;
+      gap: 0.15rem;
+      padding: 0;
     }
     .nav a {
       font-size: 12px;
       color: var(--fg-muted);
       text-decoration: none;
-      padding: 0.3rem 0.7rem;
+      padding: 0.3rem 0.65rem;
       border-radius: var(--radius-sm);
       transition: background 0.15s ease, color 0.15s ease;
     }
@@ -297,6 +303,26 @@ import { UiStateService } from '../../services/ui-state.service';
       color: var(--fg-secondary);
     }
     .chip.muted { font-style: italic; color: var(--fg-subtle); }
+
+    /* Responsive: drop secondary controls before things wrap awkwardly. */
+    @media (max-width: 1280px) {
+      .filters .input.file { display: none; }
+    }
+    @media (max-width: 1100px) {
+      .filters .date { display: none; }
+      .search { max-width: 280px; }
+    }
+    @media (max-width: 900px) {
+      .toolbar {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        row-gap: 0.5rem;
+      }
+      .nav {
+        grid-column: 1 / -1;
+        order: 5;
+      }
+      .filters .select { display: none; }
+    }
   `]
 })
 export class ToolbarComponent {
