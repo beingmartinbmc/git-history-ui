@@ -19,8 +19,8 @@ describe('InsightsComponent', () => {
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
-        { provide: Router, useValue: router }
-      ]
+        { provide: Router, useValue: router },
+      ],
     }).compileComponents();
 
     fixture = TestBed.createComponent(InsightsComponent);
@@ -61,6 +61,33 @@ describe('InsightsComponent', () => {
     expect(component.topContributor(bundle)).toBe('No author data');
   });
 
+  it('renders contributor ownership, hotspot help, and risk explanations', () => {
+    fixture.detectChanges();
+    http.expectOne('/api/insights?maxCommits=500').flush(bundleFixture());
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Ownership');
+    expect(text).toContain('active Jan 1 - Jan 20, 2026');
+    expect(text).toContain('Size = commit frequency');
+    expect(text).toContain('Review priority');
+    expect(text).toContain('Low');
+    expect(text).toContain('Medium');
+    expect(text).toContain('High');
+  });
+
+  it('formats contributor initials, avatar colors, and risk meters', () => {
+    expect(component.initials('Ada Lovelace')).toBe('AL');
+    expect(component.initials('Ada')).toBe('AD');
+    expect(component.avatarColor(7)).toBe('#06b6d4');
+    expect(component.riskPct(0.005)).toBe(4);
+    expect(component.riskPct(2)).toBe(100);
+    expect(component.riskScore(0.91)).toBe('91');
+    expect(component.riskLevel(0.2)).toBe('low');
+    expect(component.riskLevel(0.5)).toBe('medium');
+    expect(component.riskLevel(0.9)).toBe('high');
+  });
+
   function bundleFixture(overrides: Partial<InsightsBundle> = {}): InsightsBundle {
     return {
       windowStart: '2026-01-01T00:00:00.000Z',
@@ -73,8 +100,8 @@ describe('InsightsComponent', () => {
           email: 'ada@example.com',
           commits: 20,
           firstCommit: '2026-01-01T00:00:00.000Z',
-          lastCommit: '2026-01-20T00:00:00.000Z'
-        }
+          lastCommit: '2026-01-20T00:00:00.000Z',
+        },
       ],
       hotspots: [
         {
@@ -83,12 +110,12 @@ describe('InsightsComponent', () => {
           additions: 100,
           deletions: 40,
           lastTouched: '2026-01-20T00:00:00.000Z',
-          authors: 2
-        }
+          authors: 2,
+        },
       ],
       churnByDay: [
         { date: '2026-01-01', commits: 3, additions: 20, deletions: 4 },
-        { date: '2026-01-02', commits: 5, additions: 50, deletions: 10 }
+        { date: '2026-01-02', commits: 5, additions: 50, deletions: 10 },
       ],
       riskyFiles: [
         {
@@ -97,10 +124,10 @@ describe('InsightsComponent', () => {
           reason: 'High churn and multiple authors',
           commits: 10,
           authors: 3,
-          churn: 140
-        }
+          churn: 140,
+        },
       ],
-      ...overrides
+      ...overrides,
     };
   }
 });

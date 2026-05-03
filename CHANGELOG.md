@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-05-03
+
+### Added
+
+- AI explanations now render as formatted markdown with an internal scrollbar
+  for long responses.
+- OpenAI and Anthropic model selection can be overridden with
+  `GHUI_LLM_MODEL`, `OPENAI_MODEL`, or `ANTHROPIC_MODEL`.
+- Project governance docs, PR templates, issue templates, and expanded test
+  coverage were added for a more release-ready package.
+
+### Changed
+
+- OpenAI defaults to `gpt-4.1-nano` and Anthropic defaults to the available
+  Sonnet model `claude-sonnet-4-6`.
+- AI summaries and commit explanations use larger token budgets and tighter
+  prompts to avoid truncated prose.
+
 ## [4.0.1] - 2026-05-02
 
 ### Fixed

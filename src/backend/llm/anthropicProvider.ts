@@ -1,13 +1,31 @@
 import type { LlmService, ScoreCandidate, ScoredCandidate } from './types';
 
-const DEFAULT_MODEL = 'claude-3-5-haiku-latest';
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const DEFAULT_SUMMARY_TOKENS = 700;
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const VERSION = '2023-06-01';
+
+interface AnthropicTextBlock {
+  type: 'text';
+  text: string;
+  citations?: unknown[];
+}
+
+interface AnthropicMessageResponse {
+  type?: 'message';
+  role?: 'assistant';
+  content?: Array<AnthropicTextBlock | { type: string; [key: string]: unknown }>;
+  stop_reason?: string | null;
+  usage?: unknown;
+}
 
 export class AnthropicProvider implements LlmService {
   readonly name = 'anthropic' as const;
   readonly isAi = true;
-  constructor(private apiKey: string, private model: string = DEFAULT_MODEL) {}
+  constructor(
+    private apiKey: string,
+    private model: string = DEFAULT_MODEL
+  ) {}
 
   async score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]> {
     if (candidates.length === 0) return [];
@@ -31,13 +49,13 @@ export class AnthropicProvider implements LlmService {
     return items.map((it) => ({ id: it.id, score: parsed[it.idx] ?? 0 }));
   }
 
-  async summarize(text: string, opts?: { hint?: string }): Promise<string> {
+  async summarize(text: string, opts?: { hint?: string; maxTokens?: number }): Promise<string> {
     const prompt = [
       opts?.hint ?? 'Summarize the following text in one short paragraph (max 3 sentences).',
       '---',
       text.length > 8000 ? text.slice(0, 8000) + '\n[truncated]' : text
     ].join('\n');
-    const out = await this.call(prompt, 320);
+    const out = await this.call(prompt, opts?.maxTokens ?? DEFAULT_SUMMARY_TOKENS);
     return out.trim();
   }
 
@@ -59,10 +77,19 @@ export class AnthropicProvider implements LlmService {
       const err = await resp.text().catch(() => '');
       throw new Error(`anthropic ${resp.status}: ${err.slice(0, 200)}`);
     }
-    const data = (await resp.json()) as { content?: Array<{ type: string; text?: string }> };
-    const block = data.content?.find((b) => b.type === 'text');
-    return block?.text ?? '';
+    const data = (await resp.json()) as AnthropicMessageResponse;
+    return extractText(data);
   }
+}
+
+function extractText(data: AnthropicMessageResponse): string {
+  return (data.content ?? [])
+    .filter(
+      (block): block is AnthropicTextBlock =>
+        block.type === 'text' && typeof (block as AnthropicTextBlock).text === 'string'
+    )
+    .map((block) => block.text)
+    .join('\n');
 }
 
 function parseScores(raw: string, length: number): Record<number, number> {

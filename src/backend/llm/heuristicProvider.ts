@@ -18,7 +18,18 @@ const SYNONYMS: Record<string, string[]> = {
   ci: ['ci', 'pipeline', 'workflow', 'github-actions', 'jenkins', 'travis'],
   build: ['build', 'compile', 'webpack', 'vite', 'rollup', 'esbuild'],
   deps: ['deps', 'dependencies', 'upgrade', 'bump', 'update', 'package'],
-  auth: ['auth', 'authentication', 'login', 'logout', 'signin', 'signout', 'oauth', 'jwt', 'session', 'token'],
+  auth: [
+    'auth',
+    'authentication',
+    'login',
+    'logout',
+    'signin',
+    'signout',
+    'oauth',
+    'jwt',
+    'session',
+    'token'
+  ],
   login: ['login', 'logon', 'signin', 'sign-in', 'auth', 'authentication'],
   payment: ['payment', 'payments', 'pay', 'billing', 'invoice', 'charge', 'stripe', 'checkout'],
   ui: ['ui', 'frontend', 'view', 'component', 'css', 'style', 'theme'],
@@ -29,9 +40,48 @@ const SYNONYMS: Record<string, string[]> = {
 };
 
 const STOP_WORDS = new Set([
-  'a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'is', 'was', 'be', 'i', 'we', 'our',
-  'my', 'me', 'it', 'this', 'that', 'these', 'those', 'where', 'when', 'what', 'which', 'who', 'how',
-  'did', 'do', 'does', 'has', 'have', 'had', 'last', 'changes', 'change', 'commit', 'commits', 'related'
+  'a',
+  'an',
+  'the',
+  'and',
+  'or',
+  'of',
+  'to',
+  'in',
+  'on',
+  'for',
+  'with',
+  'is',
+  'was',
+  'be',
+  'i',
+  'we',
+  'our',
+  'my',
+  'me',
+  'it',
+  'this',
+  'that',
+  'these',
+  'those',
+  'where',
+  'when',
+  'what',
+  'which',
+  'who',
+  'how',
+  'did',
+  'do',
+  'does',
+  'has',
+  'have',
+  'had',
+  'last',
+  'changes',
+  'change',
+  'commit',
+  'commits',
+  'related'
 ]);
 
 // Reverse synonym map built once: every member token maps to all its bucket-mates.
@@ -111,7 +161,7 @@ export class HeuristicProvider implements LlmService {
     });
   }
 
-  async summarize(text: string, _opts?: { hint?: string }): Promise<string> {
+  async summarize(text: string, _opts?: { hint?: string; maxTokens?: number }): Promise<string> {
     const trimmed = (text || '').trim();
     if (!trimmed) return '';
     // Heuristic summary: first non-empty paragraph, truncated.

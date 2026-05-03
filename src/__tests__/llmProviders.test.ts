@@ -10,7 +10,7 @@ const ok = (json: unknown): Response =>
     status: 200,
     json: async () => json,
     text: async () => JSON.stringify(json)
-  } as unknown as Response);
+  }) as unknown as Response;
 
 const fail = (status: number, body: string): Response =>
   ({
@@ -18,7 +18,7 @@ const fail = (status: number, body: string): Response =>
     status,
     json: async () => ({}),
     text: async () => body
-  } as unknown as Response);
+  }) as unknown as Response;
 
 describe('AnthropicProvider', () => {
   let originalFetch: typeof fetch;
@@ -46,7 +46,28 @@ describe('AnthropicProvider', () => {
 
   it('parses scored candidates from the model JSON response', async () => {
     mockFetch.mockResolvedValueOnce(
-      ok({ content: [{ type: 'text', text: '[{"idx":0,"score":0.9},{"idx":1,"score":0.1}]' }] })
+      ok({
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-test',
+        content: [
+          {
+            type: 'text',
+            text: '[{"idx":0,"score":0.9},{"idx":1,"score":0.1}]',
+            citations: [
+              {
+                type: 'char_location',
+                document_index: 0,
+                start_char_index: 0,
+                end_char_index: 10
+              }
+            ]
+          }
+        ],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 12, output_tokens: 8 }
+      })
     );
     const p = new AnthropicProvider('key', 'claude-test');
     const out = await p.score('login bug', [
@@ -59,12 +80,25 @@ describe('AnthropicProvider', () => {
     ]);
     const [url, init] = mockFetch.mock.calls[0];
     expect(String(url)).toContain('api.anthropic.com');
-    expect((init as RequestInit).headers).toMatchObject({ 'x-api-key': 'key' });
+    expect((init as RequestInit).headers).toMatchObject({
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      'x-api-key': 'key'
+    });
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body).toMatchObject({
+      model: 'claude-test',
+      max_tokens: 1024,
+      messages: [{ role: 'user' }]
+    });
+    expect(typeof body.messages[0].content).toBe('string');
   });
 
   it('clamps out-of-range and ignores garbled scores', async () => {
     mockFetch.mockResolvedValueOnce(
-      ok({ content: [{ type: 'text', text: 'noise [{"idx":0,"score":5},{"idx":1,"score":"bad"}]' }] })
+      ok({
+        content: [{ type: 'text', text: 'noise [{"idx":0,"score":5},{"idx":1,"score":"bad"}]' }]
+      })
     );
     const p = new AnthropicProvider('k');
     const out = await p.score('q', [
@@ -99,8 +133,31 @@ describe('AnthropicProvider', () => {
     const out = await p.summarize(long, { hint: 'short pls' });
     expect(out).toBe('The change adds a new endpoint.');
     const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.max_tokens).toBe(700);
     expect(body.messages[0].content).toContain('[truncated]');
     expect(body.messages[0].content.startsWith('short pls')).toBe(true);
+  });
+
+  it('honors custom Anthropic summary token budgets', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ content: [{ type: 'text', text: 'custom budget' }] }));
+    const p = new AnthropicProvider('k');
+    await p.summarize('blob', { maxTokens: 900 });
+    const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.max_tokens).toBe(900);
+  });
+
+  it('joins multiple Anthropic text blocks and ignores non-text blocks', async () => {
+    mockFetch.mockResolvedValueOnce(
+      ok({
+        content: [
+          { type: 'text', text: 'First sentence.' },
+          { type: 'thinking', thinking: 'internal metadata' },
+          { type: 'text', text: 'Second sentence.' }
+        ]
+      })
+    );
+    const p = new AnthropicProvider('k');
+    await expect(p.summarize('blob')).resolves.toBe('First sentence.\nSecond sentence.');
   });
 
   it('summarize uses a default hint when none is provided and returns "" when there is no text block', async () => {
@@ -109,6 +166,7 @@ describe('AnthropicProvider', () => {
     const out = await p.summarize('short blob');
     expect(out).toBe('');
     const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe('claude-sonnet-4-6');
     expect(body.messages[0].content).toMatch(/Summarize the following text/);
   });
 });
@@ -128,12 +186,33 @@ describe('OpenAiProvider', () => {
   it('parses {scores:[...]} responses', async () => {
     mockFetch.mockResolvedValueOnce(
       ok({
+        id: 'chatcmpl-test',
+        object: 'chat.completion',
+        created: 1777791434,
+        model: 'gpt-test',
         choices: [
-          { message: { content: '{"scores":[{"idx":0,"score":0.8},{"idx":1,"score":0.2}]}' } }
-        ]
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: '{"scores":[{"idx":0,"score":0.8},{"idx":1,"score":0.2}]}',
+              refusal: null,
+              annotations: []
+            },
+            logprobs: null,
+            finish_reason: 'stop'
+          }
+        ],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 6,
+          total_tokens: 16
+        },
+        service_tier: 'default',
+        system_fingerprint: 'fp_test'
       })
     );
-    const p = new OpenAiProvider('k');
+    const p = new OpenAiProvider('key', 'gpt-test');
     const out = await p.score('q', [
       { id: 'a', text: 'a' },
       { id: 'b', text: 'b' }
@@ -142,6 +221,20 @@ describe('OpenAiProvider', () => {
       { id: 'a', score: 0.8 },
       { id: 'b', score: 0.2 }
     ]);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(String(url)).toContain('/v1/chat/completions');
+    expect((init as RequestInit).headers).toMatchObject({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer key'
+    });
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body).toMatchObject({
+      model: 'gpt-test',
+      max_tokens: 1024,
+      messages: [{ role: 'user' }],
+      response_format: { type: 'json_object' }
+    });
+    expect(typeof body.messages[0].content).toBe('string');
   });
 
   it('falls back to bare-array parsing', async () => {
@@ -168,7 +261,20 @@ describe('OpenAiProvider', () => {
 
   it('summarize returns the first choice content trimmed', async () => {
     mockFetch.mockResolvedValueOnce(
-      ok({ choices: [{ message: { content: '\n\nA short summary.' } }] })
+      ok({
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: '\n\nA short summary.',
+              refusal: null,
+              annotations: []
+            },
+            finish_reason: 'stop'
+          }
+        ]
+      })
     );
     const p = new OpenAiProvider('k');
     await expect(p.summarize('blob')).resolves.toBe('A short summary.');
@@ -184,11 +290,33 @@ describe('OpenAiProvider', () => {
     const p = new OpenAiProvider('k');
     await expect(p.summarize('blob')).resolves.toBe('fine');
     const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe('gpt-4.1-nano');
+    expect(body.max_tokens).toBe(700);
     expect(body.messages[0].content).toMatch(/Summarize the following text/);
+  });
+
+  it('honors custom OpenAI summary token budgets', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ choices: [{ message: { content: 'custom budget' } }] }));
+    const p = new OpenAiProvider('k');
+    await p.summarize('blob', { maxTokens: 900 });
+    const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.max_tokens).toBe(900);
   });
 
   it('returns "" when the response has no choices', async () => {
     mockFetch.mockResolvedValueOnce(ok({ choices: [] }));
+    const p = new OpenAiProvider('k');
+    await expect(p.summarize('x')).resolves.toBe('');
+  });
+
+  it('returns "" when the OpenAI assistant content is null', async () => {
+    mockFetch.mockResolvedValueOnce(
+      ok({
+        choices: [
+          { message: { role: 'assistant', content: null, refusal: 'refused', annotations: [] } }
+        ]
+      })
+    );
     const p = new OpenAiProvider('k');
     await expect(p.summarize('x')).resolves.toBe('');
   });
@@ -201,6 +329,9 @@ describe('createLlmService', () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENAI_API_KEY;
     delete process.env.GHUI_LLM_PROVIDER;
+    delete process.env.GHUI_LLM_MODEL;
+    delete process.env.ANTHROPIC_MODEL;
+    delete process.env.OPENAI_MODEL;
     _resetLlmCache();
   });
   afterEach(() => {
@@ -213,7 +344,9 @@ describe('createLlmService', () => {
   });
 
   it('honors the explicit provider config (anthropic)', () => {
-    expect(createLlmService({ provider: 'anthropic', anthropicApiKey: 'k' }).name).toBe('anthropic');
+    expect(createLlmService({ provider: 'anthropic', anthropicApiKey: 'k' }).name).toBe(
+      'anthropic'
+    );
   });
 
   it('honors the explicit provider config (openai)', () => {
@@ -240,6 +373,42 @@ describe('createLlmService', () => {
     expect(createLlmService().name).toBe('openai');
   });
 
+  it('uses GHUI_LLM_MODEL as a generic exported model override', async () => {
+    const originalFetch = global.fetch;
+    const mockFetch = jest
+      .fn()
+      .mockResolvedValueOnce(ok({ content: [{ type: 'text', text: 'ok' }] }));
+    global.fetch = mockFetch as unknown as typeof fetch;
+    try {
+      process.env.ANTHROPIC_API_KEY = 'k';
+      process.env.GHUI_LLM_MODEL = 'claude-custom-generic';
+      await createLlmService().summarize('blob');
+      const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.model).toBe('claude-custom-generic');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('uses provider-specific exported model overrides before GHUI_LLM_MODEL', async () => {
+    const originalFetch = global.fetch;
+    const mockFetch = jest
+      .fn()
+      .mockResolvedValueOnce(ok({ choices: [{ message: { content: 'ok' } }] }));
+    global.fetch = mockFetch as unknown as typeof fetch;
+    try {
+      process.env.GHUI_LLM_PROVIDER = 'openai';
+      process.env.OPENAI_API_KEY = 'k';
+      process.env.GHUI_LLM_MODEL = 'gpt-generic';
+      process.env.OPENAI_MODEL = 'gpt-openai-specific';
+      await createLlmService().summarize('blob');
+      const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.model).toBe('gpt-openai-specific');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('caches the default service unless config or env changes', () => {
     const a = getDefaultLlmService();
     const b = getDefaultLlmService();
@@ -248,5 +417,18 @@ describe('createLlmService', () => {
     const c = getDefaultLlmService();
     expect(c).not.toBe(a);
     expect(c.name).toBe('anthropic');
+  });
+
+  it('refreshes the cached service when exported model changes', () => {
+    process.env.OPENAI_API_KEY = 'k';
+    process.env.GHUI_LLM_PROVIDER = 'openai';
+    process.env.OPENAI_MODEL = 'gpt-one';
+    const a = getDefaultLlmService();
+    const b = getDefaultLlmService();
+    expect(a).toBe(b);
+    process.env.OPENAI_MODEL = 'gpt-two';
+    const c = getDefaultLlmService();
+    expect(c).not.toBe(a);
+    expect(c.name).toBe('openai');
   });
 });

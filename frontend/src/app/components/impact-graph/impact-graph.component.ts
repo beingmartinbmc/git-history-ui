@@ -7,7 +7,7 @@ import {
   Input,
   OnChanges,
   OnDestroy,
-  ViewChild
+  ViewChild,
 } from '@angular/core';
 import * as d3 from 'd3';
 import { CommitImpact } from '../../models/git.models';
@@ -28,65 +28,143 @@ interface Link extends d3.SimulationLinkDatum<Node> {
   imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="legend">
-      <span class="dot dot-changed"></span> changed
-      <span class="dot dot-imported"></span> imports
-      <span class="dot dot-module"></span> module
+    <div class="graph-head">
+      <div class="legend">
+        <span class="legend-item"><span class="dot dot-changed"></span>changed file</span>
+        <span class="legend-item"><span class="dot dot-imported"></span>import dependency</span>
+        <span class="legend-item"><span class="dot dot-module"></span>module</span>
+      </div>
+      <span class="hint">Scroll to explore. Lines show module membership and imports.</span>
     </div>
-    <div class="canvas-wrap">
-      <svg #svg width="100%" height="280" aria-label="Commit impact graph"></svg>
-      <div class="empty" *ngIf="!hasData">No graph data — changed files have no detectable internal imports.</div>
+    <div class="canvas-wrap" tabindex="0">
+      <svg #svg aria-label="Commit impact graph"></svg>
+      <div class="empty" *ngIf="!hasData">
+        No graph data — changed files have no detectable internal imports.
+      </div>
     </div>
   `,
-  styles: [`
-    :host { display: block; }
-    .legend {
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      font-size: 11px;
-      color: var(--fg-muted);
-      margin-bottom: 0.4rem;
-    }
-    .dot {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      margin-right: 4px;
-    }
-    .dot-changed { background: var(--accent); }
-    .dot-imported { background: #f59e0b; }
-    .dot-module { background: #8b5cf6; }
-    .canvas-wrap {
-      position: relative;
-      background:
-        radial-gradient(circle at 20% 0%, color-mix(in oklab, var(--accent) 12%, transparent), transparent 34%),
-        var(--bg-surface-2);
-      border-radius: var(--radius-md);
-      border: 1px solid var(--border-soft);
-      overflow: hidden;
-    }
-    .empty {
-      position: absolute;
-      inset: 0;
-      display: grid;
-      place-items: center;
-      color: var(--fg-muted);
-      font-size: 11px;
-      pointer-events: none;
-    }
-    :host ::ng-deep .node-label {
-      font-size: 9px;
-      fill: var(--fg-secondary);
-      font-family: var(--font-mono, monospace);
-      pointer-events: none;
-      paint-order: stroke;
-      stroke: var(--bg-app);
-      stroke-width: 2px;
-      stroke-linejoin: round;
-    }
-  `]
+  styles: [
+    `
+      :host {
+        display: block;
+      }
+      .graph-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.5rem;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .hint {
+        flex: 0 0 auto;
+        color: var(--fg-subtle);
+        font-size: 11px;
+      }
+      .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 4px;
+      }
+      .dot-changed {
+        background: var(--accent);
+      }
+      .dot-imported {
+        background: #f59e0b;
+      }
+      .dot-module {
+        background: #8b5cf6;
+      }
+      .canvas-wrap {
+        position: relative;
+        max-height: 430px;
+        min-height: 320px;
+        background:
+          radial-gradient(
+            circle at 20% 0%,
+            color-mix(in oklab, var(--accent) 12%, transparent),
+            transparent 34%
+          ),
+          var(--bg-surface-2);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-soft);
+        overflow: auto;
+        overscroll-behavior: contain;
+      }
+      .canvas-wrap:focus-visible {
+        outline: 2px solid var(--border-focus);
+        outline-offset: 2px;
+      }
+      svg {
+        display: block;
+      }
+      .empty {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: var(--fg-muted);
+        font-size: 11px;
+        pointer-events: none;
+      }
+      :host ::ng-deep .column-title {
+        fill: var(--fg-muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      :host ::ng-deep .node-label {
+        font-size: 10px;
+        fill: var(--fg-secondary);
+        font-family: var(--font-mono, monospace);
+        pointer-events: none;
+        paint-order: stroke;
+        stroke: var(--bg-surface-2);
+        stroke-width: 3px;
+        stroke-linejoin: round;
+      }
+      :host ::ng-deep .node-label.changed {
+        fill: var(--fg-primary);
+        font-weight: 700;
+      }
+      :host ::ng-deep .label-bg {
+        fill: color-mix(in oklab, var(--bg-surface) 78%, transparent);
+        stroke: var(--border-soft);
+        stroke-width: 1px;
+        opacity: 0.92;
+      }
+      :host ::ng-deep .impact-link {
+        fill: none;
+        stroke-linecap: round;
+      }
+      :host ::ng-deep .impact-link.imports {
+        stroke: #f59e0b;
+        stroke-width: 2.2px;
+        stroke-opacity: 0.78;
+      }
+      :host ::ng-deep .impact-link.in-module {
+        stroke: #8b5cf6;
+        stroke-width: 2px;
+        stroke-opacity: 0.62;
+        stroke-dasharray: 5 5;
+      }
+    `,
+  ],
 })
 export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy {
   @Input() impact: CommitImpact | null = null;
@@ -119,12 +197,6 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
       return;
     }
     this.hasData = true;
-
-    const width = svgEl.clientWidth || 600;
-    const height = 280;
-    const styles = getComputedStyle(svgEl);
-    const labelColor = css(styles, '--fg-secondary', '#cbd5e1');
-    const labelHalo = css(styles, '--bg-surface-2', '#0b1020');
 
     const nodeMap = new Map<string, Node>();
     const ensure = (id: string, group: Node['group'], label: string): Node => {
@@ -159,15 +231,57 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
     }
 
     const nodes = Array.from(nodeMap.values());
+    const wrapWidth = svgEl.parentElement?.clientWidth ?? 640;
+    const modules = nodes.filter((n) => n.group === 'module').sort(byLabel);
+    const changed = nodes.filter((n) => n.group === 'changed').sort(byLabel);
+    const imported = nodes.filter((n) => n.group === 'imported').sort(byLabel);
+    const maxRows = Math.max(modules.length, changed.length, imported.length, 4);
+    const rowHeight = 44;
+    const top = 58;
+    const columns = {
+      module: 68,
+      changed: 430,
+      imported: 780,
+    };
+    const width = Math.max(
+      wrapWidth,
+      columns.imported + Math.max(320, maxLabelWidth(imported)) + 80,
+    );
+    const height = Math.max(360, top + maxRows * rowHeight + 40);
+
+    svg.attr('width', width).attr('height', height).attr('viewBox', `0 0 ${width} ${height}`);
+
+    svg.append('rect').attr('width', width).attr('height', height).attr('fill', 'transparent');
+
+    svg
+      .append('g')
+      .selectAll('text')
+      .data([
+        { label: 'Modules', x: columns.module },
+        { label: 'Changed files', x: columns.changed },
+        { label: 'Import dependencies', x: columns.imported },
+      ])
+      .join('text')
+      .attr('class', 'column-title')
+      .attr('x', (d) => d.x)
+      .attr('y', 28)
+      .text((d) => d.label);
+
+    positionColumn(modules, columns.module, top, rowHeight);
+    positionColumn(changed, columns.changed, top, rowHeight);
+    positionColumn(imported, columns.imported, top, rowHeight);
 
     const link = svg
       .append('g')
-      .attr('stroke', 'var(--border-strong)')
-      .attr('stroke-opacity', 0.5)
-      .selectAll('line')
+      .selectAll<SVGPathElement, Link>('path')
       .data(links)
-      .join('line')
-      .attr('stroke-dasharray', (d) => (d.type === 'in-module' ? '2,3' : null));
+      .join('path')
+      .attr('class', (d) => `impact-link ${d.type}`)
+      .attr('d', (d) => {
+        const source = nodeMap.get(String(d.source));
+        const target = nodeMap.get(String(d.target));
+        return source && target ? linkPath(source, target) : '';
+      });
 
     const node = svg
       .append('g')
@@ -176,79 +290,40 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
       .join('circle')
       .attr('r', (d) => (d.group === 'module' ? 7 : 5))
       .attr('fill', (d) =>
-        d.group === 'changed'
-          ? 'var(--accent)'
-          : d.group === 'imported'
-          ? '#f59e0b'
-          : '#8b5cf6'
+        d.group === 'changed' ? 'var(--accent)' : d.group === 'imported' ? '#f59e0b' : '#8b5cf6',
       )
       .attr('stroke', 'var(--bg-surface-2)')
       .attr('stroke-width', 1.5)
-      .call(drag());
+      .attr('cx', (d) => d.x ?? 0)
+      .attr('cy', (d) => d.y ?? 0);
 
-    node.append('title').text((d) => d.id.slice(2));
+    node.append('title').text((d) => `${d.group}: ${d.id.slice(2)}`);
+
+    const labelBg = svg
+      .append('g')
+      .selectAll<SVGRectElement, Node>('rect')
+      .data(nodes)
+      .join('rect')
+      .attr('class', 'label-bg')
+      .attr('width', (d) => labelWidth(d))
+      .attr('height', 18)
+      .attr('rx', 5)
+      .attr('ry', 5)
+      .attr('x', (d) => (d.x ?? 0) + 10)
+      .attr('y', (d) => (d.y ?? 0) - 11);
 
     const label = svg
       .append('g')
       .selectAll<SVGTextElement, Node>('text')
       .data(nodes)
       .join('text')
-      .attr('class', 'node-label')
-      .attr('dx', 8)
-      .attr('dy', 3)
-      .attr('fill', labelColor)
-      .attr('stroke', labelHalo)
-      .attr('stroke-width', 2)
-      .attr('paint-order', 'stroke')
+      .attr('class', (d) => `node-label ${d.group}`)
+      .attr('x', (d) => (d.x ?? 0) + 14)
+      .attr('y', (d) => (d.y ?? 0) + 4)
       .text((d) => d.label);
 
     this.simulation?.stop();
-    this.simulation = d3
-      .forceSimulation<Node>(nodes)
-      .force(
-        'link',
-        d3
-          .forceLink<Node, Link>(links)
-          .id((d: Node) => d.id)
-          .distance(60)
-          .strength(0.4)
-      )
-      .force('charge', d3.forceManyBody().strength(-160))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collide', d3.forceCollide(14))
-      .on('tick', () => {
-        link
-          .attr('x1', (d) => (d.source as Node).x ?? 0)
-          .attr('y1', (d) => (d.source as Node).y ?? 0)
-          .attr('x2', (d) => (d.target as Node).x ?? 0)
-          .attr('y2', (d) => (d.target as Node).y ?? 0);
-        node.attr('cx', (d) => d.x ?? 0).attr('cy', (d) => d.y ?? 0);
-        label.attr('x', (d) => d.x ?? 0).attr('y', (d) => d.y ?? 0);
-      });
-
-    function drag() {
-      function dragstarted(this: SVGCircleElement, event: d3.D3DragEvent<SVGCircleElement, Node, Node>, d: Node) {
-        if (!event.active) (window as unknown as { __impactSim?: d3.Simulation<Node, Link> }).__impactSim?.alphaTarget?.(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      }
-      function dragged(_event: d3.D3DragEvent<SVGCircleElement, Node, Node>, d: Node) {
-        d.fx = _event.x;
-        d.fy = _event.y;
-      }
-      function dragended(this: SVGCircleElement, event: d3.D3DragEvent<SVGCircleElement, Node, Node>, d: Node) {
-        if (!event.active) (window as unknown as { __impactSim?: d3.Simulation<Node, Link> }).__impactSim?.alphaTarget?.(0);
-        d.fx = null;
-        d.fy = null;
-      }
-      return d3
-        .drag<SVGCircleElement, Node>()
-        .on('start', dragstarted)
-        .on('drag', dragged)
-        .on('end', dragended);
-    }
-
-    (window as unknown as { __impactSim?: d3.Simulation<Node, Link> }).__impactSim = this.simulation;
+    this.simulation = null;
   }
 }
 
@@ -257,12 +332,38 @@ function shortLabel(p: string): string {
   return parts[parts.length - 1];
 }
 
+function labelWidth(node: Node): number {
+  const chars = node.label.length;
+  return Math.max(112, Math.min(520, chars * 6.7 + 18));
+}
+
+function maxLabelWidth(nodes: Node[]): number {
+  return Math.max(0, ...nodes.map((node) => labelWidth(node)));
+}
+
+function byLabel(a: Node, b: Node): number {
+  return a.label.localeCompare(b.label);
+}
+
+function positionColumn(nodes: Node[], x: number, top: number, rowHeight: number): void {
+  for (const [index, node] of nodes.entries()) {
+    node.x = x;
+    node.y = top + index * rowHeight;
+  }
+}
+
+function linkPath(source: Node, target: Node): string {
+  const x1 = source.x ?? 0;
+  const y1 = source.y ?? 0;
+  const x2 = target.x ?? 0;
+  const y2 = target.y ?? 0;
+  const bend = Math.max(72, Math.abs(x2 - x1) * 0.42);
+  const direction = x2 >= x1 ? 1 : -1;
+  return `M ${x1} ${y1} C ${x1 + direction * bend} ${y1}, ${x2 - direction * bend} ${y2}, ${x2} ${y2}`;
+}
+
 function detectModule(file: string): string {
   const parts = file.split('/');
   if (parts.length === 1) return '(root)';
   return parts.slice(0, Math.min(parts.length - 1, 3)).join('/');
-}
-
-function css(styles: CSSStyleDeclaration, name: string, fallback: string): string {
-  return styles.getPropertyValue(name).trim() || fallback;
 }
