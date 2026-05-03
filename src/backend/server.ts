@@ -83,7 +83,9 @@ export async function startServer(
   app.use('/api', apiLimiter);
 
   const gitService = new GitService(cwd);
-  const llmService = options.llmService ?? getDefaultLlmService(options.llm ?? {});
+  const llmConfig = options.llm ?? {};
+  const fixedLlmService = options.llmService ?? null;
+  const getLlm = (): LlmService => fixedLlmService ?? getDefaultLlmService(llmConfig);
   const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN;
   const annotations = new AnnotationsStore(cwd);
   const sqliteIndex = new SqliteIndex(
@@ -107,7 +109,7 @@ export async function startServer(
     res.json({
       name: 'git-history-ui',
       version: pkgVersion(),
-      llm: { provider: llmService.name, isAi: llmService.isAi },
+      llm: { provider: getLlm().name, isAi: getLlm().isAi },
       githubEnrichment: !!githubToken,
       sqliteAvailable: SqliteIndex.isAvailable()
     });
@@ -151,26 +153,42 @@ export async function startServer(
 
     (async () => {
       try {
-        let count = 0;
         const author = stringParam(req.query.author);
         const since = stringParam(req.query.since);
         const until = stringParam(req.query.until);
         const file = stringParam(req.query.file);
         const search = stringParam(req.query.search ?? req.query.q);
         const branch = stringParam(req.query.branch);
-        for await (const commit of gitService.streamCommits(
-          { author, since, until, file, search, branch },
-          200,
-          { signal: controller.signal }
-        )) {
+        const page = numberParam(req.query.page, 1);
+        const pageSize = numberParam(req.query.pageSize, 100);
+        const result = await gitService.getCommits({
+          author,
+          since,
+          until,
+          file,
+          search,
+          branch,
+          page,
+          pageSize
+        });
+
+        let count = 0;
+        for (const commit of result.commits) {
           if (cancelled) break;
           send('commit', commit);
           count++;
-          // Yield to the event loop occasionally so we don't block heartbeats.
+          // Yield to the event loop occasionally so large pages don't block heartbeats.
           if (count % 50 === 0) await new Promise((r) => setImmediate(r));
         }
         if (!cancelled) {
-          send('done', { total: count });
+          send('done', {
+            total: result.total,
+            page: result.page,
+            pageSize: result.pageSize,
+            totalPages: result.totalPages,
+            hasNext: result.hasNext,
+            hasPrevious: result.hasPrevious
+          });
           res.end();
         }
       } catch (err) {
@@ -236,7 +254,7 @@ export async function startServer(
         res.status(400).json({ error: 'q query param is required' });
         return;
       }
-      const result = await runNlSearch(gitService, llmService, {
+      const result = await runNlSearch(gitService, getLlm(), {
         query: q,
         branch: stringParam(req.query.branch),
         file: stringParam(req.query.file),
@@ -322,22 +340,29 @@ export async function startServer(
         res.status(400).json({ error: 'text body field is required' });
         return;
       }
-      if (!llmService.isAi) {
-        res.status(503).json({ error: 'No AI provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' });
+      const llm = getLlm();
+      if (!llm.isAi) {
+        res
+          .status(503)
+          .json({ error: 'No AI provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' });
         return;
       }
-      const summary = await llmService.summarize(text, {
-        hint: 'Summarize this code diff in 2-3 sentences for a developer skimming the change.'
+      const summary = await llm.summarize(text, {
+        hint: 'Summarize this code diff in 2-3 concise markdown bullets for a developer skimming the change.',
+        maxTokens: 500
       });
-      res.json({ summary, provider: llmService.name });
+      res.json({ summary, provider: llm.name });
     })
   );
 
   app.post(
     '/api/explain-commit/:hash',
     wrap(async (req, res) => {
-      if (!llmService.isAi) {
-        res.status(503).json({ error: 'No AI provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' });
+      const llm = getLlm();
+      if (!llm.isAi) {
+        res
+          .status(503)
+          .json({ error: 'No AI provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' });
         return;
       }
       const commit = await gitService.getCommit(req.params.hash);
@@ -350,10 +375,11 @@ export async function startServer(
       ]
         .filter(Boolean)
         .join('\n');
-      const summary = await llmService.summarize(text, {
-        hint: 'Explain in plain English what this commit changes and why a reviewer should care.'
+      const summary = await llm.summarize(text, {
+        hint: 'Explain this commit in concise markdown. Use exactly these sections: "What changed" and "Why reviewers should care". Keep the answer under 220 words and finish with a complete sentence.',
+        maxTokens: 900
       });
-      res.json({ summary, provider: llmService.name });
+      res.json({ summary, provider: llm.name });
     })
   );
 
@@ -414,7 +440,7 @@ export async function startServer(
         if (v === null || v === undefined || v === '') continue;
         params.set(k, String(v));
       }
-      const proto = (req.headers['x-forwarded-proto'] as string) || (req.protocol || 'http');
+      const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
       const host = req.headers.host || 'localhost';
       const url = `${proto}://${host}/?${params.toString()}`;
       res.status(201).json({ url, expiresAt: null, mode: 'local' });
@@ -434,9 +460,18 @@ export async function startServer(
     })
   );
 
-  app.get('/api/tags', wrap(async (_req, res) => res.json(await gitService.getTags())));
-  app.get('/api/branches', wrap(async (_req, res) => res.json(await gitService.getBranches())));
-  app.get('/api/authors', wrap(async (_req, res) => res.json(await gitService.getAuthors())));
+  app.get(
+    '/api/tags',
+    wrap(async (_req, res) => res.json(await gitService.getTags()))
+  );
+  app.get(
+    '/api/branches',
+    wrap(async (_req, res) => res.json(await gitService.getBranches()))
+  );
+  app.get(
+    '/api/authors',
+    wrap(async (_req, res) => res.json(await gitService.getAuthors()))
+  );
 
   app.all('/api/*', (_req, res) => {
     res.status(404).json({ error: 'Not Found' });
@@ -480,9 +515,7 @@ export async function startServer(
   return { server: httpServer, url, close };
 }
 
-function wrap(
-  handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>
-) {
+function wrap(handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) {
   return (req: Request, res: Response, next: NextFunction) => {
     handler(req, res, next).catch(next);
   };

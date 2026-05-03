@@ -1,13 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import {
-  BlameLine,
-  Commit,
-  DiffFile,
-  GitOptions,
-  PaginatedCommits
-} from '../models/git.models';
+import { BlameLine, Commit, DiffFile, GitOptions, PaginatedCommits } from '../models/git.models';
 
 @Injectable({ providedIn: 'root' })
 export class GitService {
@@ -37,7 +31,9 @@ export class GitService {
       const commits: Commit[] = [];
       const pending: Commit[] = [];
       const page = Math.max(1, options.page ?? 1);
+      const requestedPageSize = clamp(options.pageSize ?? 100, 1, 500);
       let total = 0;
+      let doneMeta: Partial<PaginatedCommits> = {};
       let raf = 0;
       let completed = false;
       let fallbackSub: { unsubscribe(): void } | null = null;
@@ -51,11 +47,11 @@ export class GitService {
         subscriber.next({
           commits: commits.slice(),
           total: completed ? total || commits.length : commits.length,
-          page,
-          pageSize: commits.length || options.pageSize || 100,
-          totalPages: 1,
-          hasNext: false,
-          hasPrevious: page > 1
+          page: doneMeta.page ?? page,
+          pageSize: doneMeta.pageSize ?? requestedPageSize,
+          totalPages: doneMeta.totalPages ?? 1,
+          hasNext: doneMeta.hasNext ?? false,
+          hasPrevious: doneMeta.hasPrevious ?? page > 1,
         });
         if (completed) {
           source.close();
@@ -68,12 +64,15 @@ export class GitService {
       };
 
       source.addEventListener('commit', (event) => {
-        pending.push(JSON.parse((event as MessageEvent).data) as Commit);
+        if (commits.length + pending.length < requestedPageSize) {
+          pending.push(JSON.parse((event as MessageEvent).data) as Commit);
+        }
         scheduleEmit();
       });
       source.addEventListener('done', (event) => {
-        const data = JSON.parse((event as MessageEvent).data) as { total?: number };
+        const data = JSON.parse((event as MessageEvent).data) as Partial<PaginatedCommits>;
         total = data.total ?? commits.length + pending.length;
+        doneMeta = data;
         completed = true;
         scheduleEmit();
       });
@@ -83,7 +82,7 @@ export class GitService {
         fallbackSub = this.getCommits(options).subscribe({
           next: (resp) => subscriber.next(resp),
           error: (err) => subscriber.error(hasStreamErrorMessage(event) ? streamError(event) : err),
-          complete: () => subscriber.complete()
+          complete: () => subscriber.complete(),
         });
       });
 
@@ -119,6 +118,10 @@ export class GitService {
   getAuthors(): Observable<string[]> {
     return this.http.get<string[]>(`${this.base}/authors`);
   }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function hasStreamErrorMessage(event: Event): boolean {

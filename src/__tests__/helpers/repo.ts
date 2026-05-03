@@ -48,7 +48,7 @@ export function makeRepo(prefix = 'ghui-test-'): TestRepo {
     return git(['rev-parse', 'HEAD']).trim();
   };
 
-  const cleanup = () => rmSync(dir, { recursive: true, force: true });
+  const cleanup = () => removeTempDir(dir);
   return { dir, git, commit, cleanup };
 }
 
@@ -66,7 +66,7 @@ export function withTempHome<T>(fn: (home: string) => T): T {
     return fn(home);
   } finally {
     (os as unknown as { homedir: () => string }).homedir = original;
-    rmSync(home, { recursive: true, force: true });
+    removeTempDir(home);
   }
 }
 
@@ -159,7 +159,7 @@ export function makeBigRepo(commitCount: number, prefix = 'ghui-bench-'): TestRe
     return git(['rev-parse', 'HEAD']).trim();
   };
 
-  const cleanup = () => rmSync(dir, { recursive: true, force: true });
+  const cleanup = () => removeTempDir(dir);
   return { dir, git, commit, cleanup };
 }
 
@@ -174,6 +174,26 @@ export async function withTempHomeAsync<T>(fn: (home: string) => Promise<T>): Pr
   } finally {
     (os as unknown as { homedir: () => string }).homedir = original;
     process.env.HOME = originalEnv;
-    rmSync(home, { recursive: true, force: true });
+    removeTempDir(home);
   }
+}
+
+function removeTempDir(dir: string): void {
+  try {
+    rmSync(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === 'win32' ? 20 : 0,
+      retryDelay: 250
+    });
+  } catch (err) {
+    if (process.platform === 'win32' && isTransientCleanupError(err)) return;
+    throw err;
+  }
+}
+
+function isTransientCleanupError(err: unknown): boolean {
+  const code =
+    typeof err === 'object' && err && 'code' in err ? String((err as { code?: unknown }).code) : '';
+  return code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EPERM';
 }
