@@ -21,6 +21,24 @@ Zero setup. Runs locally. Your code never leaves your machine unless you opt in.
 npx git-history-ui@latest
 ```
 
+## Table of contents
+
+- [10-second workflow](#-10-second-workflow)
+- [Preview](#-preview)
+- [Why this exists](#-why-this-exists)
+- [What makes it different](#-what-makes-it-different)
+- [Quick Start](#-quick-start)
+- [How it compares](#-how-it-compares)
+- [All features](#-all-features)
+- [Usage](#-usage)
+- [Docs](#-docs)
+- [Production](#-production)
+- [Development](#-development)
+- [Requirements](#-requirements)
+- [Contributing](#-contributing)
+- [Security](#-security)
+- [License](#-license)
+
 ## ⚡ 10-second workflow
 
 1. Run `npx git-history-ui` inside any git repo
@@ -86,14 +104,16 @@ directory — no installs, no config, no account.
 
 ## ⚖️ How it compares
 
-- **vs GitHub UI:** NL search and PR grouping work *with* your unpushed
-  commits. Time travel and impact analysis aren't on GitHub at all.
-- **vs `tig` / `git log`:** visual lanes, browser diffs, optional AI
-  explanations, insights dashboard.
-- **vs desktop clients (GitKraken, SourceTree, Fork):** starts on demand,
-  no project import, no account, no native install. AI features are
-  pay-as-you-go on *your* key — nothing about your code leaves your
-  machine unless you opt in.
+| Capability | `git-history-ui` | GitHub UI | `tig` / `git log` | Desktop clients |
+| --- | --- | --- | --- | --- |
+| Works with local and unpushed commits | Yes | No | Yes | Usually |
+| Natural-language history search | Yes | No | No | Rare |
+| PR / feature grouping for local history | Yes | Partial | No | Partial |
+| Time-travel snapshot diffing | Yes | No | No | Rare |
+| Commit impact analysis | Yes | No | No | Rare |
+| Browser-based unified / split diffs | Yes | Yes | No | Yes |
+| Optional AI summaries on your key | Yes | No | No | Rare |
+| No account, import, or desktop install | Yes | No | Yes | No |
 
 ## 📦 All features
 
@@ -172,17 +192,48 @@ npx git-history-ui@latest --no-open           # don't open the browser
 npx git-history-ui@latest --help              # full flag list
 ```
 
+### CLI reference
+
+```text
+Usage: git-history-ui [options] [command]
+
+Beautiful git history visualization in your browser
+
+Options:
+  -v, --version            output the version number
+  -p, --port <number>      port to run server on (default: "3000")
+  -H, --host <host>        host to bind to (default: "localhost")
+  -f, --file <path>        filter commits by a specific file
+  -s, --since <date>       filter commits since a date (YYYY-MM-DD)
+  -a, --author <name>      filter commits by author
+  --no-open                do not automatically open browser
+  --cwd <path>             path to the git repository (defaults to cwd)
+  --llm <provider>         LLM provider: heuristic, anthropic, openai (default:
+                           auto)
+  --preset <name>          load filters from a saved preset
+  --save-preset <name>     save the current flags as a preset for next time
+  -h, --help               display help for command
+
+Commands:
+  presets <action> [name]  manage saved CLI presets
+```
+
 ### Optional: bring your own AI key
 
 ```bash
-# Anthropic (recommended; uses claude-3-5-haiku by default)
+# Anthropic (uses Claude Sonnet 4 by default)
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# Or OpenAI (uses gpt-4o-mini by default)
+# Or OpenAI (uses GPT 4.1 Nano by default)
 export OPENAI_API_KEY=sk-...
 
 # Force a specific provider when both are set
 export GHUI_LLM_PROVIDER=anthropic   # anthropic | openai | heuristic
+
+# Optional model overrides
+export GHUI_LLM_MODEL=claude-sonnet-4-6
+export ANTHROPIC_MODEL=claude-sonnet-4-6
+export OPENAI_MODEL=gpt-4.1-nano
 ```
 
 ### Optional: GitHub PR enrichment
@@ -192,6 +243,13 @@ export GITHUB_TOKEN=ghp_...   # fine-grained PAT, read-only on the repo
 ```
 
 This hydrates the *Grouped* view with PR titles, authors, and labels.
+
+## 📚 Docs
+
+- [API reference](./docs/API.md)
+- [Architecture](./docs/architecture.md)
+- [Configuration](./docs/configuration.md)
+- [Troubleshooting](./docs/troubleshooting.md)
 
 ## 🏭 Production
 
@@ -225,11 +283,13 @@ cd frontend && npm test
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests
-5. Submit a pull request
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local
+setup, commit conventions, test commands, and PR expectations.
+
+## 🔐 Security
+
+Please do not open public issues for security vulnerabilities. See
+[SECURITY.md](SECURITY.md) for the responsible disclosure process.
 
 ## 📄 License
 

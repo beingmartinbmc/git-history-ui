@@ -28,6 +28,7 @@ jobs:
       - name: Install frontend deps
         run: npm ci --prefix frontend
 
+      - run: npm run audit:prod
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test -- --ci

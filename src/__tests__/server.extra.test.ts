@@ -48,7 +48,9 @@ function request(opts: {
   });
 }
 
-function fetchRaw(url: string): Promise<{ status: number; data: string; headers: http.IncomingHttpHeaders }> {
+function fetchRaw(
+  url: string
+): Promise<{ status: number; data: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     http
       .get(url, (res) => {
@@ -75,7 +77,10 @@ describe('HTTP server — full endpoint coverage', () => {
     repo.git(['branch', 'feature']);
     repo.git(['remote', 'add', 'origin', 'https://github.com/acme/x.git']);
 
-    const result = await startServer(0, '127.0.0.1', { cwd: repo.dir });
+    const result = await startServer(0, '127.0.0.1', {
+      cwd: repo.dir,
+      llm: { provider: 'heuristic' }
+    });
     const addr = result.server.address() as AddressInfo;
     url = `http://127.0.0.1:${addr.port}`;
     close = result.close;
@@ -203,6 +208,15 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(raw.data).toContain('event: done');
   });
 
+  it('GET /api/commits/stream is bounded by requested pageSize and reports total', async () => {
+    const raw = await fetchRaw(`${url}/api/commits/stream?pageSize=1`);
+    const commitEvents = raw.data.match(/event: commit/g) ?? [];
+    expect(commitEvents).toHaveLength(1);
+    expect(raw.data).toContain('"total":2');
+    expect(raw.data).toContain('"pageSize":1');
+    expect(raw.data).toContain('"hasNext":true');
+  });
+
   it('annotations CRUD: POST → GET → DELETE', async () => {
     const created = await request({
       url: `${url}/api/annotations/${secondHash}`,
@@ -300,7 +314,9 @@ describe('HTTP server — full endpoint coverage', () => {
 
 describe('HTTP server — empty repo path', () => {
   it('returns 400 with NotARepositoryError when run outside a repo', async () => {
-    const dir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'ghui-no-repo-'));
+    const dir = require('fs').mkdtempSync(
+      require('path').join(require('os').tmpdir(), 'ghui-no-repo-')
+    );
     try {
       const result = await startServer(0, '127.0.0.1', { cwd: dir });
       const addr = result.server.address() as AddressInfo;
@@ -362,7 +378,7 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
 
   beforeAll(async () => {
     repo = makeRepo('ghui-ai-');
-    hash = repo.commit('src/x.ts', "export const x = 1;\n", 'feat: x');
+    hash = repo.commit('src/x.ts', 'export const x = 1;\n', 'feat: x');
 
     const stubLlm = {
       name: 'anthropic' as const,
