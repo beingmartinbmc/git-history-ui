@@ -9,7 +9,13 @@ import { UiStateService } from '../../services/ui-state.service';
 @Component({
   selector: 'app-home-shell',
   standalone: true,
-  imports: [CommonModule, CommitGraphComponent, CommitListComponent, CommitDetailComponent, GroupedListComponent],
+  imports: [
+    CommonModule,
+    CommitGraphComponent,
+    CommitListComponent,
+    CommitDetailComponent,
+    GroupedListComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <main class="layout">
@@ -31,47 +37,61 @@ import { UiStateService } from '../../services/ui-state.service';
       </section>
     </main>
   `,
-  styles: [`
-    :host { display: block; flex: 1; min-height: 0; }
-    .layout {
-      height: 100%;
-      display: grid;
-      grid-template-columns: minmax(180px, 230px) minmax(320px, 390px) minmax(0, 1fr);
-      gap: 0.75rem;
-      padding: 0.75rem;
-      min-height: 0;
-      background: transparent;
-    }
-    .pane {
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-      border-radius: var(--radius-lg);
-      background: var(--bg-panel);
-      border: 1px solid color-mix(in oklab, var(--border-soft) 86%, transparent);
-      box-shadow: var(--shadow-md);
-    }
-    .pane.graph {
-      background: color-mix(in oklab, var(--bg-panel) 86%, transparent);
-    }
-    .pane-shell {
-      height: 100%;
-      min-height: 0;
-      overflow: hidden;
-      border-radius: inherit;
-    }
-    .detail-shell {
-      background: color-mix(in oklab, var(--bg-surface) 82%, transparent);
-    }
-    @media (max-width: 1100px) {
-      .layout { grid-template-columns: 320px 1fr; }
-      .pane.graph { display: none; }
-    }
-    @media (max-width: 720px) {
-      .layout { grid-template-columns: 1fr; }
-      .pane.list { display: none; }
-    }
-  `]
+  styles: [
+    `
+      :host {
+        display: block;
+        flex: 1;
+        min-height: 0;
+      }
+      .layout {
+        height: 100%;
+        display: grid;
+        grid-template-columns: minmax(240px, 320px) minmax(340px, 430px) minmax(0, 1fr);
+        gap: 0.75rem;
+        padding: 0.75rem;
+        min-height: 0;
+        background: transparent;
+      }
+      .pane {
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        border-radius: var(--radius-lg);
+        background: var(--bg-panel);
+        border: 1px solid color-mix(in oklab, var(--border-soft) 86%, transparent);
+        box-shadow: var(--shadow-md);
+      }
+      .pane.graph {
+        background: color-mix(in oklab, var(--bg-panel) 86%, transparent);
+      }
+      .pane-shell {
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+        border-radius: inherit;
+      }
+      .detail-shell {
+        background: color-mix(in oklab, var(--bg-surface) 82%, transparent);
+      }
+      @media (max-width: 1100px) {
+        .layout {
+          grid-template-columns: 320px 1fr;
+        }
+        .pane.graph {
+          display: none;
+        }
+      }
+      @media (max-width: 720px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .pane.list {
+          display: none;
+        }
+      }
+    `,
+  ],
 })
 export class HomeShellComponent {
   state = inject(UiStateService);
