@@ -16,7 +16,8 @@ export interface InsightsOptions {
   signal?: AbortSignal;
 }
 
-const CONCURRENCY = 6;
+const CONCURRENCY = 3;
+const FALLBACK_DIFF_LIMIT = 50;
 
 export async function computeInsights(
   gitService: GitService,
@@ -67,10 +68,13 @@ export async function computeInsights(
     let cursor = 0;
     await Promise.all(
       Array.from({ length: CONCURRENCY }, async () => {
-        while (cursor < commits.length) {
+        while (cursor < Math.min(commits.length, FALLBACK_DIFF_LIMIT)) {
+          if (opts.signal?.aborted) throw new Error('insights aborted');
           const i = cursor++;
           const commit = commits[i];
-          const files = await gitService.getDiff(commit.hash).catch(() => []);
+          const files = await gitService
+            .getDiff(commit.hash, { signal: opts.signal })
+            .catch(() => []);
           pairs.push({ commit, files });
         }
       })

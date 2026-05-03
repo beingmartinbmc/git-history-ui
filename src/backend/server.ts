@@ -7,11 +7,12 @@ import { createServer, type Server as HttpServer } from 'http';
 import path from 'path';
 import fs from 'fs';
 import { GitService, NotARepositoryError } from './gitService';
-import { runNlSearch } from './search/nlSearch';
+import { parseNlQuery, runNlSearch } from './search/nlSearch';
 import { buildCommitGroups } from './grouping/prGrouping';
 import { getSnapshot } from './snapshot';
 import { getDefaultLlmService, type LlmConfig, type LlmService } from './llm';
 import { getCommitImpact } from './impact';
+import { getFileBreakageAnalysis } from './breakage';
 import { computeInsights } from './insights';
 import { AnnotationsStore } from './annotations';
 import { SqliteIndex } from './cache/sqliteIndex';
@@ -161,16 +162,19 @@ export async function startServer(
         const branch = stringParam(req.query.branch);
         const page = numberParam(req.query.page, 1);
         const pageSize = numberParam(req.query.pageSize, 100);
-        const result = await gitService.getCommits({
-          author,
-          since,
-          until,
-          file,
-          search,
-          branch,
-          page,
-          pageSize
-        });
+        const result = await gitService.getCommits(
+          {
+            author,
+            since,
+            until,
+            file,
+            search,
+            branch,
+            page,
+            pageSize
+          },
+          { signal: controller.signal }
+        );
 
         let count = 0;
         for (const commit of result.commits) {
@@ -202,16 +206,20 @@ export async function startServer(
   app.get(
     '/api/commits',
     wrap(async (req, res) => {
-      const result = await gitService.getCommits({
-        file: stringParam(req.query.file),
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
-        author: stringParam(req.query.author),
-        branch: stringParam(req.query.branch),
-        search: stringParam(req.query.search ?? req.query.q),
-        page: numberParam(req.query.page, 1),
-        pageSize: numberParam(req.query.pageSize, 25)
-      });
+      const signal = requestAbortSignal(req);
+      const result = await gitService.getCommits(
+        {
+          file: stringParam(req.query.file),
+          since: stringParam(req.query.since),
+          until: stringParam(req.query.until),
+          author: stringParam(req.query.author),
+          branch: stringParam(req.query.branch),
+          search: stringParam(req.query.search ?? req.query.q),
+          page: numberParam(req.query.page, 1),
+          pageSize: numberParam(req.query.pageSize, 25)
+        },
+        { signal }
+      );
       res.json(result);
     })
   );
@@ -227,7 +235,7 @@ export async function startServer(
   app.get(
     '/api/diff/:hash',
     wrap(async (req, res) => {
-      const diff = await gitService.getDiff(req.params.hash);
+      const diff = await gitService.getDiff(req.params.hash, { signal: requestAbortSignal(req) });
       res.json(diff);
     })
   );
@@ -241,7 +249,7 @@ export async function startServer(
         res.status(400).json({ error: 'from and to query params are required' });
         return;
       }
-      const diff = await gitService.getRangeDiff(from, to);
+      const diff = await gitService.getRangeDiff(from, to, { signal: requestAbortSignal(req) });
       res.json(diff);
     })
   );
@@ -254,6 +262,36 @@ export async function startServer(
         res.status(400).json({ error: 'q query param is required' });
         return;
       }
+      const page = numberParam(req.query.page, 1);
+      const pageSize = numberParam(req.query.pageSize, 25);
+      const hasFilters = !!(
+        stringParam(req.query.branch) ||
+        stringParam(req.query.file) ||
+        stringParam(req.query.author) ||
+        stringParam(req.query.since) ||
+        stringParam(req.query.until)
+      );
+      const stats = await sqliteIndex.stats().catch(() => ({ available: false, total: 0 }));
+      if (!hasFilters && stats.available && stats.total > 0) {
+        const end = page * pageSize + 1;
+        const rows = await sqliteIndex.search(q, end);
+        const start = (page - 1) * pageSize;
+        const commits = rows.slice(start, start + pageSize);
+        const total = rows.length;
+        res.json({
+          commits,
+          total,
+          page,
+          pageSize,
+          totalPages: Math.max(1, Math.ceil(total / pageSize)),
+          hasNext: rows.length > start + pageSize,
+          hasPrevious: page > 1,
+          parsedQuery: parseNlQuery(q),
+          usedLlm: false,
+          llmProvider: 'heuristic'
+        });
+        return;
+      }
       const result = await runNlSearch(gitService, getLlm(), {
         query: q,
         branch: stringParam(req.query.branch),
@@ -261,8 +299,8 @@ export async function startServer(
         author: stringParam(req.query.author),
         since: stringParam(req.query.since),
         until: stringParam(req.query.until),
-        page: numberParam(req.query.page, 1),
-        pageSize: numberParam(req.query.pageSize, 25)
+        page,
+        pageSize
       });
       res.json(result);
     })
@@ -291,7 +329,7 @@ export async function startServer(
         res.status(400).json({ error: 'at query param is required' });
         return;
       }
-      const snap = await getSnapshot(gitService, at);
+      const snap = await getSnapshot(gitService, at, { signal: requestAbortSignal(req) });
       res.json(snap);
     })
   );
@@ -312,8 +350,27 @@ export async function startServer(
   app.get(
     '/api/impact/:hash',
     wrap(async (req, res) => {
-      const impact = await getCommitImpact(gitService, req.params.hash);
+      const impact = await getCommitImpact(gitService, req.params.hash, {
+        signal: requestAbortSignal(req)
+      });
       res.json(impact);
+    })
+  );
+
+  app.get(
+    '/api/breakage',
+    wrap(async (req, res) => {
+      const file = stringParam(req.query.file);
+      if (!file) {
+        res.status(400).json({ error: 'file query param is required' });
+        return;
+      }
+      const limit = numberParam(req.query.limit, 200);
+      const analysis = await getFileBreakageAnalysis(gitService, file, {
+        limit,
+        signal: requestAbortSignal(req)
+      });
+      res.json(analysis);
     })
   );
 
@@ -470,7 +527,9 @@ export async function startServer(
   );
   app.get(
     '/api/authors',
-    wrap(async (_req, res) => res.json(await gitService.getAuthors()))
+    wrap(async (req, res) =>
+      res.json(await gitService.getAuthors({ signal: requestAbortSignal(req) }))
+    )
   );
 
   app.all('/api/*', (_req, res) => {

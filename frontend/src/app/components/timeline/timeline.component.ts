@@ -590,7 +590,14 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
       }
       .diff-body {
         border-top: 1px solid var(--border-soft);
-        padding: 0.5rem 0;
+        height: clamp(320px, 58vh, 720px);
+        min-height: 0;
+      }
+      .diff-body app-diff-viewer {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
       }
       @media (max-width: 760px) {
         .moment {
@@ -613,36 +620,46 @@ export class TimelineComponent {
   readonly diffError = signal<string | null>(null);
   readonly selectedFile = signal<DiffFile | null>(null);
   readonly tickIndex = signal(0);
+  private diffSub: { unsubscribe(): void } | null = null;
 
-  readonly ticks = computed(() => buildTicks(this.state.commits()));
+  readonly timelineCommits = computed(() =>
+    this.state
+      .commits()
+      .map((commit) => ({ commit, time: new Date(commit.date).getTime() }))
+      .filter((x) => Number.isFinite(x.time))
+      .sort((a, b) => a.time - b.time),
+  );
+  readonly ticks = computed(() => buildTicks(this.timelineCommits()));
   readonly selectedTick = computed(() => this.ticks()[this.tickIndex()] ?? null);
   readonly headCommit = computed(() => {
     const ref = this.snapshot()?.ref;
     if (!ref) return null;
-    return this.state.commits().find((c) => c.hash === ref || c.hash.startsWith(ref)) ?? null;
+    return (
+      this.state.commitIndex().get(ref)?.commit ??
+      this.state.commits().find((c) => c.hash.startsWith(ref)) ??
+      null
+    );
   });
   readonly windowCommits = computed(() => {
     const tick = this.selectedTick();
     if (!tick) return [];
     const current = new Date(tick.iso).getTime();
     const previous = this.previousTickTime();
-    return this.state
-      .commits()
-      .filter((c) => {
-        const time = new Date(c.date).getTime();
-        return time <= current && time > previous;
-      })
-      .sort((a, b) => b.date.localeCompare(a.date));
+    return this.timelineCommits()
+      .filter((x) => x.time <= current && x.time > previous)
+      .map((x) => x.commit)
+      .reverse();
   });
   readonly recentCommits = computed(() => {
     const tick = this.selectedTick();
     if (!tick) return [];
     const current = new Date(tick.iso).getTime();
-    return this.state
-      .commits()
-      .filter((c) => new Date(c.date).getTime() <= current)
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 6);
+    const out: Commit[] = [];
+    const list = this.timelineCommits();
+    for (let i = list.length - 1; i >= 0 && out.length < 6; i--) {
+      if (list[i].time <= current) out.push(list[i].commit);
+    }
+    return out;
   });
   readonly authorBreakdown = computed(() => {
     const counts = new Map<string, number>();
@@ -674,15 +691,22 @@ export class TimelineComponent {
     });
 
     // Load snapshot whenever tick changes.
-    effect(() => {
+    effect((onCleanup) => {
       const t = this.ticks()[this.tickIndex()];
       if (!t) return;
-      this.timelineApi.snapshot(t.iso).subscribe({
-        next: (s) => {
-          this.snapshot.set(s);
-          this.loadDiff(s);
-        },
-        error: () => this.snapshot.set(null),
+      let sub: { unsubscribe(): void } | null = null;
+      const timer = window.setTimeout(() => {
+        sub = this.timelineApi.snapshot(t.iso).subscribe({
+          next: (s) => {
+            this.snapshot.set(s);
+            this.loadDiff(s);
+          },
+          error: () => this.snapshot.set(null),
+        });
+      }, 180);
+      onCleanup(() => {
+        window.clearTimeout(timer);
+        sub?.unsubscribe();
       });
     });
   }
@@ -721,6 +745,7 @@ export class TimelineComponent {
   }
 
   private loadDiff(s: SnapshotResponse) {
+    this.diffSub?.unsubscribe();
     if (!s.ref) {
       this.diff.set([]);
       this.selectedFile.set(null);
@@ -734,7 +759,7 @@ export class TimelineComponent {
     }
     this.loadingDiff.set(true);
     this.diffError.set(null);
-    this.timelineApi.rangeDiff(s.ref, head).subscribe({
+    this.diffSub = this.timelineApi.rangeDiff(s.ref, head).subscribe({
       next: (d) => {
         this.diff.set(d);
         this.selectedFile.set(d[0] ?? null);
@@ -758,20 +783,17 @@ interface Tick {
   label: string;
 }
 
-function buildTicks(commits: Array<{ date: string }>): Tick[] {
+function buildTicks(commits: Array<{ time: number; commit: Commit }>): Tick[] {
   if (commits.length === 0) return [];
-  const sorted = [...commits].sort((a, b) => a.date.localeCompare(b.date));
-  const first = sorted[0].date;
-  const last = sorted[sorted.length - 1].date;
-  const start = new Date(first);
-  const end = new Date(last);
-  const ms = end.getTime() - start.getTime();
+  const first = commits[0].time;
+  const last = commits[commits.length - 1].time;
+  const ms = last - first;
   // Aim for 12-24 ticks across the window.
   const tickCount = Math.max(12, Math.min(24, Math.floor(ms / (1000 * 60 * 60 * 24 * 7)) + 1));
   const stepMs = ms / Math.max(1, tickCount - 1);
   const out: Tick[] = [];
   for (let i = 0; i < tickCount; i++) {
-    const d = new Date(start.getTime() + i * stepMs);
+    const d = new Date(first + i * stepMs);
     out.push({ iso: d.toISOString(), label: d.toISOString().slice(0, 10) });
   }
   return out;

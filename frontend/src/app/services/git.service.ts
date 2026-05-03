@@ -2,11 +2,13 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { BlameLine, Commit, DiffFile, GitOptions, PaginatedCommits } from '../models/git.models';
+import { ObservableCache, TTL } from './observable-cache';
 
 @Injectable({ providedIn: 'root' })
 export class GitService {
   private http = inject(HttpClient);
   private base = '/api';
+  private cache = new ObservableCache(200);
 
   getCommits(options: GitOptions = {}): Observable<PaginatedCommits> {
     let params = new HttpParams();
@@ -15,7 +17,16 @@ export class GitService {
         params = params.set(k, String(v));
       }
     }
-    return this.http.get<PaginatedCommits>(`${this.base}/commits`, { params });
+    return this.cache.get(
+      `commits:${params.toString()}`,
+      () => this.http.get<PaginatedCommits>(`${this.base}/commits`, { params }),
+      TTL.VOLATILE,
+    );
+  }
+
+  /** Drop all cached entries — call after operations that mutate repo state. */
+  invalidate(): void {
+    this.cache.clear();
   }
 
   streamCommits(options: GitOptions = {}): Observable<PaginatedCommits> {
@@ -35,6 +46,7 @@ export class GitService {
       let total = 0;
       let doneMeta: Partial<PaginatedCommits> = {};
       let raf = 0;
+      let timer = 0;
       let completed = false;
       let fallbackSub: { unsubscribe(): void } | null = null;
 
@@ -60,7 +72,15 @@ export class GitService {
       };
 
       const scheduleEmit = () => {
-        if (!raf) raf = requestAnimationFrame(emit);
+        if (raf || timer) return;
+        if (pending.length >= 50 || completed) {
+          raf = requestAnimationFrame(emit);
+          return;
+        }
+        timer = window.setTimeout(() => {
+          timer = 0;
+          raf = requestAnimationFrame(emit);
+        }, 100);
       };
 
       source.addEventListener('commit', (event) => {
@@ -89,34 +109,56 @@ export class GitService {
       return () => {
         source.close();
         if (raf) cancelAnimationFrame(raf);
+        if (timer) window.clearTimeout(timer);
         fallbackSub?.unsubscribe();
       };
     });
   }
 
   getCommit(hash: string): Observable<Commit> {
-    return this.http.get<Commit>(`${this.base}/commit/${hash}`);
+    return this.cache.get(
+      `commit:${hash}`,
+      () => this.http.get<Commit>(`${this.base}/commit/${hash}`),
+      TTL.IMMUTABLE,
+    );
   }
 
   getDiff(hash: string): Observable<DiffFile[]> {
-    return this.http.get<DiffFile[]>(`${this.base}/diff/${hash}`);
+    return this.cache.get(
+      `diff:${hash}`,
+      () => this.http.get<DiffFile[]>(`${this.base}/diff/${hash}`),
+      TTL.IMMUTABLE,
+    );
   }
 
   getBlame(filePath: string): Observable<BlameLine[]> {
     const params = new HttpParams().set('file', filePath);
-    return this.http.get<BlameLine[]>(`${this.base}/blame`, { params });
+    // Blame results depend on HEAD, so refresh sooner than per-commit data.
+    return this.cache.get(
+      `blame:${filePath}`,
+      () => this.http.get<BlameLine[]>(`${this.base}/blame`, { params }),
+      TTL.VOLATILE,
+    );
   }
 
   getTags(): Observable<string[]> {
-    return this.http.get<string[]>(`${this.base}/tags`);
+    return this.cache.get('tags', () => this.http.get<string[]>(`${this.base}/tags`), TTL.VOLATILE);
   }
 
   getBranches(): Observable<string[]> {
-    return this.http.get<string[]>(`${this.base}/branches`);
+    return this.cache.get(
+      'branches',
+      () => this.http.get<string[]>(`${this.base}/branches`),
+      TTL.VOLATILE,
+    );
   }
 
   getAuthors(): Observable<string[]> {
-    return this.http.get<string[]>(`${this.base}/authors`);
+    return this.cache.get(
+      'authors',
+      () => this.http.get<string[]>(`${this.base}/authors`),
+      TTL.VOLATILE,
+    );
   }
 }
 

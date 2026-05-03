@@ -1,3 +1,4 @@
+import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
 import { CommonModule } from '@angular/common';
 import {
   AfterViewInit,
@@ -10,7 +11,7 @@ import {
   QueryList,
   computed,
   inject,
-  signal
+  signal,
 } from '@angular/core';
 import hljs from 'highlight.js/lib/common';
 import { DiffFile } from '../../models/git.models';
@@ -35,7 +36,7 @@ interface SideLine {
 @Component({
   selector: 'app-diff-viewer',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, ScrollingModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="header" *ngIf="file">
@@ -51,7 +52,7 @@ interface SideLine {
         <span class="del">−{{ file.deletions }}</span>
         <button
           class="btn btn-ghost btn-toggle"
-          (click)="collapsed.set(!collapsed())"
+          (click)="toggleCollapsed()"
           [title]="collapsed() ? 'Expand all unchanged context' : 'Collapse unchanged blocks'"
         >
           {{ collapsed() ? 'Expand' : 'Collapse' }}
@@ -65,10 +66,20 @@ interface SideLine {
           {{ summarizing() ? '...' : 'Summarize' }}
         </button>
         <div class="toggle">
-          <button class="btn btn-ghost" [class.active]="mode() === 'unified'"
-                  (click)="mode.set('unified')">Unified</button>
-          <button class="btn btn-ghost" [class.active]="mode() === 'split'"
-                  (click)="mode.set('split')">Split</button>
+          <button
+            class="btn btn-ghost"
+            [class.active]="mode() === 'unified'"
+            (click)="mode.set('unified')"
+          >
+            Unified
+          </button>
+          <button
+            class="btn btn-ghost"
+            [class.active]="mode() === 'split'"
+            (click)="mode.set('split')"
+          >
+            Split
+          </button>
         </div>
       </div>
     </div>
@@ -86,209 +97,328 @@ interface SideLine {
     </div>
 
     <ng-container *ngIf="file && file.status !== 'binary'">
-      <pre class="unified" *ngIf="mode() === 'unified'"><code><div
-          *ngFor="let l of visibleUnifiedLines(); trackBy: trackByIdx"
-          class="line"
-          [class.add]="l.type === 'add'"
-          [class.del]="l.type === 'del'"
-          [class.hunk]="l.type === 'hunk'"
-          [class.meta]="l.type === 'meta'"
-        ><span class="gutter old">{{ l.oldNo ?? '' }}</span><span
-            class="gutter new">{{ l.newNo ?? '' }}</span><span
-            class="sign">{{ sign(l) }}</span><span class="text" [innerHTML]="render(l.text)"></span></div></code></pre>
-
-      <div class="split" *ngIf="mode() === 'split'">
-        <pre #splitPane class="side"><code><div
-            *ngFor="let l of splitLines().left; trackBy: trackByIdx"
-            class="line"
-            [class.del]="l.type === 'del'"
-            [class.empty]="l.type === 'empty'"
-            [class.hunk]="l.type === 'hunk'"
-          ><span class="gutter">{{ l.no ?? '' }}</span><span class="text" [innerHTML]="renderSide(l)"></span></div></code></pre>
-        <pre #splitPane class="side"><code><div
-            *ngFor="let l of splitLines().right; trackBy: trackByIdx"
+      <cdk-virtual-scroll-viewport
+        class="unified virtual-pre"
+        *ngIf="mode() === 'unified'"
+        [itemSize]="19"
+        [minBufferPx]="760"
+        [maxBufferPx]="1520"
+      >
+        <code
+          ><div
+            *cdkVirtualFor="let l of visibleUnifiedLines(); trackBy: trackByIdx"
             class="line"
             [class.add]="l.type === 'add'"
-            [class.empty]="l.type === 'empty'"
+            [class.del]="l.type === 'del'"
             [class.hunk]="l.type === 'hunk'"
-          ><span class="gutter">{{ l.no ?? '' }}</span><span class="text" [innerHTML]="renderSide(l)"></span></div></code></pre>
+            [class.meta]="l.type === 'meta'"
+          >
+            <span class="gutter old">{{ l.oldNo ?? '' }}</span
+            ><span class="gutter new">{{ l.newNo ?? '' }}</span
+            ><span class="sign">{{ sign(l) }}</span
+            ><span class="text" [innerHTML]="render(l.text)"></span></div
+        ></code>
+      </cdk-virtual-scroll-viewport>
+
+      <div class="split" *ngIf="mode() === 'split'">
+        <cdk-virtual-scroll-viewport
+          #splitPane
+          class="side virtual-pre"
+          [itemSize]="19"
+          [minBufferPx]="760"
+          [maxBufferPx]="1520"
+          ><code
+            ><div
+              *cdkVirtualFor="let l of splitLines().left; trackBy: trackByIdx"
+              class="line"
+              [class.del]="l.type === 'del'"
+              [class.empty]="l.type === 'empty'"
+              [class.hunk]="l.type === 'hunk'"
+            >
+              <span class="gutter">{{ l.no ?? '' }}</span
+              ><span class="text" [innerHTML]="renderSide(l)"></span></div></code
+        ></cdk-virtual-scroll-viewport>
+        <cdk-virtual-scroll-viewport
+          #splitPane
+          class="side virtual-pre"
+          [itemSize]="19"
+          [minBufferPx]="760"
+          [maxBufferPx]="1520"
+          ><code
+            ><div
+              *cdkVirtualFor="let l of splitLines().right; trackBy: trackByIdx"
+              class="line"
+              [class.add]="l.type === 'add'"
+              [class.empty]="l.type === 'empty'"
+              [class.hunk]="l.type === 'hunk'"
+            >
+              <span class="gutter">{{ l.no ?? '' }}</span
+              ><span class="text" [innerHTML]="renderSide(l)"></span></div></code
+        ></cdk-virtual-scroll-viewport>
       </div>
     </ng-container>
   `,
-  styles: [`
-    :host {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      min-height: 0;
-      background: transparent;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.58rem 0.85rem;
-      border-bottom: 1px solid var(--border-soft);
-      background: color-mix(in oklab, var(--bg-surface) 88%, transparent);
-      gap: 0.75rem;
-    }
-    .file-info {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      min-width: 0;
-    }
-    .path {
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--fg-primary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .path.old { color: var(--fg-muted); }
-    .status {
-      text-transform: uppercase;
-      font-size: 10px;
-      font-weight: 700;
-      padding: 2px 6px;
-      border-radius: 999px;
-      border: 1px solid transparent;
-      letter-spacing: 0.04em;
-      color: var(--accent-fg);
-    }
-    .status[data-status='added'] { background: var(--success); }
-    .status[data-status='deleted'] { background: var(--danger); }
-    .status[data-status='modified'] { background: var(--accent); }
-    .status[data-status='renamed'],
-    .status[data-status='copied'] { background: var(--warning); }
-    .status[data-status='binary'] { background: var(--fg-muted); }
-    .stats {
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-      font-family: var(--font-mono);
-      font-size: 12px;
-    }
-    .stats .add { color: var(--success); }
-    .stats .del { color: var(--danger); }
-    .toggle { display: flex; gap: 2px; padding-left: 0.5rem; }
-    .toggle .btn { padding: 0.25rem 0.6rem; font-size: 12px; }
-    .toggle .btn.active {
-      background: var(--accent-soft);
-      color: var(--accent);
-    }
-    .btn-toggle { font-size: 11px; padding: 0.25rem 0.6rem; }
-    .ai-summary {
-      display: flex;
-      align-items: flex-start;
-      gap: 0.5rem;
-      padding: 0.55rem 0.85rem;
-      background: color-mix(in oklab, var(--accent) 10%, transparent);
-      border-bottom: 1px solid var(--border-soft);
-      font-size: 12px;
-      color: var(--fg-secondary);
-    }
-    .ai-summary.error { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
-    .ai-pill {
-      flex-shrink: 0;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      background: var(--accent);
-      color: var(--accent-fg);
-      padding: 1px 5px;
-      border-radius: 4px;
-    }
-    .summary-text { flex: 1; line-height: 1.5; }
-    .ai-summary .close { font-size: 14px; line-height: 1; padding: 0 6px; }
-    .empty {
-      padding: 2rem 1rem;
-      text-align: center;
-      color: var(--fg-muted);
-    }
+  styles: [
+    `
+      :host {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+        background: transparent;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.58rem 0.85rem;
+        border-bottom: 1px solid var(--border-soft);
+        background: color-mix(in oklab, var(--bg-surface) 88%, transparent);
+        gap: 0.75rem;
+      }
+      .file-info {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 0;
+      }
+      .path {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--fg-primary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .path.old {
+        color: var(--fg-muted);
+      }
+      .status {
+        text-transform: uppercase;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        letter-spacing: 0.04em;
+        color: var(--accent-fg);
+      }
+      .status[data-status='added'] {
+        background: var(--success);
+      }
+      .status[data-status='deleted'] {
+        background: var(--danger);
+      }
+      .status[data-status='modified'] {
+        background: var(--accent);
+      }
+      .status[data-status='renamed'],
+      .status[data-status='copied'] {
+        background: var(--warning);
+      }
+      .status[data-status='binary'] {
+        background: var(--fg-muted);
+      }
+      .stats {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .stats .add {
+        color: var(--success);
+      }
+      .stats .del {
+        color: var(--danger);
+      }
+      .toggle {
+        display: flex;
+        gap: 2px;
+        padding-left: 0.5rem;
+      }
+      .toggle .btn {
+        padding: 0.25rem 0.6rem;
+        font-size: 12px;
+      }
+      .toggle .btn.active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .btn-toggle {
+        font-size: 11px;
+        padding: 0.25rem 0.6rem;
+      }
+      .ai-summary {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        padding: 0.55rem 0.85rem;
+        background: color-mix(in oklab, var(--accent) 10%, transparent);
+        border-bottom: 1px solid var(--border-soft);
+        font-size: 12px;
+        color: var(--fg-secondary);
+      }
+      .ai-summary.error {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--danger);
+      }
+      .ai-pill {
+        flex-shrink: 0;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        background: var(--accent);
+        color: var(--accent-fg);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      .summary-text {
+        flex: 1;
+        line-height: 1.5;
+      }
+      .ai-summary .close {
+        font-size: 14px;
+        line-height: 1;
+        padding: 0 6px;
+      }
+      .empty {
+        padding: 2rem 1rem;
+        text-align: center;
+        color: var(--fg-muted);
+      }
 
-    pre {
-      flex: 1;
-      margin: 0;
-      overflow: auto;
-      padding: 0;
-      font-family: var(--font-mono);
-      font-size: 12.5px;
-      line-height: 1.55;
-      color: var(--fg-primary);
-      background: color-mix(in oklab, var(--bg-surface-2) 82%, transparent);
-      min-height: 0;
-    }
-    code { display: block; min-width: max-content; }
-    .line {
-      display: grid;
-      grid-template-columns: 48px 48px 14px 1fr;
-      align-items: baseline;
-      padding: 0 0.6rem;
-      white-space: pre;
-    }
-    .line:hover {
-      background: color-mix(in oklab, var(--accent) 7%, transparent);
-    }
-    .split .line {
-      grid-template-columns: 48px 1fr;
-    }
-    .gutter {
-      color: var(--fg-subtle);
-      text-align: right;
-      padding-right: 0.5rem;
-      user-select: none;
-      font-variant-numeric: tabular-nums;
-    }
-    .sign {
-      width: 14px;
-      color: var(--fg-subtle);
-    }
-    .text { white-space: pre; }
-    .line.add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
-    .line.add .gutter { color: var(--diff-add-gutter); }
-    .line.add .text :global(.word-changed) { background: color-mix(in oklab, var(--success) 35%, transparent); border-radius: 2px; }
-    .line.del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
-    .line.del .gutter { color: var(--diff-del-gutter); }
-    .line.del .text :global(.word-changed) { background: color-mix(in oklab, var(--danger) 35%, transparent); border-radius: 2px; }
-    .line.hunk { background: var(--diff-hunk-bg); color: var(--diff-hunk-fg); font-style: italic; }
-    .line.meta { color: var(--fg-muted); }
-    .line.empty { background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in oklab, var(--fg-subtle) 14%, transparent) 6px 12px); }
+      .virtual-pre {
+        flex: 1;
+        margin: 0;
+        overflow: auto;
+        padding: 0;
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--fg-primary);
+        background: color-mix(in oklab, var(--bg-surface-2) 82%, transparent);
+        min-height: 0;
+      }
+      code {
+        display: block;
+        min-width: max-content;
+      }
+      .line {
+        display: grid;
+        grid-template-columns: 48px 48px 14px 1fr;
+        align-items: baseline;
+        padding: 0 0.6rem;
+        white-space: pre;
+      }
+      .line:hover {
+        background: color-mix(in oklab, var(--accent) 7%, transparent);
+      }
+      .split .line {
+        grid-template-columns: 48px 1fr;
+      }
+      .gutter {
+        color: var(--fg-subtle);
+        text-align: right;
+        padding-right: 0.5rem;
+        user-select: none;
+        font-variant-numeric: tabular-nums;
+      }
+      .sign {
+        width: 14px;
+        color: var(--fg-subtle);
+      }
+      .text {
+        white-space: pre;
+      }
+      .line.add {
+        background: var(--diff-add-bg);
+        color: var(--diff-add-fg);
+      }
+      .line.add .gutter {
+        color: var(--diff-add-gutter);
+      }
+      .line.add .text :global(.word-changed) {
+        background: color-mix(in oklab, var(--success) 35%, transparent);
+        border-radius: 2px;
+      }
+      .line.del {
+        background: var(--diff-del-bg);
+        color: var(--diff-del-fg);
+      }
+      .line.del .gutter {
+        color: var(--diff-del-gutter);
+      }
+      .line.del .text :global(.word-changed) {
+        background: color-mix(in oklab, var(--danger) 35%, transparent);
+        border-radius: 2px;
+      }
+      .line.hunk {
+        background: var(--diff-hunk-bg);
+        color: var(--diff-hunk-fg);
+        font-style: italic;
+      }
+      .line.meta {
+        color: var(--fg-muted);
+      }
+      .line.empty {
+        background: repeating-linear-gradient(
+          45deg,
+          transparent 0 6px,
+          color-mix(in oklab, var(--fg-subtle) 14%, transparent) 6px 12px
+        );
+      }
 
-    .split {
-      flex: 1;
-      display: grid;
-      grid-template-columns: 1fr 1px 1fr;
-      grid-template-rows: minmax(0, 1fr);
-      min-height: 0;
-      overflow: hidden;
-    }
-    .split::before {
-      content: '';
-      grid-column: 2;
-      background: var(--border-soft);
-    }
-    .split .side {
-      width: 100%;
-      min-width: 0;
-      min-height: 0;
-      height: 100%;
-      overflow: auto;
-    }
-  `]
+      .split {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1px 1fr;
+        grid-template-rows: minmax(0, 1fr);
+        min-height: 0;
+        overflow: hidden;
+      }
+      .split::before {
+        content: '';
+        grid-column: 2;
+        background: var(--border-soft);
+      }
+      .split .side {
+        width: 100%;
+        min-width: 0;
+        min-height: 0;
+        height: 100%;
+      }
+    `,
+  ],
 })
 export class DiffViewerComponent implements AfterViewInit, OnDestroy {
   @Input() set fileInput(value: DiffFile | null) {
     this.file = value;
-    this.parsed.set(value ? this.parse(value.changes) : []);
+    this.highlightCache.clear();
+    this.cancelStreamingParse();
+    if (!value) {
+      this.parsed.set([]);
+      return;
+    }
+    // Quick path for typical-size diffs — parsing is cheap and we want
+    // immediate render. For large diffs we yield to the browser so the
+    // first visible page renders fast and the remainder streams in
+    // batches via requestIdleCallback / setTimeout.
+    const lineCount = countLines(value.changes);
+    if (lineCount < DiffViewerComponent.LARGE_DIFF_LINES) {
+      this.parsed.set(this.parse(value.changes));
+    } else {
+      this.streamParse(value.changes);
+    }
   }
 
-  @ViewChildren('splitPane') splitPanes?: QueryList<ElementRef<HTMLPreElement>>;
+  @ViewChildren('splitPane', { read: ElementRef }) splitPanes?: QueryList<ElementRef<HTMLElement>>;
+  @ViewChildren(CdkVirtualScrollViewport) viewports?: QueryList<CdkVirtualScrollViewport>;
   private syncing = false;
   private syncListeners: Array<() => void> = [];
 
   private insightsApi = inject(InsightsService);
+  private highlightCache = new Map<string, string>();
 
   file: DiffFile | null = null;
   mode = signal<'unified' | 'split'>('unified');
@@ -299,6 +429,12 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
   summarizing = signal<boolean>(false);
 
   private static readonly CONTEXT_RADIUS = 3;
+  // Above this line count we bail out of the synchronous parse path and
+  // instead stream parsed lines into the signal in batches so the first
+  // viewport-worth renders quickly.
+  private static readonly LARGE_DIFF_LINES = 5000;
+  private static readonly PARSE_BATCH_LINES = 2000;
+  private parseHandle: { cancelled: boolean } | null = null;
 
   unifiedLines = computed(() => this.parsed());
 
@@ -320,7 +456,10 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     for (let i = 0; i < lines.length; i++) {
       if (keep[i]) {
         if (skipped > 0) {
-          out.push({ type: 'hunk', text: `... ${skipped} unchanged line${skipped === 1 ? '' : 's'} hidden ...` });
+          out.push({
+            type: 'hunk',
+            text: `... ${skipped} unchanged line${skipped === 1 ? '' : 's'} hidden ...`,
+          });
           skipped = 0;
         }
         out.push(lines[i]);
@@ -329,13 +468,16 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
       }
     }
     if (skipped > 0) {
-      out.push({ type: 'hunk', text: `... ${skipped} unchanged line${skipped === 1 ? '' : 's'} hidden ...` });
+      out.push({
+        type: 'hunk',
+        text: `... ${skipped} unchanged line${skipped === 1 ? '' : 's'} hidden ...`,
+      });
     }
     return out;
   });
 
   splitLines = computed(() => {
-    const lines = this.parsed();
+    const lines = this.visibleUnifiedLines();
     const left: SideLine[] = [];
     const right: SideLine[] = [];
     let i = 0;
@@ -365,12 +507,12 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
         left.push(
           d
             ? { type: 'del', no: d.oldNo, text: d.text, html: wordPair?.left }
-            : { type: 'empty', text: '' }
+            : { type: 'empty', text: '' },
         );
         right.push(
           a
             ? { type: 'add', no: a.newNo, text: a.text, html: wordPair?.right }
-            : { type: 'empty', text: '' }
+            : { type: 'empty', text: '' },
         );
       }
     }
@@ -390,6 +532,11 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     return i;
   }
 
+  toggleCollapsed() {
+    this.collapsed.set(!this.collapsed());
+    this.refreshViewports();
+  }
+
   ngAfterViewInit() {
     this.splitPanes?.changes.subscribe(() => this.attachScrollSync());
     this.attachScrollSync();
@@ -397,6 +544,56 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
 
   ngOnDestroy() {
     this.detachScrollSync();
+    this.cancelStreamingParse();
+  }
+
+  private cancelStreamingParse() {
+    if (this.parseHandle) {
+      this.parseHandle.cancelled = true;
+      this.parseHandle = null;
+    }
+  }
+
+  /**
+   * Parse a large diff incrementally. Splits the raw text into line batches
+   * and pushes each batch into `parsed` after yielding to the browser, so
+   * the user sees the first page of lines almost immediately rather than
+   * waiting for the entire parse to complete.
+   */
+  private streamParse(raw: string) {
+    const lines = raw.split('\n');
+    const batchSize = DiffViewerComponent.PARSE_BATCH_LINES;
+    const handle = { cancelled: false };
+    this.parseHandle = handle;
+
+    const state = { oldNo: 0, newNo: 0 };
+    const out: DiffLine[] = [];
+    let cursor = 0;
+
+    const schedule =
+      typeof (window as unknown as { requestIdleCallback?: (cb: () => void) => number })
+        .requestIdleCallback === 'function'
+        ? (cb: () => void) =>
+            (
+              window as unknown as { requestIdleCallback: (cb: () => void) => number }
+            ).requestIdleCallback(cb)
+        : (cb: () => void) => window.setTimeout(cb, 0);
+
+    const step = () => {
+      if (handle.cancelled) return;
+      const end = Math.min(cursor + batchSize, lines.length);
+      for (; cursor < end; cursor++) {
+        this.parseLineInto(lines[cursor], out, state);
+      }
+      // Emit a fresh array reference so the signal change-detects.
+      this.parsed.set(out.slice());
+      if (cursor < lines.length) {
+        schedule(step);
+      } else {
+        this.parseHandle = null;
+      }
+    };
+    schedule(step);
   }
 
   /** When in split mode, mirror scroll between the two <pre>s. */
@@ -425,11 +622,16 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     this.syncListeners = [];
   }
 
+  private refreshViewports() {
+    queueMicrotask(() => this.viewports?.forEach((viewport) => viewport.checkViewportSize()));
+  }
+
   onSummarize() {
     if (!this.file || this.summarizing()) return;
     this.summarizing.set(true);
     this.summaryError.set(null);
-    const text = this.file.changes.length > 12000 ? this.file.changes.slice(0, 12000) : this.file.changes;
+    const text =
+      this.file.changes.length > 12000 ? this.file.changes.slice(0, 12000) : this.file.changes;
     this.insightsApi.summarizeDiff(`File: ${this.file.file}\n${text}`).subscribe({
       next: (r) => {
         this.summary.set(r.summary);
@@ -439,7 +641,7 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
         this.summary.set(null);
         this.summaryError.set(err?.error?.error ?? 'Summarize failed');
         this.summarizing.set(false);
-      }
+      },
     });
   }
 
@@ -450,14 +652,25 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
   render(text: string): string {
     if (!text) return '';
     const lang = this.langForFile(this.file?.file);
+    const key = `${lang ?? '_'}:${text}`;
+    const cached = this.highlightCache.get(key);
+    if (cached) return cached;
+    let rendered: string;
     try {
       if (lang) {
-        return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+        rendered = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+      } else {
+        rendered = this.escape(text);
       }
-      return hljs.highlightAuto(text).value;
     } catch {
-      return this.escape(text);
+      rendered = this.escape(text);
     }
+    this.highlightCache.set(key, rendered);
+    if (this.highlightCache.size > 5000) {
+      const first = this.highlightCache.keys().next().value;
+      if (first) this.highlightCache.delete(first);
+    }
+    return rendered;
   }
 
   private langForFile(name?: string): string | null {
@@ -465,24 +678,45 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     const ext = name.split('.').pop()?.toLowerCase();
     if (!ext) return null;
     const map: Record<string, string> = {
-      ts: 'typescript', tsx: 'typescript',
-      js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
-      json: 'json', yml: 'yaml', yaml: 'yaml',
-      md: 'markdown', html: 'xml', xml: 'xml', css: 'css', scss: 'scss',
-      py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
-      kt: 'kotlin', swift: 'swift', php: 'php', sh: 'bash', bash: 'bash',
-      sql: 'sql', cpp: 'cpp', cc: 'cpp', c: 'c', h: 'cpp', hpp: 'cpp',
-      cs: 'csharp', dockerfile: 'dockerfile'
+      ts: 'typescript',
+      tsx: 'typescript',
+      js: 'javascript',
+      jsx: 'javascript',
+      mjs: 'javascript',
+      cjs: 'javascript',
+      json: 'json',
+      yml: 'yaml',
+      yaml: 'yaml',
+      md: 'markdown',
+      html: 'xml',
+      xml: 'xml',
+      css: 'css',
+      scss: 'scss',
+      py: 'python',
+      rb: 'ruby',
+      go: 'go',
+      rs: 'rust',
+      java: 'java',
+      kt: 'kotlin',
+      swift: 'swift',
+      php: 'php',
+      sh: 'bash',
+      bash: 'bash',
+      sql: 'sql',
+      cpp: 'cpp',
+      cc: 'cpp',
+      c: 'c',
+      h: 'cpp',
+      hpp: 'cpp',
+      cs: 'csharp',
+      dockerfile: 'dockerfile',
     };
     if (name.toLowerCase().endsWith('dockerfile')) return 'dockerfile';
     return map[ext] ?? null;
   }
 
   private escape(s: string): string {
-    return s
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   // (wordDiff helper is defined at module scope below)
@@ -490,51 +724,65 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
   private parse(raw: string): DiffLine[] {
     const out: DiffLine[] = [];
     if (!raw) return out;
-    let oldNo = 0;
-    let newNo = 0;
+    const state = { oldNo: 0, newNo: 0 };
     for (const line of raw.split('\n')) {
-      if (line.startsWith('@@')) {
-        out.push({ type: 'hunk', text: line });
-        const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-        if (m) {
-          oldNo = parseInt(m[1], 10);
-          newNo = parseInt(m[2], 10);
-        }
-      } else if (
-        line.startsWith('diff --git') ||
-        line.startsWith('index ') ||
-        line.startsWith('--- ') ||
-        line.startsWith('+++ ') ||
-        line.startsWith('new file') ||
-        line.startsWith('deleted file') ||
-        line.startsWith('rename ') ||
-        line.startsWith('copy ') ||
-        line.startsWith('similarity ') ||
-        line.startsWith('Binary files')
-      ) {
-        out.push({ type: 'meta', text: line });
-      } else if (line.startsWith('+')) {
-        out.push({ type: 'add', newNo, text: line.substring(1) });
-        newNo++;
-      } else if (line.startsWith('-')) {
-        out.push({ type: 'del', oldNo, text: line.substring(1) });
-        oldNo++;
-      } else if (line.startsWith(' ')) {
-        out.push({
-          type: 'context',
-          oldNo,
-          newNo,
-          text: line.substring(1)
-        });
-        oldNo++;
-        newNo++;
-      } else if (line === '') {
-        // blank — keep alignment
-        out.push({ type: 'context', oldNo, newNo, text: '' });
-      }
+      this.parseLineInto(line, out, state);
     }
     return out;
   }
+
+  private parseLineInto(
+    line: string,
+    out: DiffLine[],
+    state: { oldNo: number; newNo: number },
+  ): void {
+    if (line.startsWith('@@')) {
+      out.push({ type: 'hunk', text: line });
+      const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) {
+        state.oldNo = parseInt(m[1], 10);
+        state.newNo = parseInt(m[2], 10);
+      }
+    } else if (
+      line.startsWith('diff --git') ||
+      line.startsWith('index ') ||
+      line.startsWith('--- ') ||
+      line.startsWith('+++ ') ||
+      line.startsWith('new file') ||
+      line.startsWith('deleted file') ||
+      line.startsWith('rename ') ||
+      line.startsWith('copy ') ||
+      line.startsWith('similarity ') ||
+      line.startsWith('Binary files')
+    ) {
+      out.push({ type: 'meta', text: line });
+    } else if (line.startsWith('+')) {
+      out.push({ type: 'add', newNo: state.newNo, text: line.substring(1) });
+      state.newNo++;
+    } else if (line.startsWith('-')) {
+      out.push({ type: 'del', oldNo: state.oldNo, text: line.substring(1) });
+      state.oldNo++;
+    } else if (line.startsWith(' ')) {
+      out.push({
+        type: 'context',
+        oldNo: state.oldNo,
+        newNo: state.newNo,
+        text: line.substring(1),
+      });
+      state.oldNo++;
+      state.newNo++;
+    } else if (line === '') {
+      out.push({ type: 'context', oldNo: state.oldNo, newNo: state.newNo, text: '' });
+    }
+  }
+}
+
+/** Cheap line counter that avoids allocating a split array. */
+function countLines(s: string): number {
+  if (!s) return 0;
+  let n = 1;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
 }
 
 /**

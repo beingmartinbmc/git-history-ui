@@ -130,6 +130,14 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
               >
                 ⏱
               </button>
+              <button
+                class="file-history breakage"
+                (click)="openFileBreakage(f.file)"
+                title="Why did this break? Open breakage analysis"
+                aria-label="Open breakage analysis for this file"
+              >
+                ⚠
+              </button>
             </div>
             <div class="files-empty" *ngIf="!files().length && !loading()">No files changed.</div>
             <div class="files-empty" *ngIf="loading()">Loading…</div>
@@ -612,6 +620,9 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
         background: var(--bg-elevated);
         color: var(--accent);
       }
+      .file-history.breakage:hover {
+        color: var(--danger, #dc2626);
+      }
 
       .annotations {
         margin: 0.5rem;
@@ -762,6 +773,12 @@ export class CommitDetailComponent {
 
   openFileHistory(file: string) {
     this.router.navigate(['/file', encodeURIComponent(file)]);
+  }
+
+  openFileBreakage(file: string) {
+    this.router.navigate(['/file', encodeURIComponent(file)], {
+      queryParams: { tab: 'breakage' },
+    });
   }
 
   shortPath(p: string): string {

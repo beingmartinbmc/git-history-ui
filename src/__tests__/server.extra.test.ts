@@ -165,6 +165,25 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(r.body.files).toContain('src/a.ts');
   });
 
+  it('GET /api/breakage requires file', async () => {
+    const r = await request({ url: `${url}/api/breakage` });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/file/);
+  });
+
+  it('GET /api/breakage returns analysis for a file', async () => {
+    const r = await request({ url: `${url}/api/breakage?file=src%2Fb.ts` });
+    expect(r.status).toBe(200);
+    expect(r.body.file).toBe('src/b.ts');
+    expect(Array.isArray(r.body.commits)).toBe(true);
+    expect(Array.isArray(r.body.fixCommits)).toBe(true);
+    expect(Array.isArray(r.body.suspects)).toBe(true);
+    expect(Array.isArray(r.body.coChangedFiles)).toBe(true);
+    // The seeded "fix: add b (#42)" commit should be flagged.
+    expect(r.body.fixCount).toBeGreaterThan(0);
+    expect(typeof r.body.summary).toBe('string');
+  });
+
   it('GET /api/insights returns aggregated insights', async () => {
     const r = await request({ url: `${url}/api/insights` });
     expect(r.status).toBe(200);
