@@ -1,0 +1,54 @@
+name: Feature request
+description: Suggest an idea or improvement
+title: 'feat: '
+labels: ['enhancement', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping shape git-history-ui. Please describe the use case first, then the proposed solution.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What workflow is hard today?
+      placeholder: 'When reviewing a long-lived branch, I want to...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would make this better?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you've tried or considered?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI
+        - Backend API
+        - Frontend UI
+        - Natural-language search
+        - AI integration
+        - Performance / large repos
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, mockups, examples, or related tools.

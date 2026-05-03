@@ -11,7 +11,7 @@ describe('GitService', () => {
   beforeEach(() => {
     originalEventSource = window.EventSource;
     TestBed.configureTestingModule({
-      providers: [provideHttpClient(), provideHttpClientTesting()]
+      providers: [provideHttpClient(), provideHttpClientTesting()],
     });
     service = TestBed.inject(GitService);
     http = TestBed.inject(HttpTestingController);
@@ -22,7 +22,7 @@ describe('GitService', () => {
     Object.defineProperty(window, 'EventSource', {
       configurable: true,
       writable: true,
-      value: originalEventSource
+      value: originalEventSource,
     });
   });
 
@@ -33,16 +33,22 @@ describe('GitService', () => {
     service.streamCommits().subscribe({
       error: (err) => {
         error = err;
-      }
+      },
     });
 
-    source.dispatch('error', new MessageEvent('error', {
-      data: JSON.stringify({ message: 'Not a git repository' })
-    }));
-    http.expectOne('/api/commits').flush({ error: 'Not a git repository' }, {
-      status: 500,
-      statusText: 'Server Error'
-    });
+    source.dispatch(
+      'error',
+      new MessageEvent('error', {
+        data: JSON.stringify({ message: 'Not a git repository' }),
+      }),
+    );
+    http.expectOne('/api/commits').flush(
+      { error: 'Not a git repository' },
+      {
+        status: 500,
+        statusText: 'Server Error',
+      },
+    );
     tick();
 
     expect(error).toEqual(jasmine.any(Error));
@@ -61,7 +67,7 @@ describe('GitService', () => {
       },
       complete: () => {
         completed = true;
-      }
+      },
     });
 
     source.dispatch('error', new Event('error'));
@@ -72,11 +78,72 @@ describe('GitService', () => {
       pageSize: 25,
       totalPages: 1,
       hasNext: false,
-      hasPrevious: false
+      hasPrevious: false,
     });
     tick();
 
     expect(total).toBe(7);
+    expect(completed).toBeTrue();
+    expect(source.closed).toBeTrue();
+  }));
+
+  it('caps streamed commits at requested page size and uses done metadata', fakeAsync(() => {
+    const source = installMockEventSource();
+    let latestTotal = 0;
+    let latestCount = 0;
+    let hasNext = false;
+    let completed = false;
+
+    service.streamCommits({ pageSize: 2 }).subscribe({
+      next: (resp) => {
+        latestTotal = resp.total;
+        latestCount = resp.commits.length;
+        hasNext = resp.hasNext;
+      },
+      complete: () => {
+        completed = true;
+      },
+    });
+
+    for (let i = 0; i < 5; i++) {
+      source.dispatch(
+        'commit',
+        new MessageEvent('commit', {
+          data: JSON.stringify({
+            hash: `h${i}`,
+            shortHash: `h${i}`,
+            author: 'a',
+            authorEmail: 'a@x',
+            date: '',
+            message: '',
+            subject: '',
+            body: '',
+            parents: [],
+            branches: [],
+            tags: [],
+            isMerge: false,
+          }),
+        }),
+      );
+    }
+    source.dispatch(
+      'done',
+      new MessageEvent('done', {
+        data: JSON.stringify({
+          total: 5,
+          page: 1,
+          pageSize: 2,
+          totalPages: 3,
+          hasNext: true,
+          hasPrevious: false,
+        }),
+      }),
+    );
+    tick(20);
+
+    expect(latestCount).toBe(2);
+    expect(latestTotal).toBe(5);
+    expect(hasNext).toBeTrue();
     expect(completed).toBeTrue();
     expect(source.closed).toBeTrue();
   }));
@@ -92,7 +159,7 @@ describe('GitService', () => {
     Object.defineProperty(window, 'EventSource', {
       configurable: true,
       writable: true,
-      value: MockEventSourceCtor
+      value: MockEventSourceCtor,
     });
     return {
       get url() {
@@ -103,7 +170,7 @@ describe('GitService', () => {
       },
       dispatch(type: string, event: Event) {
         instance?.dispatch(type, event);
-      }
+      },
     } as MockEventSource;
   }
 });

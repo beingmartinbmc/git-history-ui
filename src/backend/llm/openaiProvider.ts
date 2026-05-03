@@ -1,12 +1,37 @@
 import type { LlmService, ScoreCandidate, ScoredCandidate } from './types';
 
-const DEFAULT_MODEL = 'gpt-4o-mini';
+const DEFAULT_MODEL = 'gpt-4.1-nano';
+const DEFAULT_SUMMARY_TOKENS = 700;
 const ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+
+interface OpenAiChatCompletionResponse {
+  id?: string;
+  object?: 'chat.completion';
+  created?: number;
+  model?: string;
+  choices?: Array<{
+    index?: number;
+    message?: {
+      role?: 'assistant';
+      content?: string | null;
+      refusal?: string | null;
+      annotations?: unknown[];
+    };
+    logprobs?: unknown;
+    finish_reason?: string | null;
+  }>;
+  usage?: unknown;
+  service_tier?: string;
+  system_fingerprint?: string;
+}
 
 export class OpenAiProvider implements LlmService {
   readonly name = 'openai' as const;
   readonly isAi = true;
-  constructor(private apiKey: string, private model: string = DEFAULT_MODEL) {}
+  constructor(
+    private apiKey: string,
+    private model: string = DEFAULT_MODEL
+  ) {}
 
   async score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]> {
     if (candidates.length === 0) return [];
@@ -28,13 +53,13 @@ export class OpenAiProvider implements LlmService {
     return items.map((it) => ({ id: it.id, score: parsed[it.idx] ?? 0 }));
   }
 
-  async summarize(text: string, opts?: { hint?: string }): Promise<string> {
+  async summarize(text: string, opts?: { hint?: string; maxTokens?: number }): Promise<string> {
     const prompt = [
       opts?.hint ?? 'Summarize the following text in one short paragraph (max 3 sentences).',
       '---',
       text.length > 8000 ? text.slice(0, 8000) + '\n[truncated]' : text
     ].join('\n');
-    const out = await this.call(prompt, 320, false);
+    const out = await this.call(prompt, opts?.maxTokens ?? DEFAULT_SUMMARY_TOKENS, false);
     return out.trim();
   }
 
@@ -56,11 +81,14 @@ export class OpenAiProvider implements LlmService {
       const err = await resp.text().catch(() => '');
       throw new Error(`openai ${resp.status}: ${err.slice(0, 200)}`);
     }
-    const data = (await resp.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content ?? '';
+    const data = (await resp.json()) as OpenAiChatCompletionResponse;
+    return extractContent(data);
   }
+}
+
+function extractContent(data: OpenAiChatCompletionResponse): string {
+  const content = data.choices?.[0]?.message?.content;
+  return typeof content === 'string' ? content : '';
 }
 
 function parseScores(raw: string, length: number): Record<number, number> {

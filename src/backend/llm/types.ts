@@ -21,9 +21,9 @@ export interface LlmService {
   score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]>;
   /**
    * Produce a short prose summary of an arbitrary block of text (typically
-   * a unified diff or commit message body). Hard cap output at ~600 chars.
+   * a unified diff or commit message body).
    */
-  summarize(text: string, opts?: { hint?: string }): Promise<string>;
+  summarize(text: string, opts?: { hint?: string; maxTokens?: number }): Promise<string>;
 }
 
 export interface LlmConfig {

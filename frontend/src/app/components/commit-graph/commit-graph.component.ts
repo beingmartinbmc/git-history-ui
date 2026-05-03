@@ -9,7 +9,8 @@ import {
   ViewChild,
   computed,
   effect,
-  inject
+  inject,
+  signal,
 } from '@angular/core';
 import { Commit } from '../../models/git.models';
 import { ThemeService } from '../../services/theme.service';
@@ -35,6 +36,17 @@ interface GraphTheme {
   warningSoft: string;
 }
 
+interface HoverTip {
+  x: number;
+  y: number;
+  subject: string;
+  shortHash: string;
+  author: string;
+  date: string;
+  refs: string;
+  isMerge: boolean;
+}
+
 const ROW_H = 34;
 const LANE_W = 24;
 const NODE_R = 5.5;
@@ -49,7 +61,7 @@ const LANE_COLORS = [
   '#10b981',
   '#8b5cf6',
   '#ec4899',
-  '#0ea5e9'
+  '#0ea5e9',
 ];
 
 @Component({
@@ -64,11 +76,7 @@ const LANE_COLORS = [
         <span class="hint">{{ graphSummary() }}</span>
       </div>
       <div class="legend" aria-hidden="true">
-        <span
-          class="swatch"
-          *ngFor="let color of legendColors"
-          [style.background]="color"
-        ></span>
+        <span class="swatch" *ngFor="let color of legendColors" [style.background]="color"></span>
       </div>
     </div>
     <div class="scroll" #scroll>
@@ -82,94 +90,175 @@ const LANE_COLORS = [
         naive content-sized canvas goes blank past ~960 commits.
       -->
       <div class="phantom" [style.height.px]="contentHeight()"></div>
-      <canvas
-        #canvas
-        aria-label="Commit graph"
-        role="img"
-      ></canvas>
+      <canvas #canvas aria-label="Commit graph" role="img"></canvas>
+      <div
+        class="graph-tooltip"
+        *ngIf="hoverTip() as tip"
+        [style.left.px]="tip.x"
+        [style.top.px]="tip.y"
+      >
+        <div class="tip-top">
+          <code>{{ tip.shortHash }}</code>
+          <span class="merge" *ngIf="tip.isMerge">merge</span>
+        </div>
+        <div class="tip-subject">{{ tip.subject }}</div>
+        <div class="tip-meta">
+          <span>{{ tip.author }}</span>
+          <span>{{ tip.date | date: 'MMM d, y, h:mm a' }}</span>
+        </div>
+        <div class="tip-refs" *ngIf="tip.refs">{{ tip.refs }}</div>
+      </div>
       <div class="empty" *ngIf="!state.commits().length && !state.loading()">
         No commits to draw.
       </div>
     </div>
   `,
-  styles: [`
-    :host {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      min-height: 0;
-      background: transparent;
-    }
-    .header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      padding: 0.65rem 0.85rem;
-      border-bottom: 1px solid var(--border-soft);
-      font-size: 12px;
-      color: var(--fg-muted);
-      background: color-mix(in oklab, var(--bg-surface) 88%, transparent);
-    }
-    .title {
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-      min-width: 0;
-    }
-    .title > span:first-child {
-      color: var(--fg-primary);
-      font-size: 13px;
-      font-weight: 600;
-    }
-    .hint {
-      white-space: nowrap;
-    }
-    .legend {
-      display: flex;
-      gap: 4px;
-      align-items: center;
-      flex: 0 0 auto;
-    }
-    .swatch {
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      box-shadow: 0 0 0 2px var(--bg-surface);
-    }
-    .scroll {
-      position: relative;
-      flex: 1;
-      overflow: auto;
-      min-height: 0;
-      background:
-        radial-gradient(circle at 24px 24px, var(--graph-row-alt) 0 1px, transparent 1px 100%),
-        linear-gradient(180deg, color-mix(in oklab, var(--bg-surface) 92%, transparent), color-mix(in oklab, var(--bg-surface-2) 76%, transparent));
-      background-size: 24px 24px;
-    }
-    .phantom {
-      width: 1px;
-      pointer-events: none;
-    }
-    canvas {
-      display: block;
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: auto;
-      will-change: transform;
-    }
-    .empty {
-      position: absolute;
-      inset: 0;
-      display: grid;
-      place-items: center;
-      padding: 1rem;
-      color: var(--fg-muted);
-      font-size: 12px;
-      text-align: center;
-    }
-  `]
+  styles: [
+    `
+      :host {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+        background: transparent;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.65rem 0.85rem;
+        border-bottom: 1px solid var(--border-soft);
+        font-size: 12px;
+        color: var(--fg-muted);
+        background: color-mix(in oklab, var(--bg-surface) 88%, transparent);
+      }
+      .title {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .title > span:first-child {
+        color: var(--fg-primary);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .hint {
+        white-space: nowrap;
+      }
+      .legend {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        flex: 0 0 auto;
+      }
+      .swatch {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        box-shadow: 0 0 0 2px var(--bg-surface);
+      }
+      .scroll {
+        position: relative;
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        min-height: 0;
+        background:
+          radial-gradient(circle at 24px 24px, var(--graph-row-alt) 0 1px, transparent 1px 100%),
+          linear-gradient(
+            180deg,
+            color-mix(in oklab, var(--bg-surface) 92%, transparent),
+            color-mix(in oklab, var(--bg-surface-2) 76%, transparent)
+          );
+        background-size: 24px 24px;
+      }
+      .phantom {
+        width: 100%;
+        pointer-events: none;
+      }
+      canvas {
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: auto;
+        will-change: transform;
+      }
+      .graph-tooltip {
+        position: absolute;
+        width: min(280px, calc(100% - 1.5rem));
+        padding: 0.65rem 0.75rem;
+        border: 1px solid color-mix(in oklab, var(--accent) 34%, var(--border-soft));
+        border-radius: var(--radius-md);
+        background: color-mix(in oklab, var(--bg-elevated) 96%, transparent);
+        box-shadow: var(--shadow-lg);
+        color: var(--fg-primary);
+        pointer-events: none;
+        z-index: 20;
+      }
+      .tip-top,
+      .tip-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--fg-muted);
+        font-size: 11px;
+      }
+      .tip-top {
+        justify-content: space-between;
+        margin-bottom: 0.35rem;
+      }
+      .tip-top code {
+        font-family: var(--font-mono, monospace);
+        color: var(--accent);
+      }
+      .merge {
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--accent) 15%, transparent);
+        color: var(--accent);
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .tip-subject {
+        margin-bottom: 0.4rem;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+      .tip-meta {
+        flex-wrap: wrap;
+        line-height: 1.35;
+      }
+      .tip-meta span:not(:last-child)::after {
+        content: '•';
+        margin-left: 0.5rem;
+        opacity: 0.55;
+      }
+      .tip-refs {
+        margin-top: 0.45rem;
+        color: var(--accent);
+        font-size: 11px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+      .empty {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 1rem;
+        color: var(--fg-muted);
+        font-size: 12px;
+        text-align: center;
+      }
+    `,
+  ],
 })
 export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   state = inject(UiStateService);
@@ -195,6 +284,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   private rowByHash = new Map<string, Node>();
   private laneCount = 1;
   private hoverRow = -1;
+  readonly hoverTip = signal<HoverTip | null>(null);
   private layoutToken = 0;
   private idleHandle: number | null = null;
   private canvasSize = { width: 0, height: 0, dpr: 0 };
@@ -254,6 +344,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     this.nodes = [];
     this.rowByHash.clear();
     this.hoverRow = -1;
+    this.hoverTip.set(null);
     if (!commits.length) {
       this.laneCount = 1;
       this.draw();
@@ -331,7 +422,6 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
 
     const scroll = this.scrollRef?.nativeElement;
     const dpr = window.devicePixelRatio || 1;
-    const contentW = PAD_X * 2 + this.laneCount * LANE_W;
 
     // The canvas is sized to the viewport (NOT the full content) so it
     // never exceeds the browser's ~32k px max canvas dimension regardless
@@ -340,7 +430,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     // to the right pixels on screen.
     const scrollTop = scroll?.scrollTop ?? 0;
     const viewportH = scroll?.clientHeight ?? 0;
-    const w = Math.max(contentW, scroll?.clientWidth ?? contentW);
+    const w = Math.max(scroll?.clientWidth ?? PAD_X * 2 + LANE_W, PAD_X * 2 + LANE_W);
     const h = Math.max(viewportH || ROW_H * 8, ROW_H);
     this.ensureCanvasSize(canvas, w, h, dpr);
     const transform = `translateY(${scrollTop}px)`;
@@ -359,7 +449,9 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     ctx.fillRect(0, scrollTop, w, h);
     if (!this.nodes.length) return;
 
-    const xOf = (lane: number) => PAD_X + lane * LANE_W + LANE_W / 2;
+    const laneStep = this.laneStep(w);
+    const nodeRadius = this.nodeRadius(laneStep);
+    const xOf = (lane: number) => this.xOfLane(lane, w, laneStep);
     const yOf = (row: number) => PAD_Y + row * ROW_H + ROW_H / 2;
     const color = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length];
     const selectedHash = this.state.selectedHash();
@@ -372,11 +464,11 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     const minRow = Math.max(0, Math.floor((scrollTop - PAD_Y - buffer) / ROW_H));
     const maxRow = Math.min(
       this.nodes.length - 1,
-      Math.ceil((scrollTop + h - PAD_Y + buffer) / ROW_H)
+      Math.ceil((scrollTop + h - PAD_Y + buffer) / ROW_H),
     );
     const visible = this.nodes.slice(minRow, maxRow + 1);
 
-    this.drawRows(ctx, w, xOf, yOf, theme, selectedHash, visible);
+    this.drawRows(ctx, w, xOf, yOf, nodeRadius, theme, selectedHash, visible);
     this.drawGuides(ctx, scrollTop, h, theme);
 
     // Edges. Iterate visible rows; their parents may be off-screen but
@@ -400,9 +492,10 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
 
         ctx.strokeStyle = color(target.lane);
         ctx.lineWidth = node.commit.isMerge ? 2.6 : 2.2;
-        ctx.globalAlpha = selectedHash && selectedHash !== node.commit.hash && selectedHash !== target.commit.hash
-          ? 0.55
-          : 0.9;
+        ctx.globalAlpha =
+          selectedHash && selectedHash !== node.commit.hash && selectedHash !== target.commit.hash
+            ? 0.55
+            : 0.9;
         this.drawEdge(ctx, x1, y1, x2, y2);
         ctx.globalAlpha = 1;
       }
@@ -415,7 +508,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
       const c = color(node.lane);
       const isSel = node.commit.hash === selectedHash;
       const isHover = node.row === this.hoverRow;
-      const r = isSel ? NODE_R + 2 : isHover ? NODE_R + 1 : NODE_R;
+      const r = isSel ? nodeRadius + 2 : isHover ? nodeRadius + 1 : nodeRadius;
 
       ctx.beginPath();
       ctx.arc(x, y, r + 3, 0, Math.PI * 2);
@@ -447,9 +540,10 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     width: number,
     xOf: (lane: number) => number,
     yOf: (row: number) => number,
+    nodeRadius: number,
     theme: GraphTheme,
     selectedHash: string | null,
-    visible: Node[] = this.nodes
+    visible: Node[] = this.nodes,
   ) {
     for (const node of visible) {
       const y = yOf(node.row) - ROW_H / 2;
@@ -463,21 +557,28 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
         ctx.fill();
       }
       if (node.commit.branches.length || node.commit.tags.length) {
-        const x = xOf(node.lane) + NODE_R + 8;
+        const x = xOf(node.lane) + nodeRadius + 8;
         this.drawRefPill(ctx, x, yOf(node.row), node.commit, theme);
       }
     }
   }
 
-  private drawGuides(ctx: CanvasRenderingContext2D, scrollTop: number, height: number, theme: GraphTheme) {
+  private drawGuides(
+    ctx: CanvasRenderingContext2D,
+    scrollTop: number,
+    height: number,
+    theme: GraphTheme,
+  ) {
     ctx.save();
     ctx.strokeStyle = theme.guide;
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 5]);
     const y1 = scrollTop;
     const y2 = scrollTop + height;
+    const w = ctx.canvas.clientWidth;
+    const laneStep = this.laneStep(w);
     for (let lane = 0; lane < this.laneCount; lane++) {
-      const x = PAD_X + lane * LANE_W + LANE_W / 2;
+      const x = this.xOfLane(lane, w, laneStep);
       ctx.beginPath();
       ctx.moveTo(x, y1);
       ctx.lineTo(x, y2);
@@ -501,6 +602,23 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     canvas.height = pixelHeight;
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
+  }
+
+  private laneStep(width: number): number {
+    if (this.laneCount <= 1) return LANE_W;
+    const usableWidth = Math.max(1, width - PAD_X * 2 - NODE_R * 2);
+    return Math.min(LANE_W, usableWidth / (this.laneCount - 1));
+  }
+
+  private nodeRadius(laneStep: number): number {
+    return Math.max(2, Math.min(NODE_R, laneStep / 2 - 0.5));
+  }
+
+  private xOfLane(lane: number, width: number, laneStep: number): number {
+    if (this.laneCount <= 1) return Math.min(width / 2, PAD_X + LANE_W / 2);
+    const graphWidth = (this.laneCount - 1) * laneStep;
+    const left = Math.max(PAD_X + NODE_R, (width - graphWidth) / 2);
+    return left + lane * laneStep;
   }
 
   private requestIdle(cb: (deadline?: IdleDeadline) => void): number {
@@ -528,7 +646,13 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     ctx.stroke();
   }
 
-  private drawRefPill(ctx: CanvasRenderingContext2D, x: number, y: number, commit: Commit, theme: GraphTheme) {
+  private drawRefPill(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    commit: Commit,
+    theme: GraphTheme,
+  ) {
     const label = commit.tags[0] ?? commit.branches.find((b) => !isRemoteBranch(b));
     if (!label) return;
 
@@ -553,15 +677,39 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   private onMouseMove(e: MouseEvent) {
     const node = this.nodeFromEvent(e);
     const next = node?.row ?? -1;
-    if (next === this.hoverRow) return;
-    this.hoverRow = next;
-    this.canvasRef.nativeElement.style.cursor = node ? 'pointer' : 'default';
-    this.draw();
+    if (next !== this.hoverRow) {
+      this.hoverRow = next;
+      this.canvasRef.nativeElement.style.cursor = node ? 'pointer' : 'default';
+      this.draw();
+    }
+    this.hoverTip.set(node ? this.tipFromEvent(e, node) : null);
+  }
+
+  private tipFromEvent(e: MouseEvent, node: Node): HoverTip {
+    const scroll = this.scrollRef.nativeElement;
+    const rect = scroll.getBoundingClientRect();
+    const tipWidth = Math.min(280, Math.max(180, rect.width - 24));
+    const localX = e.clientX - rect.left;
+    const localY = e.clientY - rect.top;
+    const x = Math.max(12, Math.min(localX + 14, rect.width - tipWidth - 12));
+    const y = scroll.scrollTop + Math.max(12, Math.min(localY + 14, rect.height - 128));
+    const c = node.commit;
+    return {
+      x,
+      y,
+      subject: c.subject,
+      shortHash: c.shortHash,
+      author: c.author,
+      date: c.date,
+      refs: [...c.tags, ...c.branches].join(', '),
+      isMerge: c.isMerge,
+    };
   }
 
   private onMouseLeave() {
     if (this.hoverRow === -1) return;
     this.hoverRow = -1;
+    this.hoverTip.set(null);
     this.canvasRef.nativeElement.style.cursor = 'default';
     this.draw();
   }
@@ -591,7 +739,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
       shadow: this.css(styles, '--graph-shadow', 'rgba(15, 23, 42, 0.12)'),
       surface: this.css(styles, '--bg-panel', '#ffffff'),
       warning: this.css(styles, '--warning', '#d97706'),
-      warningSoft: 'rgba(217, 119, 6, 0.15)'
+      warningSoft: 'rgba(217, 119, 6, 0.15)',
     };
   }
 
@@ -605,7 +753,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     y: number,
     width: number,
     height: number,
-    radius: number
+    radius: number,
   ) {
     const r = Math.min(radius, width / 2, height / 2);
     ctx.beginPath();
