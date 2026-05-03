@@ -3,11 +3,21 @@ import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 
 @Pipe({ name: 'markdown', standalone: true })
 export class MarkdownPipe implements PipeTransform {
+  private cache = new Map<string, SafeHtml>();
+
   constructor(private sanitizer: DomSanitizer) {}
 
   transform(value: string | null | undefined): SafeHtml {
     if (!value) return '';
-    return this.sanitizer.bypassSecurityTrustHtml(renderMarkdown(value));
+    const hit = this.cache.get(value);
+    if (hit) return hit;
+    const rendered = this.sanitizer.bypassSecurityTrustHtml(renderMarkdown(value));
+    this.cache.set(value, rendered);
+    if (this.cache.size > 50) {
+      const first = this.cache.keys().next().value;
+      if (first) this.cache.delete(first);
+    }
+    return rendered;
   }
 }
 

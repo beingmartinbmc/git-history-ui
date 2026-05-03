@@ -19,10 +19,15 @@ export class UiStateService {
   readonly tags = signal<string[]>([]);
 
   readonly selectedHash = signal<string | null>(null);
+  readonly commitIndex = computed(() => {
+    const map = new Map<string, { commit: Commit; index: number }>();
+    this.commits().forEach((commit, index) => map.set(commit.hash, { commit, index }));
+    return map;
+  });
   readonly selected = computed<Commit | null>(() => {
     const hash = this.selectedHash();
     if (!hash) return null;
-    return this.commits().find((c) => c.hash === hash) ?? null;
+    return this.commitIndex().get(hash)?.commit ?? null;
   });
 
   // overlays
@@ -51,7 +56,7 @@ export class UiStateService {
     const list = this.commits();
     if (list.length === 0) return;
     const current = this.selectedHash();
-    const idx = current ? list.findIndex((c) => c.hash === current) : -1;
+    const idx = current ? (this.commitIndex().get(current)?.index ?? -1) : -1;
     let next = idx === -1 ? (delta > 0 ? 0 : list.length - 1) : idx + delta;
     next = Math.max(0, Math.min(list.length - 1, next));
     this.selectedHash.set(list[next].hash);
