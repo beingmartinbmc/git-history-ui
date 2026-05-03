@@ -17,22 +17,30 @@ export interface Snapshot {
  */
 export async function getSnapshot(
   gitService: GitService,
-  atIso: string
+  atIso: string,
+  opts: { signal?: AbortSignal } = {}
 ): Promise<Snapshot> {
-  const [branches, tags] = await Promise.all([
-    gitService.getBranches(),
-    gitService.getTags()
-  ]);
+  if (typeof gitService.refsAt === 'function') {
+    const refs = await gitService.refsAt(atIso, opts);
+    return {
+      at: atIso,
+      ref: refs.head,
+      branches: refs.branches,
+      tags: refs.tags
+    };
+  }
+
+  const [branches, tags] = await Promise.all([gitService.getBranches(), gitService.getTags()]);
 
   const branchEntries = await Promise.all(
     branches.map(async (b) => {
-      const hash = await gitService.revAt(b, atIso).catch(() => null);
+      const hash = await gitService.revAt(b, atIso, opts).catch(() => null);
       return [b, hash] as const;
     })
   );
   const tagEntries = await Promise.all(
     tags.map(async (t) => {
-      const hash = await gitService.revAt(t, atIso).catch(() => null);
+      const hash = await gitService.revAt(t, atIso, opts).catch(() => null);
       return [t, hash] as const;
     })
   );
@@ -41,9 +49,7 @@ export async function getSnapshot(
   for (const [b, hash] of branchEntries) if (hash) branchMap[b] = hash;
   const tagMap: Record<string, string> = {};
   for (const [t, hash] of tagEntries) if (hash) tagMap[t] = hash;
-
-  // HEAD-equivalent: commit on the default branch (HEAD) at the snapshot time.
-  const head = await gitService.revAt('HEAD', atIso).catch(() => null);
+  const head = await gitService.revAt('HEAD', atIso, opts).catch(() => null);
 
   return {
     at: atIso,

@@ -7,7 +7,9 @@ import type { Commit } from '../gitService';
 
 const FIELD_SEP = '\x1f';
 const RECORD_SEP = '\x1e';
-export const SQLITE_LOG_FORMAT = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s', '%b'].join(FIELD_SEP);
+export const SQLITE_LOG_FORMAT = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s', '%b'].join(
+  FIELD_SEP
+);
 
 const ROOT_DIR = path.join(os.homedir(), '.git-history-ui');
 
@@ -133,7 +135,11 @@ export class SqliteIndex {
     }
     const total = (this.db!.prepare('SELECT COUNT(*) as n FROM commits').get() as { n: number }).n;
     const builtAt =
-      (this.db!.prepare("SELECT v FROM meta WHERE k = 'builtAt'").get() as { v: string } | undefined)?.v ?? null;
+      (
+        this.db!.prepare("SELECT v FROM meta WHERE k = 'builtAt'").get() as
+          | { v: string }
+          | undefined
+      )?.v ?? null;
     return { available: true, total, builtAt };
   }
 
@@ -156,12 +162,18 @@ export class SqliteIndex {
   private async doBuild(opts: { signal?: AbortSignal } = {}): Promise<void> {
     if (!this.db) return;
     const sig = await this.refSignature();
-    const stored = (this.db.prepare("SELECT v FROM meta WHERE k='refsSig'").get() as { v: string } | undefined)?.v;
+    const stored = (
+      this.db.prepare("SELECT v FROM meta WHERE k='refsSig'").get() as { v: string } | undefined
+    )?.v;
     if (stored === sig) return;
     const head = await this.currentHead();
     const storedHead =
-      (this.db.prepare("SELECT v FROM meta WHERE k='indexedHead'").get() as { v: string } | undefined)?.v ?? '';
-    const canIncrement = !!storedHead && !!head && await this.isAncestor(storedHead, head);
+      (
+        this.db.prepare("SELECT v FROM meta WHERE k='indexedHead'").get() as
+          | { v: string }
+          | undefined
+      )?.v ?? '';
+    const canIncrement = !!storedHead && !!head && (await this.isAncestor(storedHead, head));
 
     const args = [
       'log',
@@ -174,7 +186,11 @@ export class SqliteIndex {
     try {
       if (!canIncrement) {
         this.db.exec('DELETE FROM commits');
-        try { this.db.exec('DELETE FROM commits_fts'); } catch { /* no fts */ }
+        try {
+          this.db.exec('DELETE FROM commits_fts');
+        } catch {
+          /* no fts */
+        }
       }
       const ins = this.db.prepare(
         'INSERT OR REPLACE INTO commits(hash,short,author,email,date,parents,subject,body) VALUES (?,?,?,?,?,?,?,?)'
@@ -182,7 +198,7 @@ export class SqliteIndex {
       const insFts = (() => {
         try {
           return this.db!.prepare(
-            "INSERT INTO commits_fts(rowid,subject,body) VALUES ((SELECT rowid FROM commits WHERE hash = ?), ?, ?)"
+            'INSERT INTO commits_fts(rowid,subject,body) VALUES ((SELECT rowid FROM commits WHERE hash = ?), ?, ?)'
           );
         } catch {
           return null;
@@ -212,17 +228,21 @@ export class SqliteIndex {
       if (this.streamGit) {
         let pending = '';
         const decoder = new StringDecoder('utf8');
-        await this.streamGit(args, (chunk) => {
-          pending += decoder.write(chunk);
-          let idx: number;
-          // Process every complete record as it arrives so we never hold
-          // more than one record's worth of git output in memory.
-          while ((idx = pending.indexOf(RECORD_SEP)) >= 0) {
-            const record = pending.slice(0, idx);
-            pending = pending.slice(idx + 1);
-            ingest(record);
-          }
-        }, { signal: opts.signal });
+        await this.streamGit(
+          args,
+          (chunk) => {
+            pending += decoder.write(chunk);
+            let idx: number;
+            // Process every complete record as it arrives so we never hold
+            // more than one record's worth of git output in memory.
+            while ((idx = pending.indexOf(RECORD_SEP)) >= 0) {
+              const record = pending.slice(0, idx);
+              pending = pending.slice(idx + 1);
+              ingest(record);
+            }
+          },
+          { signal: opts.signal }
+        );
         pending += decoder.end();
         if (pending.trim()) ingest(pending);
       } else {
@@ -232,7 +252,9 @@ export class SqliteIndex {
 
       this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('refsSig', ?)").run(sig);
       this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('indexedHead', ?)").run(head);
-      this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('builtAt', ?)").run(new Date().toISOString());
+      this.db
+        .prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('builtAt', ?)")
+        .run(new Date().toISOString());
       this.db.exec('COMMIT');
     } catch (err) {
       this.db.exec('ROLLBACK');
@@ -241,33 +263,46 @@ export class SqliteIndex {
   }
 
   /** Quick FTS5 / LIKE search returning hashes + subjects. */
-  async search(
-    query: string,
-    limit = 50
-  ): Promise<Array<Pick<Commit, 'hash' | 'shortHash' | 'subject' | 'date' | 'author'>>> {
+  async search(query: string, limit = 50): Promise<Commit[]> {
     if (!this.open()) return [];
     const db = this.db!;
-    let rows: Array<{ hash: string; short: string; subject: string; date: string; author: string }> = [];
+    let rows: Array<{
+      hash: string;
+      short: string;
+      subject: string;
+      body: string;
+      date: string;
+      author: string;
+      email: string;
+      parents: string;
+    }> = [];
     try {
       rows = db
         .prepare(
-          'SELECT c.hash, c.short, c.subject, c.date, c.author FROM commits_fts f JOIN commits c ON c.rowid = f.rowid WHERE commits_fts MATCH ? LIMIT ?'
+          'SELECT c.hash, c.short, c.subject, c.body, c.date, c.author, c.email, c.parents FROM commits_fts f JOIN commits c ON c.rowid = f.rowid WHERE commits_fts MATCH ? LIMIT ?'
         )
         .all(query, limit) as typeof rows;
     } catch {
       const like = `%${query}%`;
       rows = db
         .prepare(
-          'SELECT hash, short, subject, date, author FROM commits WHERE subject LIKE ? OR body LIKE ? ORDER BY date DESC LIMIT ?'
+          'SELECT hash, short, subject, body, date, author, email, parents FROM commits WHERE subject LIKE ? OR body LIKE ? ORDER BY date DESC LIMIT ?'
         )
         .all(like, like, limit) as typeof rows;
     }
     return rows.map((r) => ({
       hash: r.hash,
       shortHash: r.short,
+      authorEmail: r.email,
       subject: r.subject,
+      body: r.body,
+      message: r.body ? `${r.subject}\n\n${r.body}` : r.subject,
       date: r.date,
-      author: r.author
+      author: r.author,
+      parents: r.parents ? r.parents.split(' ').filter(Boolean) : [],
+      branches: [],
+      tags: [],
+      isMerge: !!r.parents && r.parents.split(' ').filter(Boolean).length > 1
     }));
   }
 
@@ -280,29 +315,34 @@ export class SqliteIndex {
 
   private async refSignature(): Promise<string> {
     const head = await this.currentHead();
-    let mtimes = '';
+    let refs = '';
     try {
-      const refsDir = path.join(this.repoCwd, '.git', 'refs');
-      const walk = (dir: string): void => {
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          const full = path.join(dir, entry.name);
-          if (entry.isDirectory()) walk(full);
-          else mtimes += `${full}:${fs.statSync(full).mtimeMs};`;
-        }
-      };
-      if (fs.existsSync(refsDir)) walk(refsDir);
+      refs = await this.runGit([
+        'for-each-ref',
+        '--format=%(refname)%00%(objectname)%00%(creatordate:iso-strict)',
+        'refs/heads',
+        'refs/remotes',
+        'refs/tags'
+      ]);
     } catch {
       /* ignore */
     }
-    return crypto.createHash('sha256').update(head + '|' + mtimes).digest('hex');
+    return crypto
+      .createHash('sha256')
+      .update(head + '|' + refs)
+      .digest('hex');
   }
 
   private async currentHead(): Promise<string> {
-    return this.runGit(['rev-parse', 'HEAD']).then((s) => s.trim()).catch(() => '');
+    return this.runGit(['rev-parse', 'HEAD'])
+      .then((s) => s.trim())
+      .catch(() => '');
   }
 
   private async isAncestor(base: string, head: string): Promise<boolean> {
     if (!/^[0-9a-fA-F]{4,40}$/.test(base) || !/^[0-9a-fA-F]{4,40}$/.test(head)) return false;
-    return this.runGit(['merge-base', '--is-ancestor', base, head]).then(() => true).catch(() => false);
+    return this.runGit(['merge-base', '--is-ancestor', base, head])
+      .then(() => true)
+      .catch(() => false);
   }
 }

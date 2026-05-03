@@ -139,7 +139,7 @@ describe('GitService', () => {
         }),
       }),
     );
-    tick(20);
+    tick(140);
 
     expect(latestCount).toBe(2);
     expect(latestTotal).toBe(5);

@@ -3,6 +3,8 @@ import type { LlmService, ScoreCandidate, ScoredCandidate } from './types';
 const DEFAULT_MODEL = 'gpt-4.1-nano';
 const DEFAULT_SUMMARY_TOKENS = 700;
 const ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+const SCORE_BATCH_SIZE = 40;
+const SCORE_CONCURRENCY = 3;
 
 interface OpenAiChatCompletionResponse {
   id?: string;
@@ -35,10 +37,23 @@ export class OpenAiProvider implements LlmService {
 
   async score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]> {
     if (candidates.length === 0) return [];
+    const batches: ScoreCandidate[][] = [];
+    for (let offset = 0; offset < candidates.length; offset += SCORE_BATCH_SIZE) {
+      batches.push(candidates.slice(offset, offset + SCORE_BATCH_SIZE));
+    }
+    return runLimited(batches, SCORE_CONCURRENCY, (batch) => this.scoreBatch(query, batch)).then(
+      (parts) => parts.flat()
+    );
+  }
+
+  private async scoreBatch(
+    query: string,
+    candidates: ScoreCandidate[]
+  ): Promise<ScoredCandidate[]> {
     const items = candidates.map((c, i) => ({
       idx: i,
       id: c.id,
-      text: c.text.replace(/\s+/g, ' ').slice(0, 240)
+      text: c.text.replace(/\s+/g, ' ').slice(0, 180)
     }));
     const prompt = [
       'You score commit relevance to a developer query.',
@@ -84,6 +99,24 @@ export class OpenAiProvider implements LlmService {
     const data = (await resp.json()) as OpenAiChatCompletionResponse;
     return extractContent(data);
   }
+}
+
+async function runLimited<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (cursor < items.length) {
+        const i = cursor++;
+        out[i] = await fn(items[i]);
+      }
+    })
+  );
+  return out;
 }
 
 function extractContent(data: OpenAiChatCompletionResponse): string {

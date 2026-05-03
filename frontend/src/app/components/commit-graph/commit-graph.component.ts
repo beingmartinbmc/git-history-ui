@@ -289,6 +289,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   private idleHandle: number | null = null;
   private canvasSize = { width: 0, height: 0, dpr: 0 };
   private canvasTransform = '';
+  private cachedTheme: GraphTheme | null = null;
   private readonly onCanvasClick = (e: MouseEvent) => this.onClick(e);
   private readonly onCanvasMove = (e: MouseEvent) => this.onMouseMove(e);
   private readonly onCanvasLeave = () => this.onMouseLeave();
@@ -307,9 +308,14 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
       this.scheduleLayout(this.state.commits());
     });
     effect(() => {
-      // Re-draw on selection change and theme changes.
+      // Re-draw on selection change.
       void this.state.selectedHash();
+      this.draw();
+    });
+    effect(() => {
+      // Re-read CSS variables on theme changes.
       void this.theme.resolved();
+      this.cachedTheme = null;
       this.draw();
     });
   }
@@ -354,15 +360,22 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     // Lane allocation: walk commits in display order (newest first).
     // active lanes: array of expected hashes (or null when free).
     const active: (string | null)[] = [];
+    const laneByHash = new Map<string, number>();
+    const setLane = (lane: number, hash: string | null) => {
+      const prev = active[lane];
+      if (prev) laneByHash.delete(prev);
+      active[lane] = hash;
+      if (hash) laneByHash.set(hash, lane);
+    };
     const allocate = (hash: string): number => {
-      const idx = active.indexOf(hash);
-      if (idx >= 0) return idx;
+      const idx = laneByHash.get(hash);
+      if (idx !== undefined) return idx;
       const free = active.indexOf(null);
       if (free >= 0) {
-        active[free] = hash;
+        setLane(free, hash);
         return free;
       }
-      active.push(hash);
+      setLane(active.length, hash);
       return active.length - 1;
     };
 
@@ -375,15 +388,15 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
 
       // Replace this lane with first parent (continues the line down).
       const [first, ...rest] = c.parents;
-      active[lane] = first ?? null;
+      setLane(lane, first ?? null);
 
       // Additional parents: try to merge into existing lanes if already there;
       // otherwise allocate new lanes.
       for (const p of rest) {
-        if (active.indexOf(p) === -1) {
+        if (!laneByHash.has(p)) {
           const free = active.indexOf(null);
-          if (free >= 0) active[free] = p;
-          else active.push(p);
+          if (free >= 0) setLane(free, p);
+          else setLane(active.length, p);
         }
       }
 
@@ -440,7 +453,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     }
 
     const ctx = canvas.getContext('2d')!;
-    const theme = this.readTheme(canvas);
+    const theme = this.cachedTheme ?? (this.cachedTheme = this.readTheme(canvas));
     // Pre-translate by -scrollTop so all world-coordinate draws land in
     // the correct viewport pixels.
     ctx.setTransform(dpr, 0, 0, dpr, 0, -scrollTop * dpr);
