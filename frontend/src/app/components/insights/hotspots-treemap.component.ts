@@ -101,6 +101,9 @@ export class HotspotsTreemapComponent implements AfterViewInit, OnChanges {
   @Output() fileClick = new EventEmitter<string>();
   @ViewChild('svg', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
+  private lastRendered: HotspotInput[] | null = null;
+  private lastHeight = 0;
+
   ngAfterViewInit() {
     this.render();
   }
@@ -110,6 +113,11 @@ export class HotspotsTreemapComponent implements AfterViewInit, OnChanges {
 
   private render() {
     if (!this.svgRef) return;
+    // d3 layout + DOM mutations are noticeable on lower-end machines; skip
+    // when neither the data reference nor the height actually changed.
+    if (this.data === this.lastRendered && this.height === this.lastHeight) return;
+    this.lastRendered = this.data;
+    this.lastHeight = this.height;
     const el = this.svgRef.nativeElement;
     const width = el.clientWidth || 600;
     const svg = d3.select(el);

@@ -104,6 +104,14 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
               <a class="path" (click)="openFile(h.file)" [title]="h.file">{{ h.file }}</a>
               <span class="count">{{ h.commits }} commits</span>
               <span class="count">{{ h.authors }} authors</span>
+              <button
+                type="button"
+                class="breakage-link mini"
+                (click)="openBreakage(h.file)"
+                title="Open breakage analysis"
+              >
+                ⚠
+              </button>
               <span class="churn">+{{ h.additions }} −{{ h.deletions }}</span>
             </li>
           </ul>
@@ -148,6 +156,14 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
                 <span>{{ r.authors }} authors</span>
                 <span>{{ r.churn }} churn</span>
               </div>
+              <button
+                type="button"
+                class="breakage-link"
+                (click)="openBreakage(r.file)"
+                title="Open breakage analysis for this file"
+              >
+                ⚠ Breakage
+              </button>
             </li>
           </ul>
         </section>
@@ -502,7 +518,7 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
       }
       .risk-list li {
         display: grid;
-        grid-template-columns: 28px minmax(0, 1fr) minmax(160px, 220px) auto;
+        grid-template-columns: 28px minmax(0, 1fr) minmax(160px, 220px) auto auto;
         gap: 0.85rem;
         align-items: center;
         padding: 0.75rem;
@@ -514,6 +530,30 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
           border-color 120ms,
           box-shadow 120ms,
           transform 120ms;
+      }
+      .breakage-link {
+        background: transparent;
+        border: 1px solid var(--border-soft);
+        color: var(--fg-muted);
+        font-size: 11px;
+        padding: 0.25rem 0.55rem;
+        border-radius: 999px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+          color 120ms,
+          border-color 120ms,
+          background 120ms;
+      }
+      .breakage-link:hover {
+        color: var(--danger, #dc2626);
+        border-color: color-mix(in oklab, var(--danger, #dc2626) 50%, transparent);
+        background: color-mix(in oklab, var(--danger, #dc2626) 10%, transparent);
+      }
+      .breakage-link.mini {
+        padding: 0.1rem 0.35rem;
+        font-size: 12px;
+        line-height: 1;
       }
       .risk-list li:hover {
         border-color: color-mix(in oklab, var(--accent) 36%, var(--border-soft));
@@ -611,11 +651,15 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
           grid-template-columns: 28px minmax(0, 1fr);
         }
         .risk-meter,
-        .risk-stats {
+        .risk-stats,
+        .breakage-link {
           grid-column: 2;
         }
         .risk-stats {
           justify-content: flex-start;
+        }
+        .breakage-link {
+          justify-self: start;
         }
       }
     `,
@@ -673,6 +717,12 @@ export class InsightsComponent {
 
   openFile(file: string) {
     this.router.navigate(['/file', encodeURIComponent(file)]);
+  }
+
+  openBreakage(file: string) {
+    this.router.navigate(['/file', encodeURIComponent(file)], {
+      queryParams: { tab: 'breakage' },
+    });
   }
 
   topContributor(bundle: InsightsBundle): string {

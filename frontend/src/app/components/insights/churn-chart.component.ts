@@ -7,7 +7,7 @@ import {
   Input,
   OnChanges,
   OnDestroy,
-  ViewChild
+  ViewChild,
 } from '@angular/core';
 import * as d3 from 'd3';
 
@@ -31,88 +31,112 @@ interface ChurnPoint {
         <span><i class="swatch deletions"></i> deletions</span>
       </div>
       <div class="chart-wrap">
-        <svg #svg width="100%" [attr.height]="height" aria-label="Interactive churn over time"></svg>
+        <svg
+          #svg
+          width="100%"
+          [attr.height]="height"
+          aria-label="Interactive churn over time"
+        ></svg>
         <div #tooltip class="tooltip" hidden></div>
       </div>
     </div>
   `,
-  styles: [`
-    :host { display: block; }
-    .chart-shell {
-      display: grid;
-      gap: 0.45rem;
-    }
-    .legend {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      align-items: center;
-      color: var(--fg-muted);
-      font-size: 11px;
-    }
-    .legend span {
-      display: inline-flex;
-      gap: 0.35rem;
-      align-items: center;
-    }
-    .swatch {
-      display: inline-block;
-      width: 9px;
-      height: 9px;
-      border-radius: 999px;
-    }
-    .swatch.commits { background: var(--chart-line); }
-    .swatch.additions { background: var(--chart-add); }
-    .swatch.deletions { background: var(--chart-del); }
-    .chart-wrap {
-      position: relative;
-      overflow: hidden;
-      border: 1px solid var(--border-soft);
-      border-radius: var(--radius-md);
-      background:
-        radial-gradient(circle at 12% 0%, var(--chart-fill), transparent 34%),
-        linear-gradient(180deg, color-mix(in oklab, var(--bg-surface-2) 58%, transparent), transparent 70%),
-        var(--bg-surface-2);
-    }
-    svg { display: block; outline: none; }
-    :host ::ng-deep .axis text {
-      font-size: 10px;
-      font-family: var(--font-mono, monospace);
-    }
-    :host ::ng-deep .axis path,
-    :host ::ng-deep .axis line {
-      shape-rendering: crispEdges;
-    }
-    .tooltip {
-      position: absolute;
-      z-index: 2;
-      min-width: 150px;
-      max-width: 240px;
-      padding: 0.5rem 0.6rem;
-      border: 1px solid var(--border-soft);
-      border-radius: var(--radius-sm);
-      background: var(--bg-elevated);
-      color: var(--fg-primary);
-      box-shadow: var(--shadow-md);
-      font-size: 11px;
-      line-height: 1.35;
-      pointer-events: none;
-      transform: translate(-50%, calc(-100% - 12px));
-    }
-    .tooltip strong {
-      display: block;
-      margin-bottom: 0.25rem;
-      font-size: 12px;
-    }
-    .tooltip .row {
-      display: flex;
-      justify-content: space-between;
-      gap: 1rem;
-      color: var(--fg-muted);
-      font-variant-numeric: tabular-nums;
-    }
-    .tooltip .value { color: var(--fg-primary); }
-  `]
+  styles: [
+    `
+      :host {
+        display: block;
+      }
+      .chart-shell {
+        display: grid;
+        gap: 0.45rem;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+        color: var(--fg-muted);
+        font-size: 11px;
+      }
+      .legend span {
+        display: inline-flex;
+        gap: 0.35rem;
+        align-items: center;
+      }
+      .swatch {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+      }
+      .swatch.commits {
+        background: var(--chart-line);
+      }
+      .swatch.additions {
+        background: var(--chart-add);
+      }
+      .swatch.deletions {
+        background: var(--chart-del);
+      }
+      .chart-wrap {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-md);
+        background:
+          radial-gradient(circle at 12% 0%, var(--chart-fill), transparent 34%),
+          linear-gradient(
+            180deg,
+            color-mix(in oklab, var(--bg-surface-2) 58%, transparent),
+            transparent 70%
+          ),
+          var(--bg-surface-2);
+      }
+      svg {
+        display: block;
+        outline: none;
+      }
+      :host ::ng-deep .axis text {
+        font-size: 10px;
+        font-family: var(--font-mono, monospace);
+      }
+      :host ::ng-deep .axis path,
+      :host ::ng-deep .axis line {
+        shape-rendering: crispEdges;
+      }
+      .tooltip {
+        position: absolute;
+        z-index: 2;
+        min-width: 150px;
+        max-width: 240px;
+        padding: 0.5rem 0.6rem;
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-sm);
+        background: var(--bg-elevated);
+        color: var(--fg-primary);
+        box-shadow: var(--shadow-md);
+        font-size: 11px;
+        line-height: 1.35;
+        pointer-events: none;
+        transform: translate(-50%, calc(-100% - 12px));
+      }
+      .tooltip strong {
+        display: block;
+        margin-bottom: 0.25rem;
+        font-size: 12px;
+      }
+      .tooltip .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        color: var(--fg-muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .tooltip .value {
+        color: var(--fg-primary);
+      }
+    `,
+  ],
 })
 export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy {
   @Input() data: ChurnPoint[] = [];
@@ -120,6 +144,8 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
   @ViewChild('svg', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
   @ViewChild('tooltip', { static: true }) tooltipRef!: ElementRef<HTMLDivElement>;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastRendered: ChurnPoint[] | null = null;
+  private lastHeight = 0;
 
   ngAfterViewInit() {
     this.render();
@@ -133,6 +159,12 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
 
   private render() {
     if (!this.svgRef) return;
+    // d3 layout is non-trivial; bail when nothing actually changed so
+    // ChangeDetection ticks (e.g. theme attribute writes from the parent)
+    // don't trigger a full re-render.
+    if (this.data === this.lastRendered && this.height === this.lastHeight) return;
+    this.lastRendered = this.data;
+    this.lastHeight = this.height;
     const el = this.svgRef.nativeElement;
     const tooltip = this.tooltipRef?.nativeElement;
     const width = el.clientWidth || 600;
@@ -149,7 +181,7 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
       border: css(styles, '--border-soft', '#334155'),
       grid: css(styles, '--graph-guide', 'rgba(148, 163, 184, 0.22)'),
       surface: css(styles, '--bg-surface', '#111827'),
-      elevated: css(styles, '--bg-elevated', '#1f2937')
+      elevated: css(styles, '--bg-elevated', '#1f2937'),
     };
 
     const svg = d3.select(el);
@@ -157,14 +189,16 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
     hideTooltip(tooltip);
     if (this.data.length === 0 || innerW <= 0 || innerH <= 0) return;
 
-    const parsed = this.data.map((d) => ({
-      date: new Date(d.date),
-      label: d.date,
-      commits: d.commits,
-      additions: d.additions,
-      deletions: d.deletions,
-      churn: d.additions + d.deletions
-    })).filter((d) => !Number.isNaN(d.date.getTime()));
+    const parsed = this.data
+      .map((d) => ({
+        date: new Date(d.date),
+        label: d.date,
+        commits: d.commits,
+        additions: d.additions,
+        deletions: d.deletions,
+        churn: d.additions + d.deletions,
+      }))
+      .filter((d) => !Number.isNaN(d.date.getTime()));
     if (!parsed.length) return;
 
     const extent = d3.extent(parsed, (d) => d.date) as [Date, Date];
@@ -172,10 +206,7 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
       extent[0] = new Date(+extent[0] - 12 * 60 * 60 * 1000);
       extent[1] = new Date(+extent[1] + 12 * 60 * 60 * 1000);
     }
-    const x = d3
-      .scaleTime()
-      .domain(extent)
-      .range([0, innerW]);
+    const x = d3.scaleTime().domain(extent).range([0, innerW]);
     const yChurn = d3
       .scaleLinear()
       .domain([0, d3.max(parsed, (d) => d.churn) ?? 1])
@@ -188,25 +219,40 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
       .range([innerH, 0]);
 
     const defs = svg.append('defs');
-    const grad = defs.append('linearGradient')
+    const grad = defs
+      .append('linearGradient')
       .attr('id', 'churn-area-gradient')
       .attr('x1', '0%')
       .attr('x2', '0%')
       .attr('y1', '0%')
       .attr('y2', '100%');
-    grad.append('stop').attr('offset', '0%').attr('stop-color', color.accent).attr('stop-opacity', 0.24);
-    grad.append('stop').attr('offset', '100%').attr('stop-color', color.accent).attr('stop-opacity', 0.02);
+    grad
+      .append('stop')
+      .attr('offset', '0%')
+      .attr('stop-color', color.accent)
+      .attr('stop-opacity', 0.24);
+    grad
+      .append('stop')
+      .attr('offset', '100%')
+      .attr('stop-color', color.accent)
+      .attr('stop-opacity', 0.02);
 
     const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
     const fmt = d3.format(',');
 
     g.append('g')
       .attr('class', 'grid')
-      .call(d3.axisLeft(yChurn).ticks(4).tickSize(-innerW).tickFormat(() => ''))
+      .call(
+        d3
+          .axisLeft(yChurn)
+          .ticks(4)
+          .tickSize(-innerW)
+          .tickFormat(() => ''),
+      )
       .call((sel) => sel.select('.domain').remove())
       .call((sel) => sel.selectAll('line').attr('stroke', color.grid));
 
-    const dayW = Math.max(2, Math.min(14, innerW / Math.max(1, parsed.length) * 0.45));
+    const dayW = Math.max(2, Math.min(14, (innerW / Math.max(1, parsed.length)) * 0.45));
     g.append('g')
       .selectAll('line.additions')
       .data(parsed)
@@ -236,18 +282,15 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
       .attr('opacity', 0.62);
 
     const area = d3
-      .area<typeof parsed[number]>()
+      .area<(typeof parsed)[number]>()
       .x((d) => x(d.date))
       .y0(innerH)
       .y1((d) => yChurn(d.churn))
       .curve(d3.curveMonotoneX);
-    g.append('path')
-      .datum(parsed)
-      .attr('d', area)
-      .attr('fill', 'url(#churn-area-gradient)');
+    g.append('path').datum(parsed).attr('d', area).attr('fill', 'url(#churn-area-gradient)');
 
     const line = d3
-      .line<typeof parsed[number]>()
+      .line<(typeof parsed)[number]>()
       .x((d) => x(d.date))
       .y((d) => yCommits(d.commits))
       .curve(d3.curveMonotoneX);
@@ -259,13 +302,15 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
       .attr('fill', 'none');
 
     const focus = g.append('g').attr('display', 'none');
-    focus.append('line')
+    focus
+      .append('line')
       .attr('y1', 0)
       .attr('y2', innerH)
       .attr('stroke', color.primary)
       .attr('stroke-opacity', 0.25)
       .attr('stroke-dasharray', '3,3');
-    focus.append('circle')
+    focus
+      .append('circle')
       .attr('r', 4)
       .attr('fill', color.accent)
       .attr('stroke', color.surface)
@@ -274,7 +319,12 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
     g.append('g')
       .attr('class', 'axis')
       .attr('transform', `translate(0,${innerH})`)
-      .call(d3.axisBottom(x).ticks(Math.min(8, Math.max(3, Math.floor(innerW / 90)))).tickSizeOuter(0))
+      .call(
+        d3
+          .axisBottom(x)
+          .ticks(Math.min(8, Math.max(3, Math.floor(innerW / 90))))
+          .tickSizeOuter(0),
+      )
       .call(styleAxis(color));
     g.append('g')
       .attr('class', 'axis')
@@ -300,7 +350,7 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
       .attr('font-size', 10)
       .text('commits');
 
-    const bisect = d3.bisector<typeof parsed[number], Date>((d) => d.date).center;
+    const bisect = d3.bisector<(typeof parsed)[number], Date>((d) => d.date).center;
     svg
       .attr('tabindex', 0)
       .on('pointermove', (event) => {
@@ -324,7 +374,7 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
           commits: fmt(d.commits),
           additions: fmt(d.additions),
           deletions: fmt(d.deletions),
-          churn: fmt(d.churn)
+          churn: fmt(d.churn),
         });
       })
       .on('pointerleave blur', () => {
@@ -344,7 +394,15 @@ function styleAxis(color: { muted: string; border: string }) {
 
 function showTooltip(
   el: HTMLDivElement | undefined,
-  data: { x: number; y: number; date: string; commits: string; additions: string; deletions: string; churn: string }
+  data: {
+    x: number;
+    y: number;
+    date: string;
+    commits: string;
+    additions: string;
+    deletions: string;
+    churn: string;
+  },
 ) {
   if (!el) return;
   el.hidden = false;
@@ -368,11 +426,15 @@ function css(styles: CSSStyleDeclaration, name: string, fallback: string): strin
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (ch) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  })[ch] ?? ch);
+  return value.replace(
+    /[&<>"']/g,
+    (ch) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[ch] ?? ch,
+  );
 }
