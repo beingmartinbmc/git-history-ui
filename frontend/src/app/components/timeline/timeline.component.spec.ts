@@ -1,4 +1,4 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { of } from 'rxjs';
@@ -68,13 +68,15 @@ describe('TimelineComponent', () => {
     expect(component.tickPct()).toBe(Math.round((target / (component.ticks().length - 1)) * 100));
   });
 
-  it('loads snapshot diff and selects the first changed file', () => {
+  it('loads snapshot diff and selects the first changed file', fakeAsync(() => {
+    fixture.detectChanges();
+    tick(181);
     fixture.detectChanges();
 
     expect(timelineApi.snapshot).toHaveBeenCalled();
     expect(timelineApi.rangeDiff).toHaveBeenCalledWith('old-ref', 'head-ref');
     expect(component.selectedFile()?.file).toBe('src/app.ts');
-  });
+  }));
 
   it('formats branch, tag, and diff status entries for snapshot cards', () => {
     const snapshot = {
@@ -101,14 +103,16 @@ describe('TimelineComponent', () => {
     expect(component.initials('Grace Hopper')).toBe('GH');
   });
 
-  it('selects the snapshot commit from the commit-at-this-point card', () => {
+  it('selects the snapshot commit from the commit-at-this-point card', fakeAsync(() => {
+    fixture.detectChanges();
+    tick(181);
     fixture.detectChanges();
 
     expect(component.headCommit()?.hash).toBe('old-ref');
     component.selectCommit(component.headCommit()!);
 
     expect(state.selectedHash()).toBe('old-ref');
-  });
+  }));
 
   function commit(hash: string, date: string, author = 'Ada', subject = 'test commit'): Commit {
     return {

@@ -312,6 +312,8 @@ export class CommitListComponent {
 
   commits = this.state.commits;
   selectedHash = this.state.selectedHash;
+  private refsCache = new Map<string, string>();
+  private laneColorCache = new Map<string, string>();
 
   trackByHash(_: number, c: Commit) {
     return c.hash;
@@ -322,16 +324,24 @@ export class CommitListComponent {
   }
 
   refsFor(c: Commit): string {
-    return [...c.tags, ...c.branches].join(', ');
+    const hit = this.refsCache.get(c.hash);
+    if (hit !== undefined) return hit;
+    const value = [...c.tags, ...c.branches].join(', ');
+    this.refsCache.set(c.hash, value);
+    return value;
   }
 
   private laneColors = ['#4f46e5', '#06b6d4', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6'];
 
   laneColor(c: Commit): string {
+    const hit = this.laneColorCache.get(c.hash);
+    if (hit) return hit;
     let h = 0;
     const src = c.branches[0] ?? c.parents[0] ?? c.hash;
     for (let i = 0; i < src.length; i++) h = (h * 31 + src.charCodeAt(i)) >>> 0;
-    return this.laneColors[h % this.laneColors.length];
+    const color = this.laneColors[h % this.laneColors.length];
+    this.laneColorCache.set(c.hash, color);
+    return color;
   }
 
   @HostListener('window:keydown', ['$event'])

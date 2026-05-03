@@ -148,6 +148,55 @@ export interface InsightsBundle {
   }>;
 }
 
+export interface BreakageCommit {
+  hash: string;
+  shortHash: string;
+  author: string;
+  date: string;
+  subject: string;
+  isFix: boolean;
+  isRevert: boolean;
+  additions: number;
+  deletions: number;
+  churn: number;
+}
+
+export interface BreakageFixRef {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  date: string;
+}
+
+export interface BreakageSuspect {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  date: string;
+  churn: number;
+  score: number;
+  reasons: string[];
+  linkedFixes: BreakageFixRef[];
+}
+
+export interface CoChangedFile {
+  file: string;
+  count: number;
+}
+
+export interface BreakageAnalysis {
+  file: string;
+  totalCommits: number;
+  fixCount: number;
+  riskScore: number;
+  summary: string;
+  commits: BreakageCommit[];
+  fixCommits: BreakageCommit[];
+  suspects: BreakageSuspect[];
+  coChangedFiles: CoChangedFile[];
+}
+
 export interface AnnotationComment {
   id: string;
   author: string;
