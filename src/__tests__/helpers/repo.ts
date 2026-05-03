@@ -179,10 +179,21 @@ export async function withTempHomeAsync<T>(fn: (home: string) => Promise<T>): Pr
 }
 
 function removeTempDir(dir: string): void {
-  rmSync(dir, {
-    recursive: true,
-    force: true,
-    maxRetries: process.platform === 'win32' ? 5 : 0,
-    retryDelay: 100
-  });
+  try {
+    rmSync(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === 'win32' ? 20 : 0,
+      retryDelay: 250
+    });
+  } catch (err) {
+    if (process.platform === 'win32' && isTransientCleanupError(err)) return;
+    throw err;
+  }
+}
+
+function isTransientCleanupError(err: unknown): boolean {
+  const code =
+    typeof err === 'object' && err && 'code' in err ? String((err as { code?: unknown }).code) : '';
+  return code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EPERM';
 }
