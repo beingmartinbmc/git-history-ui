@@ -51,6 +51,10 @@ export interface GitStreamOptions {
   signal?: AbortSignal;
 }
 
+interface GitExecOptions extends GitStreamOptions {
+  maxBuffer?: number;
+}
+
 export interface PaginatedCommits {
   commits: Commit[];
   total: number;
@@ -72,12 +76,18 @@ interface CountCacheEntry {
   expiresAt: number;
 }
 
-const FIELD_SEP = "\x1f"; // Unit Separator (NUL is rejected by Node argv)
+interface AuthorsCacheEntry {
+  authors: string[];
+  expiresAt: number;
+}
+
+const FIELD_SEP = '\x1f'; // Unit Separator (NUL is rejected by Node argv)
 const RECORD_SEP = '\x1e';
 const LOG_FORMAT = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s', '%b'].join(FIELD_SEP);
 
 const REF_INDEX_TTL_MS = 5_000;
 const COUNT_CACHE_TTL_MS = 10_000;
+const AUTHORS_CACHE_TTL_MS = 5 * 60_000;
 
 export class NotARepositoryError extends Error {
   constructor() {
@@ -90,6 +100,7 @@ export class GitService {
   private repoPath: string;
   private refIndexCache: RefIndex | null = null;
   private countCache = new Map<string, CountCacheEntry>();
+  private authorsCache: AuthorsCacheEntry | null = null;
   private repoCheckResult: boolean | null = null;
 
   constructor(repoPath: string = process.cwd()) {
@@ -145,7 +156,10 @@ export class GitService {
     }
   }
 
-  async getCommits(options: GitOptions = {}): Promise<PaginatedCommits> {
+  async getCommits(
+    options: GitOptions = {},
+    opts: GitStreamOptions = {}
+  ): Promise<PaginatedCommits> {
     if (!(await this.verifyRepository())) {
       throw new NotARepositoryError();
     }
@@ -158,21 +172,38 @@ export class GitService {
     const filterArgs = this.buildFilterArgs(options);
     const cacheKey = [revision, ...filterArgs].join(' ');
 
-    const total = await this.getTotalCount(cacheKey, filterArgs, revision);
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
     const args = [
       'log',
-      `--max-count=${pageSize}`,
+      `--max-count=${pageSize + 1}`,
       `--skip=${skip}`,
       `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
       revision,
       ...filterArgs
     ];
 
-    const out = await this.git(args, { maxBuffer: 64 * 1024 * 1024 });
     const refs = await this.getRefIndex();
-    const commits = this.parseLog(out, refs);
+    const commits: Commit[] = [];
+    await this.streamRecords(
+      args,
+      (record) => {
+        if (commits.length <= pageSize) {
+          commits.push(...this.parseLog(`${record}${RECORD_SEP}`, refs));
+        }
+      },
+      opts
+    );
+    const hasNext = commits.length > pageSize;
+    if (hasNext) commits.length = pageSize;
+    // When this page is the last one we already know the exact total without
+    // a `rev-list --count`. Otherwise reuse the 10 s count cache or compute
+    // it once per filter set. Estimating (skip + len + 1) caused a growing
+    // total in the UI as the user paginated, so we always return an
+    // accurate number here.
+    const total = hasNext
+      ? (this.getCachedTotal(cacheKey) ??
+        (await this.getTotalCount(cacheKey, filterArgs, revision)))
+      : skip + commits.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     return {
       commits,
@@ -180,12 +211,46 @@ export class GitService {
       page,
       pageSize,
       totalPages,
-      hasNext: page < totalPages,
+      hasNext,
       hasPrevious: page > 1
     };
   }
 
-  private async getTotalCount(cacheKey: string, filterArgs: string[], revision: string): Promise<number> {
+  async getCommitsForFiles(
+    files: string[],
+    limit = 20,
+    opts: GitStreamOptions = {}
+  ): Promise<Commit[]> {
+    const safeFiles = files.filter((f) => f && !f.includes('\0')).slice(0, 10);
+    if (safeFiles.length === 0) return [];
+    const refs = await this.getRefIndex();
+    const commits: Commit[] = [];
+    await this.streamRecords(
+      [
+        'log',
+        `--max-count=${clamp(limit, 1, 100)}`,
+        `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
+        'HEAD',
+        '--',
+        ...safeFiles
+      ],
+      (record) => commits.push(...this.parseLog(`${record}${RECORD_SEP}`, refs)),
+      opts
+    );
+    return commits;
+  }
+
+  private getCachedTotal(cacheKey: string): number | null {
+    const cached = this.countCache.get(cacheKey);
+    if (!cached || cached.expiresAt <= Date.now()) return null;
+    return cached.total;
+  }
+
+  private async getTotalCount(
+    cacheKey: string,
+    filterArgs: string[],
+    revision: string
+  ): Promise<number> {
     const now = Date.now();
     const cached = this.countCache.get(cacheKey);
     if (cached && cached.expiresAt > now) return cached.total;
@@ -203,7 +268,9 @@ export class GitService {
       const out = await this.git(['rev-list', '--count', ...revArgs]);
       total = parseInt(out.trim(), 10) || 0;
     } catch {
-      const fallback = await this.git(['log', '--oneline', revision, ...filterArgs]).catch(() => '');
+      const fallback = await this.git(['log', '--oneline', revision, ...filterArgs]).catch(
+        () => ''
+      );
       total = fallback ? fallback.split('\n').filter(Boolean).length : 0;
     }
 
@@ -279,58 +346,137 @@ export class GitService {
     return commits[0];
   }
 
-  async getAuthors(): Promise<string[]> {
-    const out = await this.git(['log', '--all', '--pretty=format:%an']);
-    const seen = new Set<string>();
-    for (const line of out.split('\n')) {
-      const v = line.trim();
-      if (v) seen.add(v);
+  async getAuthors(opts: GitStreamOptions = {}): Promise<string[]> {
+    const now = Date.now();
+    if (this.authorsCache && this.authorsCache.expiresAt > now) {
+      return this.authorsCache.authors;
     }
-    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+    const seen = new Set<string>();
+    const decoder = new StringDecoder('utf8');
+    let pending = '';
+    await this.streamRaw(
+      ['log', '--all', '--no-merges', '--pretty=format:%an'],
+      (chunk) => {
+        pending += decoder.write(chunk);
+        let idx: number;
+        while ((idx = pending.indexOf('\n')) >= 0) {
+          const v = pending.slice(0, idx).trim();
+          pending = pending.slice(idx + 1);
+          if (v) seen.add(v);
+        }
+      },
+      opts
+    );
+    pending += decoder.end();
+    const tail = pending.trim();
+    if (tail) seen.add(tail);
+    const authors = Array.from(seen).sort((a, b) => a.localeCompare(b));
+    this.authorsCache = { authors, expiresAt: now + AUTHORS_CACHE_TTL_MS };
+    return authors;
   }
 
-  async getDiff(hash: string): Promise<DiffFile[]> {
+  async getDiff(hash: string, opts: GitStreamOptions = {}): Promise<DiffFile[]> {
     if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
 
-    const parentsOut = await this.git(['log', '-1', '--pretty=format:%P', hash]);
+    const parentsOut = await this.git(['log', '-1', '--pretty=format:%P', hash], opts);
     const parents = parentsOut.trim().split(/\s+/).filter(Boolean);
 
     let raw: string;
     if (parents.length === 0) {
-      raw = await this.git(['diff-tree', '--root', '-p', '-M', '--no-color', hash]);
+      raw = await this.git(['diff-tree', '--root', '-p', '-M', '--no-color', hash], {
+        ...opts,
+        maxBuffer: 64 * 1024 * 1024
+      });
     } else {
-      raw = await this.git(['diff', '-M', '--no-color', `${hash}^1`, hash]);
+      raw = await this.git(['diff', '-M', '--no-color', `${hash}^1`, hash], {
+        ...opts,
+        maxBuffer: 64 * 1024 * 1024
+      });
     }
 
     return parseUnifiedDiff(raw);
   }
 
-  async getRangeDiff(from: string, to: string): Promise<DiffFile[]> {
+  async getRangeDiff(from: string, to: string, opts: GitStreamOptions = {}): Promise<DiffFile[]> {
     if (!isPlausibleHash(from) || !isPlausibleHash(to)) {
       throw new Error('Invalid commit hash');
     }
     const raw = await this.git(['diff', '-M', '--no-color', from, to], {
+      ...opts,
       maxBuffer: 64 * 1024 * 1024
     });
     return parseUnifiedDiff(raw);
   }
 
   /** Resolve any ref (branch/tag/HEAD) to its commit at or before `atIso`. */
-  async revAt(ref: string, atIso: string): Promise<string | null> {
+  async revAt(ref: string, atIso: string, opts: GitStreamOptions = {}): Promise<string | null> {
     if (!isSafeRef(ref)) throw new Error('Invalid ref');
     if (!isIsoLikeDate(atIso)) throw new Error('Invalid date');
     try {
-      const out = await this.git([
-        'rev-list',
-        '-1',
-        `--before=${atIso}`,
-        ref
-      ]);
+      const out = await this.git(['rev-list', '-1', `--before=${atIso}`, ref], opts);
       const hash = out.trim();
       return hash || null;
     } catch {
       return null;
     }
+  }
+
+  async refsAt(
+    atIso: string,
+    opts: GitStreamOptions = {}
+  ): Promise<{
+    head: string | null;
+    branches: Record<string, string>;
+    tags: Record<string, string>;
+  }> {
+    if (!isIsoLikeDate(atIso)) throw new Error('Invalid date');
+    const cutoff = new Date(atIso).getTime();
+    const out = await this.git(
+      [
+        'for-each-ref',
+        '--format=%(refname)%00%(refname:short)%00%(objectname)%00%(*objectname)%00%(committerdate:iso-strict)%00%(*committerdate:iso-strict)%00%(creatordate:iso-strict)',
+        'refs/heads',
+        'refs/tags',
+        'refs/remotes'
+      ],
+      { ...opts, maxBuffer: 16 * 1024 * 1024 }
+    );
+    const refs: Array<{ full: string; short: string; hash: string; tipTime: number }> = [];
+    for (const line of out.split('\n')) {
+      if (!line) continue;
+      const [full, short, objectHash, peeledHash, commitDate, peeledCommitDate, createDate] =
+        line.split('\0');
+      const hash = peeledHash || objectHash;
+      const tipTime = new Date(commitDate || peeledCommitDate || createDate || '').getTime();
+      if (!full || !short || !hash) continue;
+      refs.push({ full, short, hash, tipTime });
+    }
+    const branches: Record<string, string> = {};
+    const tags: Record<string, string> = {};
+    let cursor = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(8, refs.length) }, async () => {
+        while (cursor < refs.length) {
+          if (opts.signal?.aborted) throw new Error('refsAt aborted');
+          const ref = refs[cursor++];
+          const fastHash = Number.isFinite(ref.tipTime) && ref.tipTime <= cutoff ? ref.hash : null;
+          // Slow path (per-ref `git rev-list -1 --before=`) is only paid for
+          // local refs. Remote-tracking refs are usually mirrors of pushes,
+          // so rewinding them per-ref on every slider tick was the dominant
+          // cost on repos with hundreds of remotes; we accept dropping them
+          // from the snapshot when their tip is newer than the cutoff.
+          const isRemote = ref.full.startsWith('refs/remotes/');
+          const hash =
+            fastHash ??
+            (isRemote ? null : await this.revAt(ref.full, atIso, opts).catch(() => null));
+          if (!hash) continue;
+          if (ref.full.startsWith('refs/tags/')) tags[ref.short] = hash;
+          else branches[ref.short] = hash;
+        }
+      })
+    );
+    const head = await this.revAt('HEAD', atIso, opts).catch(() => null);
+    return { head, branches, tags };
   }
 
   /** Origin URL of the first remote (typically `origin`). */
@@ -347,13 +493,7 @@ export class GitService {
     contributors: string[];
   }> {
     if (filePath.includes('\0')) throw new Error('Invalid path');
-    const out = await this.git([
-      'log',
-      '--follow',
-      '--pretty=format:%aI%x1f%an',
-      '--',
-      filePath
-    ]);
+    const out = await this.git(['log', '--follow', '--pretty=format:%aI%x1f%an', '--', filePath]);
     const dates: string[] = [];
     const authors = new Set<string>();
     for (const line of out.split('\n')) {
@@ -374,10 +514,14 @@ export class GitService {
   }
 
   /** Read the contents of a file at a specific commit. */
-  async getFileAtCommit(hash: string, filePath: string): Promise<string> {
+  async getFileAtCommit(
+    hash: string,
+    filePath: string,
+    opts: GitStreamOptions = {}
+  ): Promise<string> {
     if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
     if (filePath.includes('\0')) throw new Error('Invalid path');
-    return this.git(['show', `${hash}:${filePath}`], { maxBuffer: 16 * 1024 * 1024 });
+    return this.git(['show', `${hash}:${filePath}`], { ...opts, maxBuffer: 1024 * 1024 });
   }
 
   /** Pass-through git runner for trusted callers (e.g., SqliteIndex builder). */
@@ -451,9 +595,11 @@ export class GitService {
    * Format: each commit is prefixed by a record separator + commit hash;
    * file lines follow as `additions\tdeletions\tpath`.
    */
-  async getNumstat(options: GitOptions = {}, maxCommits = 2000, opts: GitStreamOptions = {}): Promise<
-    Map<string, Array<{ file: string; additions: number; deletions: number }>>
-  > {
+  async getNumstat(
+    options: GitOptions = {},
+    maxCommits = 2000,
+    opts: GitStreamOptions = {}
+  ): Promise<Map<string, Array<{ file: string; additions: number; deletions: number }>>> {
     const filterArgs = this.buildFilterArgs(options);
     const revision = this.revisionArg(options);
     const cap = clamp(maxCommits, 1, 50_000);
@@ -468,10 +614,14 @@ export class GitService {
     ];
 
     const result = new Map<string, Array<{ file: string; additions: number; deletions: number }>>();
-    await this.streamRecords(args, (record) => {
-      const parsed = parseNumstatRecord(record);
-      if (parsed) result.set(parsed.hash, parsed.files);
-    }, opts);
+    await this.streamRecords(
+      args,
+      (record) => {
+        const parsed = parseNumstatRecord(record);
+        if (parsed) result.set(parsed.hash, parsed.files);
+      },
+      opts
+    );
     return result;
   }
 
@@ -508,12 +658,7 @@ export class GitService {
     };
 
     const streamPromise = this.streamRecords(
-      [
-        'log',
-        `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
-        revision,
-        ...filterArgs
-      ],
+      ['log', `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`, revision, ...filterArgs],
       (record) => {
         const commits = this.parseLog(`${record}${RECORD_SEP}`, refs);
         queue.push(...commits);
@@ -556,15 +701,19 @@ export class GitService {
   ): Promise<void> {
     const decoder = new StringDecoder('utf8');
     let pending = '';
-    await this.streamRaw(args, (chunk) => {
-      pending += decoder.write(chunk);
-      let idx: number;
-      while ((idx = pending.indexOf(RECORD_SEP)) >= 0) {
-        const record = pending.slice(0, idx);
-        pending = pending.slice(idx + 1);
-        if (record.trim()) onRecord(record);
-      }
-    }, opts);
+    await this.streamRaw(
+      args,
+      (chunk) => {
+        pending += decoder.write(chunk);
+        let idx: number;
+        while ((idx = pending.indexOf(RECORD_SEP)) >= 0) {
+          const record = pending.slice(0, idx);
+          pending = pending.slice(idx + 1);
+          if (record.trim()) onRecord(record);
+        }
+      },
+      opts
+    );
     pending += decoder.end();
     if (pending.trim()) onRecord(pending);
   }
@@ -577,7 +726,10 @@ export class GitService {
 
   async getTags(): Promise<string[]> {
     const out = await this.git(['tag', '--list']);
-    return out.split('\n').map((s) => s.trim()).filter(Boolean);
+    return out
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
 
   async getBranches(): Promise<string[]> {
@@ -587,14 +739,18 @@ export class GitService {
       'refs/heads',
       'refs/remotes'
     ]);
-    return out.split('\n').map((s) => s.trim()).filter(Boolean);
+    return out
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
 
-  private async git(args: string[], opts: { maxBuffer?: number } = {}): Promise<string> {
+  private async git(args: string[], opts: GitExecOptions = {}): Promise<string> {
     try {
       const { stdout } = await execFileAsync('git', args, {
         cwd: this.repoPath,
         maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
+        signal: opts.signal,
         env: {
           ...process.env,
           GIT_PAGER: 'cat',

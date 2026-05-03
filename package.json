@@ -1,6 +1,6 @@
 {
   "name": "git-history-ui",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "Local-first Git history UI with natural-language search, PR grouping, time travel, blame, and optional AI.",
   "main": "dist/cli.js",
   "types": "dist/backend/server.d.ts",

@@ -40,6 +40,16 @@ export interface GroupingOptions {
 const MERGE_PR_RE = /^Merge pull request #(\d+) from (\S+)/;
 const SQUASH_PR_RE = /\(#(\d+)\)\s*$/;
 const CONVENTIONAL_RE = /^(\w+)(?:\(([^)]+)\))?(!?):\s*(.+)$/;
+const PR_CACHE_TTL_MS = 10 * 60_000;
+const PR_CONCURRENCY = 4;
+
+interface PrCacheEntry {
+  pr: PrInfo | null;
+  etag?: string;
+  expiresAt: number;
+}
+
+const prCache = new Map<string, PrCacheEntry>();
 
 /**
  * Group commits by PR or feature using pure heuristics. Optionally enrich
@@ -75,12 +85,14 @@ export async function buildCommitGroups(
     const memberHashes = [c.hash, ...chain.map((x) => x.hash)];
     for (const h of memberHashes) groupedHashes.add(h);
     const title = stripMerge(c.body) || stripMerge(c.subject) || `PR #${prNumber}`;
-    groups.push(buildGroup(memberHashes, byHash, {
-      id: `pr-${prNumber}`,
-      title,
-      prNumber,
-      source: 'merge'
-    }));
+    groups.push(
+      buildGroup(memberHashes, byHash, {
+        id: `pr-${prNumber}`,
+        title,
+        prNumber,
+        source: 'merge'
+      })
+    );
   }
 
   // Pass 2: squash-merge commits with trailing (#N).
@@ -90,12 +102,14 @@ export async function buildCommitGroups(
     if (!m) continue;
     const prNumber = parseInt(m[1], 10);
     groupedHashes.add(c.hash);
-    groups.push(buildGroup([c.hash], byHash, {
-      id: `pr-${prNumber}`,
-      title: c.subject.replace(SQUASH_PR_RE, '').trim(),
-      prNumber,
-      source: 'squash'
-    }));
+    groups.push(
+      buildGroup([c.hash], byHash, {
+        id: `pr-${prNumber}`,
+        title: c.subject.replace(SQUASH_PR_RE, '').trim(),
+        prNumber,
+        source: 'squash'
+      })
+    );
   }
 
   // Pass 3: conventional commits — group by type+scope.
@@ -123,23 +137,27 @@ export async function buildCommitGroups(
       continue;
     }
     const meta = conventionalMeta.get(key)!;
-    groups.push(buildGroup(hashes, byHash, {
-      id: `conv-${key}`,
-      title: `${meta.type}${meta.scope ? `(${meta.scope})` : ''}: ${hashes.length} commits`,
-      source: 'conventional',
-      type: meta.type,
-      scope: meta.scope
-    }));
+    groups.push(
+      buildGroup(hashes, byHash, {
+        id: `conv-${key}`,
+        title: `${meta.type}${meta.scope ? `(${meta.scope})` : ''}: ${hashes.length} commits`,
+        source: 'conventional',
+        type: meta.type,
+        scope: meta.scope
+      })
+    );
   }
 
   // Pass 4: any remaining commits become standalone "groups" of one.
   for (const c of commits) {
     if (groupedHashes.has(c.hash)) continue;
-    groups.push(buildGroup([c.hash], byHash, {
-      id: `c-${c.shortHash}`,
-      title: c.subject,
-      source: 'standalone'
-    }));
+    groups.push(
+      buildGroup([c.hash], byHash, {
+        id: `c-${c.shortHash}`,
+        title: c.subject,
+        source: 'standalone'
+      })
+    );
   }
 
   // Sort by lastDate desc.
@@ -183,7 +201,8 @@ function stripMerge(text: string): string {
 function buildGroup(
   hashes: string[],
   byHash: Map<string, Commit>,
-  meta: Pick<CommitGroup, 'id' | 'title' | 'source'> & Partial<Pick<CommitGroup, 'prNumber' | 'scope' | 'type'>>
+  meta: Pick<CommitGroup, 'id' | 'title' | 'source'> &
+    Partial<Pick<CommitGroup, 'prNumber' | 'scope' | 'type'>>
 ): CommitGroup {
   const cs = hashes.map((h) => byHash.get(h)).filter((c): c is Commit => !!c);
   const dates = cs.map((c) => c.date).sort();
@@ -214,19 +233,29 @@ async function enrichWithPrInfo(
   slug: { owner: string; repo: string },
   token: string
 ): Promise<void> {
-  const cache = new Map<number, PrInfo | null>();
   const fetchOne = async (n: number): Promise<PrInfo | null> => {
-    if (cache.has(n)) return cache.get(n) ?? null;
+    const key = `${slug.owner}/${slug.repo}#${n}`;
+    const cached = prCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.pr;
     try {
-      const resp = await fetch(`https://api.github.com/repos/${slug.owner}/${slug.repo}/pulls/${n}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'git-history-ui'
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'git-history-ui'
+      };
+      if (cached?.etag) headers['If-None-Match'] = cached.etag;
+      const resp = await fetch(
+        `https://api.github.com/repos/${slug.owner}/${slug.repo}/pulls/${n}`,
+        {
+          headers
         }
-      });
+      );
+      if (resp.status === 304 && cached) {
+        cached.expiresAt = Date.now() + PR_CACHE_TTL_MS;
+        return cached.pr;
+      }
       if (!resp.ok) {
-        cache.set(n, null);
+        prCache.set(key, { pr: null, etag: cached?.etag, expiresAt: Date.now() + PR_CACHE_TTL_MS });
         return null;
       }
       const j = (await resp.json()) as any;
@@ -238,23 +267,34 @@ async function enrichWithPrInfo(
         labels: (j.labels ?? []).map((l: { name?: string }) => l.name ?? '').filter(Boolean),
         state: j.merged_at ? 'merged' : (j.state as PrInfo['state'])
       };
-      cache.set(n, pr);
+      prCache.set(key, {
+        pr,
+        etag: resp.headers?.get?.('etag') ?? cached?.etag ?? undefined,
+        expiresAt: Date.now() + PR_CACHE_TTL_MS
+      });
       return pr;
     } catch {
-      cache.set(n, null);
+      prCache.set(key, {
+        pr: cached?.pr ?? null,
+        etag: cached?.etag,
+        expiresAt: Date.now() + 60_000
+      });
       return null;
     }
   };
 
+  const queue = groups.filter((g) => typeof g.prNumber === 'number');
+  let cursor = 0;
   await Promise.all(
-    groups
-      .filter((g) => typeof g.prNumber === 'number')
-      .map(async (g) => {
+    Array.from({ length: Math.min(PR_CONCURRENCY, queue.length) }, async () => {
+      while (cursor < queue.length) {
+        const g = queue[cursor++];
         const info = await fetchOne(g.prNumber!);
         if (info) {
           g.pr = info;
           if (g.title === `PR #${g.prNumber}`) g.title = info.title;
         }
-      })
+      }
+    })
   );
 }
