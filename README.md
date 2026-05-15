@@ -50,11 +50,10 @@ Done.
 
 ## 👀 Preview
 
-![Git History UI screenshot](./docs/screenshot.png)
+![Git History UI demo](./docs/images/demo.gif)
 
-> A demo GIF showing NL search, the timeline slider, and grouped view is on
-> the way. In the meantime, `npx git-history-ui@latest` is the fastest way
-> to see it for yourself — it opens in your browser in under a second.
+> `npx git-history-ui@latest` is the fastest way to see it for yourself —
+> it opens in your browser in under a second.
 
 ## 🤔 Why this exists
 
