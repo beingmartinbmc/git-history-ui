@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.3] - 2026-05-15
+
+### Changed
+
+- Replaced the 26 MB `demo.gif` with a 586 KB `demo.mp4` (H.264) embedded
+  via an HTML5 `<video>` tag in the README.
+- Restricted the published npm tarball to markdown files under `docs/` so
+  binary assets never ship with the package again.
+
 ## [5.0.2] - 2026-05-15
 
 ### Changed
