@@ -41,16 +41,11 @@ npx git-history-ui@latest
 
 ## ⚡ 10-second workflow
 
-1. Run `npx git-history-ui` inside any git repo
-2. Search: *"login bug last month"*
-3. Jump to the commit
-4. Inspect the diff and what it impacted
-
-Done.
-
-## 👀 Preview
-
-![Git History UI demo](./docs/images/demo.gif)
+<p align="center">
+  <video src="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/demo.mp4" controls muted playsinline width="900">
+    <a href="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/demo.mp4">▶ Watch the demo</a>
+  </video>
+</p>
 
 > `npx git-history-ui@latest` is the fastest way to see it for yourself —
 > it opens in your browser in under a second.
