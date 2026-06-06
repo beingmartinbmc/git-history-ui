@@ -398,7 +398,7 @@ export class WrappedComponent {
     this.busy.set(true);
     this.status.set(null);
     try {
-      const blob = await this.renderer.toBlob(s, this.repoName());
+      const blob = await this.renderer.toBlob(s, this.repoName(), this.cardOptions());
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -419,7 +419,7 @@ export class WrappedComponent {
     this.busy.set(true);
     this.status.set(null);
     try {
-      const blob = await this.renderer.toBlob(s, this.repoName());
+      const blob = await this.renderer.toBlob(s, this.repoName(), this.cardOptions());
       const file = new File([blob], this.fileName(), { type: 'image/png' });
       if (navigator.canShare?.({ files: [file] })) {
         await navigator.share({
