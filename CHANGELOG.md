@@ -6,6 +6,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-06-06
+
 ### Added
 
 - **Git Wrapped** — a Spotify-Wrapped-style year-in-review computed entirely
