@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { WrappedStats } from '../../models/git.models';
+import { GitService } from '../../services/git.service';
 import { InsightsService } from '../../services/insights.service';
 import { WrappedCardRenderer } from '../../services/wrapped-card-renderer';
 
@@ -26,12 +27,10 @@ import { WrappedCardRenderer } from '../../services/wrapped-card-renderer';
           </label>
           <label class="field">
             <span>Author</span>
-            <input
-              type="text"
-              placeholder="all contributors"
-              [ngModel]="author()"
-              (ngModelChange)="setAuthor($event)"
-            />
+            <select [ngModel]="author()" (ngModelChange)="setAuthor($event)">
+              <option value="">All contributors</option>
+              <option *ngFor="let a of authors()" [value]="a">{{ a }}</option>
+            </select>
           </label>
         </div>
       </header>
@@ -252,6 +251,7 @@ import { WrappedCardRenderer } from '../../services/wrapped-card-renderer';
 export class WrappedComponent {
   private insightsApi = inject(InsightsService);
   private renderer = inject(WrappedCardRenderer);
+  private git = inject(GitService);
 
   readonly stats = signal<WrappedStats | null>(null);
   readonly loading = signal<boolean>(false);
@@ -259,6 +259,7 @@ export class WrappedComponent {
   readonly busy = signal<boolean>(false);
   readonly status = signal<string | null>(null);
   readonly previewUrl = signal<string | null>(null);
+  readonly authors = signal<string[]>([]);
 
   readonly year = signal<number>(new Date().getFullYear());
   readonly author = signal<string>('');
@@ -270,9 +271,11 @@ export class WrappedComponent {
     return out;
   });
 
-  private debounce: ReturnType<typeof setTimeout> | null = null;
-
   constructor() {
+    this.git.getAuthors().subscribe({
+      next: (a) => this.authors.set(a),
+      error: () => this.authors.set([]),
+    });
     this.load();
   }
 
@@ -286,9 +289,8 @@ export class WrappedComponent {
   }
 
   setAuthor(a: string): void {
-    this.author.set(a);
-    if (this.debounce) clearTimeout(this.debounce);
-    this.debounce = setTimeout(() => this.load(), 400);
+    this.author.set(a ?? '');
+    this.load();
   }
 
   private repoName(): string {
