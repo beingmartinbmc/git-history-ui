@@ -87,6 +87,42 @@ describe('WrappedComponent', () => {
     expect(component.author()).toBe('Ada');
   });
 
+  it('re-renders the preview with the chosen template and palette (no refetch)', () => {
+    fixture.detectChanges();
+    flushWrapped();
+    fixture.detectChanges();
+    renderer.toDataUrl.calls.reset();
+
+    component.setTemplate('minimal');
+    component.setPalette('sunset');
+
+    expect(component.template()).toBe('minimal');
+    expect(component.paletteId()).toBe('sunset');
+    // Selecting a style must not re-hit the API…
+    http.expectNone(() => true);
+    // …but must re-render the card with the new options.
+    const lastArgs = renderer.toDataUrl.calls.mostRecent().args;
+    expect(lastArgs[2]).toEqual({ template: 'minimal', paletteId: 'sunset' });
+  });
+
+  it('passes the selected template and palette through to the exported blob', async () => {
+    fixture.detectChanges();
+    flushWrapped();
+    fixture.detectChanges();
+
+    component.setTemplate('bold');
+    component.setPalette('forest');
+
+    spyOn(HTMLAnchorElement.prototype, 'click');
+    spyOn(URL, 'createObjectURL').and.returnValue('blob:fake');
+    spyOn(URL, 'revokeObjectURL');
+
+    await component.download();
+
+    const blobArgs = renderer.toBlob.calls.mostRecent().args;
+    expect(blobArgs[2]).toEqual({ template: 'bold', paletteId: 'forest' });
+  });
+
   it('surfaces a friendly error when the request fails', () => {
     fixture.detectChanges();
     const year = new Date().getFullYear();
