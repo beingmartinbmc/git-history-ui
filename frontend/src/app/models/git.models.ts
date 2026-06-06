@@ -208,3 +208,47 @@ export interface CommitAnnotations {
   hash: string;
   comments: AnnotationComment[];
 }
+
+export interface WrappedContributor {
+  author: string;
+  email: string;
+  commits: number;
+  additions: number;
+  deletions: number;
+}
+
+export interface WrappedFile {
+  file: string;
+  commits: number;
+  churn: number;
+}
+
+export interface WrappedSuperlatives {
+  biggestCommit: {
+    hash: string;
+    shortHash: string;
+    subject: string;
+    author: string;
+    churn: number;
+  } | null;
+  busiestDay: { date: string; commits: number } | null;
+  busiestHour: { hour: number; commits: number } | null;
+  longestStreakDays: number;
+}
+
+export interface WrappedStats {
+  label: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  totalCommits: number;
+  totalAuthors: number;
+  totalAdditions: number;
+  totalDeletions: number;
+  totalFilesTouched: number;
+  nightOwlPercent: number;
+  weekendWarriorPercent: number;
+  topContributors: WrappedContributor[];
+  topFiles: WrappedFile[];
+  topWords: Array<{ word: string; count: number }>;
+  superlatives: WrappedSuperlatives;
+}
