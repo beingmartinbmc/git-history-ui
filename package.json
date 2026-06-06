@@ -126,6 +126,9 @@
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
+  "overrides": {
+    "qs": "^6.15.2"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/beingmartinbmc/git-history-ui.git"
