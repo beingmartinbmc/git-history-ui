@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Git Wrapped** — a Spotify-Wrapped-style year-in-review computed entirely
+  from local history. New `GET /api/wrapped` endpoint (params: `year`,
+  `since`, `until`, `branch`, `author`, `maxCommits`) and a
+  `git-history-ui wrapped [--year] [--author] [--json]` CLI subcommand that
+  prints a shareable terminal card. Reports commit/author/line/file totals,
+  top contributors, top files, top commit-message words, night-owl and
+  weekend-warrior percentages, biggest commit, busiest day/hour, and longest
+  commit streak. Local-first: no commit content leaves the machine.
+
 ## [5.0.3] - 2026-05-15
 
 ### Changed
