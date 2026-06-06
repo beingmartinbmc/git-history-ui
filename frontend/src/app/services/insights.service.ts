@@ -1,7 +1,13 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { BreakageAnalysis, CommitImpact, FileStats, InsightsBundle } from '../models/git.models';
+import {
+  BreakageAnalysis,
+  CommitImpact,
+  FileStats,
+  InsightsBundle,
+  WrappedStats,
+} from '../models/git.models';
 import { ObservableCache, TTL } from './observable-cache';
 
 @Injectable({ providedIn: 'root' })
@@ -66,6 +72,20 @@ export class InsightsService {
           {},
         ),
       TTL.IMMUTABLE,
+    );
+  }
+
+  wrapped(
+    opts: { year?: number; since?: string; until?: string; author?: string } = {},
+  ): Observable<WrappedStats> {
+    let params = new HttpParams();
+    for (const [k, v] of Object.entries(opts)) {
+      if (v !== undefined && v !== null && v !== '') params = params.set(k, String(v));
+    }
+    return this.cache.get(
+      `wrapped:${params.toString()}`,
+      () => this.http.get<WrappedStats>(`${this.base}/wrapped`, { params }),
+      TTL.VOLATILE,
     );
   }
 
