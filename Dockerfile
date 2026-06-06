@@ -8,7 +8,10 @@ WORKDIR /app
 RUN apk add --no-cache git python3 make g++
 
 # Backend deps (with dev for tsc)
+# scripts/ is copied first because package.json's postinstall runs
+# scripts/check-native.js during `npm ci`.
 COPY package.json package-lock.json* ./
+COPY scripts ./scripts
 RUN npm ci
 
 # Frontend deps (with dev for ng build)
