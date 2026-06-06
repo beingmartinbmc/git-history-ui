@@ -14,6 +14,7 @@ import { getDefaultLlmService, type LlmConfig, type LlmService } from './llm';
 import { getCommitImpact } from './impact';
 import { getFileBreakageAnalysis } from './breakage';
 import { computeInsights } from './insights';
+import { computeWrapped } from './wrapped';
 import { AnnotationsStore } from './annotations';
 import { SqliteIndex } from './cache/sqliteIndex';
 
@@ -386,6 +387,24 @@ export async function startServer(
         signal
       });
       res.json(bundle);
+    })
+  );
+
+  app.get(
+    '/api/wrapped',
+    wrap(async (req, res) => {
+      const signal = requestAbortSignal(req);
+      const yearParam = numberParam(req.query.year, 0);
+      const wrapped = await computeWrapped(gitService, {
+        year: yearParam > 0 ? yearParam : undefined,
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
+        branch: stringParam(req.query.branch),
+        author: stringParam(req.query.author),
+        maxCommits: numberParam(req.query.maxCommits, 5000),
+        signal
+      });
+      res.json(wrapped);
     })
   );
 

@@ -210,7 +210,23 @@ Options:
 
 Commands:
   presets <action> [name]  manage saved CLI presets
+  wrapped [options]        print a "Git Wrapped" year-in-review for the repo
 ```
+
+### Git Wrapped
+
+Generate a shareable year-in-review for any repo, straight from the terminal:
+
+```bash
+npx git-history-ui wrapped                 # current year
+npx git-history-ui wrapped --year 2025     # a specific year
+npx git-history-ui wrapped --author alice  # one contributor
+npx git-history-ui wrapped --json          # raw JSON for scripting
+```
+
+The same data powers the in-browser **Insights → Wrapped** card, which you can
+export as an image to share on social media. Everything is computed locally —
+no commit content leaves your machine.
 
 ### Optional: bring your own AI key
 
