@@ -8,9 +8,9 @@ import { join } from 'path';
 import { startServer } from './backend/server';
 import { PresetsStore, type PresetFilters } from './backend/presets';
 
-const pkg = JSON.parse(
-  readFileSync(join(__dirname, '..', 'package.json'), 'utf8')
-) as { version: string };
+const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')) as {
+  version: string;
+};
 
 const program = new Command();
 
@@ -75,6 +75,34 @@ program
     process.exit(1);
   });
 
+program
+  .command('wrapped')
+  .description('print a "Git Wrapped" year-in-review for the current repo')
+  .option('-y, --year <year>', 'calendar year to summarize (defaults to current year)')
+  .option('--cwd <path>', 'path to the git repository (defaults to cwd)')
+  .option('--author <name>', 'limit the recap to a single author')
+  .option('--json', 'output raw JSON instead of the formatted card')
+  .action(async (cmdOpts: { year?: string; cwd?: string; author?: string; json?: boolean }) => {
+    try {
+      const { GitService } = await import('./backend/gitService');
+      const { computeWrapped } = await import('./backend/wrapped');
+      const git = new GitService(cmdOpts.cwd ?? process.cwd());
+      const year = cmdOpts.year ? parseInt(cmdOpts.year, 10) : undefined;
+      const stats = await computeWrapped(git, {
+        year: Number.isFinite(year as number) ? year : undefined,
+        author: cmdOpts.author
+      });
+      if (cmdOpts.json) {
+        console.log(JSON.stringify(stats, null, 2));
+        return;
+      }
+      printWrapped(stats);
+    } catch (err) {
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+      process.exit(1);
+    }
+  });
+
 // `main()` runs from the root `.action()` when no subcommand is given,
 // or the `presets` handler runs for that subcommand. Either way, parseAsync
 // drives the right path.
@@ -101,7 +129,11 @@ async function main(): Promise<void> {
   if (options.preset) {
     const loaded = await presetsStore.get(options.preset);
     if (!loaded) {
-      console.error(chalk.red(`No such preset: ${options.preset}. Run 'git-history-ui presets list' to see saved ones.`));
+      console.error(
+        chalk.red(
+          `No such preset: ${options.preset}. Run 'git-history-ui presets list' to see saved ones.`
+        )
+      );
       process.exit(1);
     }
     if (!options.file && loaded.file) options.file = loaded.file;
@@ -143,7 +175,9 @@ async function main(): Promise<void> {
       since: options.since,
       author: options.author,
       cwd: options.cwd,
-      llm: options.llm ? { provider: options.llm as 'heuristic' | 'anthropic' | 'openai' } : undefined
+      llm: options.llm
+        ? { provider: options.llm as 'heuristic' | 'anthropic' | 'openai' }
+        : undefined
     });
     close = result.close;
     console.log(chalk.green(`Listening on ${result.url}`));
@@ -179,4 +213,53 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
+/** Render a Git Wrapped recap as a shareable terminal card. */
+function printWrapped(s: import('./backend/wrapped').WrappedStats): void {
+  const line = chalk.gray('─'.repeat(46));
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  console.log('');
+  console.log(chalk.bold.magenta(`  🎁  Git Wrapped — ${s.label}`));
+  console.log(line);
+  console.log(`  ${chalk.cyan('Commits')}        ${chalk.bold(fmt(s.totalCommits))}`);
+  console.log(`  ${chalk.cyan('Authors')}        ${chalk.bold(fmt(s.totalAuthors))}`);
+  console.log(`  ${chalk.cyan('Files touched')}  ${chalk.bold(fmt(s.totalFilesTouched))}`);
+  console.log(
+    `  ${chalk.cyan('Lines')}          ${chalk.green('+' + fmt(s.totalAdditions))} ${chalk.red('-' + fmt(s.totalDeletions))}`
+  );
+  console.log(line);
+  console.log(`  🌙 Night owl       ${chalk.bold(s.nightOwlPercent + '%')} of commits after 22:00`);
+  console.log(`  🛋️  Weekend warrior ${chalk.bold(s.weekendWarriorPercent + '%')} on weekends`);
+  if (s.superlatives.longestStreakDays > 1) {
+    console.log(`  🔥 Longest streak  ${chalk.bold(s.superlatives.longestStreakDays + ' days')}`);
+  }
+  if (s.superlatives.busiestDay) {
+    console.log(
+      `  📅 Busiest day     ${chalk.bold(s.superlatives.busiestDay.date)} (${s.superlatives.busiestDay.commits} commits)`
+    );
+  }
+  if (s.superlatives.busiestHour) {
+    const h = String(s.superlatives.busiestHour.hour).padStart(2, '0');
+    console.log(`  ⏰ Peak hour       ${chalk.bold(h + ':00 UTC')}`);
+  }
+  if (s.topContributors.length > 0) {
+    console.log(line);
+    console.log(chalk.bold('  Top contributors'));
+    s.topContributors.slice(0, 5).forEach((c, i) => {
+      console.log(`   ${i + 1}. ${chalk.bold(c.author)} — ${fmt(c.commits)} commits`);
+    });
+  }
+  if (s.topWords.length > 0) {
+    console.log(line);
+    console.log(
+      `  ${chalk.bold('Top words')}  ${s.topWords
+        .slice(0, 8)
+        .map((w) => w.word)
+        .join(', ')}`
+    );
+  }
+  console.log(line);
+  console.log(chalk.gray('  Share it: npx git-history-ui  →  Insights → Wrapped → Export card'));
+  console.log('');
 }
