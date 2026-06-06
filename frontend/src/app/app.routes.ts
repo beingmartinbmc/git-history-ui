@@ -5,22 +5,29 @@ export const routes: Routes = [
     path: '',
     loadComponent: () =>
       import('./components/home-shell/home-shell.component').then((m) => m.HomeShellComponent),
-    pathMatch: 'full'
+    pathMatch: 'full',
   },
   {
     path: 'timeline',
     loadComponent: () =>
-      import('./components/timeline/timeline.component').then((m) => m.TimelineComponent)
+      import('./components/timeline/timeline.component').then((m) => m.TimelineComponent),
   },
   {
     path: 'file/:path',
     loadComponent: () =>
-      import('./components/file-history/file-history.component').then((m) => m.FileHistoryComponent)
+      import('./components/file-history/file-history.component').then(
+        (m) => m.FileHistoryComponent,
+      ),
   },
   {
     path: 'insights',
     loadComponent: () =>
-      import('./components/insights/insights.component').then((m) => m.InsightsComponent)
+      import('./components/insights/insights.component').then((m) => m.InsightsComponent),
   },
-  { path: '**', redirectTo: '' }
+  {
+    path: 'wrapped',
+    loadComponent: () =>
+      import('./components/wrapped/wrapped.component').then((m) => m.WrappedComponent),
+  },
+  { path: '**', redirectTo: '' },
 ];
