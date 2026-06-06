@@ -21,6 +21,7 @@
   "files": [
     "dist/**/*",
     "build/**/*",
+    "scripts/check-native.js",
     "docs/**/*.md",
     "public/**/*",
     "README.md",
@@ -52,6 +53,7 @@
     "clean": "rm -rf dist build coverage frontend/dist frontend/.angular",
     "copy-frontend": "rm -rf build/frontend && mkdir -p build/frontend && cp -r frontend/dist/frontend/browser/* build/frontend/",
     "prepare": "husky",
+    "postinstall": "node scripts/check-native.js",
     "prepublishOnly": "npm run clean && npm run lint && npm run typecheck && npm test -- --ci && npm run audit:prod && npm run build"
   },
   "keywords": [
