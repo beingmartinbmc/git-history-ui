@@ -4,7 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { WrappedStats } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 import { InsightsService } from '../../services/insights.service';
-import { WrappedCardRenderer } from '../../services/wrapped-card-renderer';
+import {
+  WRAPPED_PALETTES,
+  WRAPPED_TEMPLATES,
+  WrappedCardRenderer,
+  WrappedTemplateId,
+} from '../../services/wrapped-card-renderer';
 
 @Component({
   selector: 'app-wrapped',
@@ -59,6 +64,39 @@ import { WrappedCardRenderer } from '../../services/wrapped-card-renderer';
             </div>
             <div class="mini">
               <strong>{{ s.nightOwlPercent }}%</strong><span>night owl</span>
+            </div>
+          </div>
+
+          <div class="customize">
+            <p class="section-label">Template</p>
+            <div class="template-grid">
+              <button
+                *ngFor="let t of templates"
+                type="button"
+                class="template-chip"
+                [class.selected]="template() === t.id"
+                (click)="setTemplate(t.id)"
+                [attr.aria-pressed]="template() === t.id"
+                [title]="t.description"
+              >
+                <span class="t-name">{{ t.name }}</span>
+                <span class="t-desc">{{ t.description }}</span>
+              </button>
+            </div>
+
+            <p class="section-label">Color scheme</p>
+            <div class="palette-grid">
+              <button
+                *ngFor="let p of palettes"
+                type="button"
+                class="swatch"
+                [class.selected]="paletteId() === p.id"
+                (click)="setPalette(p.id)"
+                [attr.aria-pressed]="paletteId() === p.id"
+                [attr.aria-label]="p.name"
+                [title]="p.name"
+                [style.background]="swatchGradient(p.stops)"
+              ></button>
             </div>
           </div>
 
@@ -263,6 +301,11 @@ export class WrappedComponent {
 
   readonly year = signal<number>(new Date().getFullYear());
   readonly author = signal<string>('');
+  readonly template = signal<WrappedTemplateId>('classic');
+  readonly paletteId = signal<string>(WRAPPED_PALETTES[0].id);
+
+  readonly templates = WRAPPED_TEMPLATES;
+  readonly palettes = WRAPPED_PALETTES;
 
   readonly years = computed(() => {
     const current = new Date().getFullYear();
@@ -293,6 +336,26 @@ export class WrappedComponent {
     this.load();
   }
 
+  setTemplate(id: WrappedTemplateId): void {
+    this.template.set(id);
+    const s = this.stats();
+    if (s) this.refreshPreview(s);
+  }
+
+  setPalette(id: string): void {
+    this.paletteId.set(id);
+    const s = this.stats();
+    if (s) this.refreshPreview(s);
+  }
+
+  swatchGradient(stops: readonly [string, string, string]): string {
+    return `linear-gradient(135deg, ${stops[0]}, ${stops[1]} 50%, ${stops[2]})`;
+  }
+
+  private cardOptions(): { template: WrappedTemplateId; paletteId: string } {
+    return { template: this.template(), paletteId: this.paletteId() };
+  }
+
   private repoName(): string {
     const title = (document.title || '').replace(/\s*[-–|·].*$/, '').trim();
     return title && title.toLowerCase() !== 'git history' ? title : 'this repository';
@@ -319,14 +382,14 @@ export class WrappedComponent {
 
   private refreshPreview(s: WrappedStats): void {
     try {
-      this.previewUrl.set(this.renderer.toDataUrl(s, this.repoName()));
+      this.previewUrl.set(this.renderer.toDataUrl(s, this.repoName(), this.cardOptions()));
     } catch {
       this.previewUrl.set(null);
     }
   }
 
   private fileName(): string {
-    return `git-wrapped-${this.year()}.png`;
+    return `git-wrapped-${this.year()}-${this.template()}-${this.paletteId()}.png`;
   }
 
   async download(): Promise<void> {
@@ -383,7 +446,7 @@ export class WrappedComponent {
     this.busy.set(true);
     this.status.set(null);
     try {
-      const blob = await this.renderer.toBlob(s, this.repoName());
+      const blob = await this.renderer.toBlob(s, this.repoName(), this.cardOptions());
       if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         this.status.set('Copied to clipboard.');
