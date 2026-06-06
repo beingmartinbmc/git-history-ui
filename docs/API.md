@@ -36,6 +36,7 @@ By default, endpoints are available at `http://localhost:3000/api`.
 | `GET` | `/api/blame` | `file` | Porcelain blame parsed into line metadata. |
 | `GET` | `/api/impact/:hash` | — | Files touched, affected modules, dependency ripple, and related commits. |
 | `GET` | `/api/insights` | `since`, `until`, `branch`, `maxCommits` | Contributors, hotspots, churn over time, and risky-file score. |
+| `GET` | `/api/wrapped` | `year`, `since`, `until`, `branch`, `author`, `maxCommits` | "Git Wrapped" year-in-review: totals, top contributors/files/words, night-owl & weekend percentages, biggest commit, busiest day/hour, longest streak. |
 
 ## Optional AI endpoints
 
