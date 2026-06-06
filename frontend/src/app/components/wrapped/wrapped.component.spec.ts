@@ -1,7 +1,9 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { of } from 'rxjs';
 import { WrappedStats } from '../../models/git.models';
+import { GitService } from '../../services/git.service';
 import { WrappedCardRenderer } from '../../services/wrapped-card-renderer';
 import { WrappedComponent } from './wrapped.component';
 
@@ -10,11 +12,15 @@ describe('WrappedComponent', () => {
   let component: WrappedComponent;
   let http: HttpTestingController;
   let renderer: { toDataUrl: jasmine.Spy; toBlob: jasmine.Spy };
+  let git: { getAuthors: jasmine.Spy };
 
   beforeEach(async () => {
     renderer = {
       toDataUrl: jasmine.createSpy('toDataUrl').and.returnValue('data:image/png;base64,AAAA'),
       toBlob: jasmine.createSpy('toBlob').and.resolveTo(new Blob(['x'], { type: 'image/png' })),
+    };
+    git = {
+      getAuthors: jasmine.createSpy('getAuthors').and.returnValue(of(['Ada', 'Linus'])),
     };
 
     await TestBed.configureTestingModule({
@@ -23,6 +29,7 @@ describe('WrappedComponent', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: WrappedCardRenderer, useValue: renderer },
+        { provide: GitService, useValue: git },
       ],
     }).compileComponents();
 
@@ -50,6 +57,34 @@ describe('WrappedComponent', () => {
     expect(renderer.toDataUrl).toHaveBeenCalled();
     const img: HTMLImageElement | null = fixture.nativeElement.querySelector('.preview-wrap img');
     expect(img?.getAttribute('src')).toContain('data:image/png');
+  });
+
+  it('populates the author dropdown from the git service', () => {
+    fixture.detectChanges();
+    flushWrapped();
+    fixture.detectChanges();
+
+    expect(git.getAuthors).toHaveBeenCalled();
+    expect(component.authors()).toEqual(['Ada', 'Linus']);
+    const options: HTMLOptionElement[] = Array.from(
+      fixture.nativeElement.querySelectorAll('.controls select'),
+    )
+      .flatMap((sel) => Array.from((sel as HTMLSelectElement).options))
+      .filter((o) => o.value === 'Ada' || o.value === 'Linus');
+    expect(options.length).toBe(2);
+  });
+
+  it('reloads stats with an author filter when the dropdown changes', () => {
+    fixture.detectChanges();
+    flushWrapped();
+    fixture.detectChanges();
+
+    component.setAuthor('Ada');
+    const year = new Date().getFullYear();
+    const req = http.expectOne(`/api/wrapped?year=${year}&author=Ada`);
+    req.flush(statsFixture());
+
+    expect(component.author()).toBe('Ada');
   });
 
   it('surfaces a friendly error when the request fails', () => {
