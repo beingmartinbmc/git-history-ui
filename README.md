@@ -1,9 +1,15 @@
 # Git History UI
 
+<p align="center">
+  <a href="https://github.com/beingmartinbmc/git-history-ui">
+    <img src="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/banner.png" alt="Git History UI — Git intelligence in your browser" width="900">
+  </a>
+</p>
+
 [![npm version](https://badge.fury.io/js/git-history-ui.svg)](https://badge.fury.io/js/git-history-ui)
 [![npm downloads](https://img.shields.io/npm/dm/git-history-ui.svg)](https://www.npmjs.com/package/git-history-ui)
 [![npm license](https://img.shields.io/npm/l/git-history-ui.svg)](https://www.npmjs.com/package/git-history-ui)
-[![npm bundle size](https://img.shields.io/bundlephobia/min/git-history-ui.svg)](https://bundlephobia.com/result?p=git-history-ui)
+[![install size](https://packagephobia.com/badge?p=git-history-ui)](https://packagephobia.com/result?p=git-history-ui)
 [![GitHub stars](https://img.shields.io/github/stars/beingmartinbmc/git-history-ui.svg)](https://github.com/beingmartinbmc/git-history-ui)
 
 **Git Intelligence in your browser.**
@@ -49,6 +55,12 @@ npx git-history-ui@latest
 
 > `npx git-history-ui@latest` is the fastest way to see it for yourself —
 > it opens in your browser in under a second.
+
+## 🖼️ Preview
+
+<p align="center">
+  <img src="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/preview.png" alt="Git History UI — commit graph, commit list, and side-by-side diff viewer" width="900">
+</p>
 
 ## 🤔 Why this exists
 

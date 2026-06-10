@@ -567,7 +567,6 @@ export async function startServer(
       return;
     }
     const message = err instanceof Error ? err.message : 'Unknown error';
-    // eslint-disable-next-line no-console
     console.error('API error:', message);
     res.status(500).json({ error: message });
   });
@@ -631,10 +630,8 @@ if (require.main === module) {
   const host = process.env.HOST || DEFAULT_HOST;
   startServer(port, host)
     .then(({ url, close }) => {
-      // eslint-disable-next-line no-console
       console.log(`git-history-ui listening on ${url}`);
       const shutdown = (sig: string) => {
-        // eslint-disable-next-line no-console
         console.log(`\nReceived ${sig}, shutting down...`);
         close().then(() => process.exit(0));
         setTimeout(() => process.exit(1), 10_000).unref();
@@ -643,7 +640,6 @@ if (require.main === module) {
       process.on('SIGTERM', () => shutdown('SIGTERM'));
     })
     .catch((err) => {
-      // eslint-disable-next-line no-console
       console.error('Failed to start server:', err);
       process.exit(1);
     });
