@@ -6,6 +6,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.1.1] - 2026-06-10
+
+### Changed
+
+- Migrated ESLint 8 → 9 to the new flat config (`eslint.config.js`), removing
+  the deprecated `eslint@8` and `@humanwhocodes/*` dev dependencies.
+- Upgraded the Jest test stack to v30 (`jest`, `@types/jest`, `ts-jest`),
+  retiring the deprecated `rimraf@3` transitive dependency.
+
+### Documentation
+
+- Added a project banner and a sanitized app preview image to the README.
+- Replaced the non-functional Bundlephobia size badge (Bundlephobia cannot
+  analyze a CLI/server package with native dependencies) with a Packagephobia
+  install-size badge.
+
 ## [5.1.0] - 2026-06-06
 
 ### Added
