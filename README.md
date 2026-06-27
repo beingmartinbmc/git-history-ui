@@ -17,6 +17,7 @@
 Turn your git history into something you can actually understand:
 
 - 🔎 Ask questions in plain English
+- ⚡ Search big histories through a local Git intelligence index
 - 📦 See commits grouped by feature or PR
 - 🕰️ Travel through time and diff any state
 - 🎯 Understand impact, not just changes
@@ -77,11 +78,14 @@ account.
 
 ## ✨ What makes it different
 
-Four things you don't get from `git log`, GitHub, or most desktop clients:
+Five things you don't get from `git log`, GitHub, or most desktop clients:
 
 - **Natural-language search.** "login bug last month", "payments by alice".
   A heuristic intent parser handles dates, authors, and keyword synonyms;
   optional Anthropic / OpenAI key adds semantic re-ranking on top.
+- **Local Git intelligence index.** Build, rebuild, monitor, or cancel a
+  SQLite/FTS-backed commit index from the UI so large repositories stay fast
+  without sending history to a server.
 - **PR & feature grouping.** Switch the commit list to *Grouped* mode to
   see commits clustered by pull request or Conventional Commits scope.
 - **Time-travel timeline.** A horizontal slider that scrubs the repo state
@@ -114,6 +118,7 @@ directory — no installs, no config, no account.
 | --- | --- | --- | --- | --- |
 | Works with local and unpushed commits | Yes | No | Yes | Usually |
 | Natural-language history search | Yes | No | No | Rare |
+| Local indexed search for large repos | Yes | No | No | Partial |
 | PR / feature grouping for local history | Yes | Partial | No | Partial |
 | Time-travel snapshot diffing | Yes | No | No | Rare |
 | Commit impact analysis | Yes | No | No | Rare |
@@ -157,10 +162,15 @@ directory — no installs, no config, no account.
 
 ### Performance & scale
 
-- **SQLite indexer (optional).** Install `better-sqlite3` and large
-  repos get an FTS5-backed index in `~/.git-history-ui/`. Silent
-  fallback to git-shelling when the native module isn't available.
-  Endpoints: `GET /api/index/stats`, `POST /api/index/build`.
+- **Git intelligence index (optional).** When `better-sqlite3` is
+  available, commit metadata is indexed locally with SQLite/FTS5 in
+  `~/.git-history-ui/`. Search automatically uses the index when it can and
+  falls back to git-shelling when the native module is unavailable.
+- **Index status controls.** A floating status card shows availability,
+  indexed commit count, build progress, and last build time, with one-click
+  Build, Rebuild, and Cancel actions. API endpoints: `GET /api/index/status`,
+  `GET /api/index/stats`, `POST /api/index/build`,
+  `POST /api/index/rebuild`, `POST /api/index/cancel`.
 - **Streaming commits.** `GET /api/commits/stream` (SSE) pushes commits
   as `git log` produces them.
 - **Virtualized commit graph.** Only the visible viewport is painted;
@@ -216,6 +226,8 @@ Options:
   --cwd <path>             path to the git repository (defaults to cwd)
   --llm <provider>         LLM provider: heuristic, anthropic, openai (default:
                            auto)
+  --token <token>          protect API routes with a bearer/header token for
+                           non-local clients
   --preset <name>          load filters from a saved preset
   --save-preset <name>     save the current flags as a preset for next time
   -h, --help               display help for command
@@ -239,6 +251,33 @@ npx git-history-ui wrapped --json          # raw JSON for scripting
 The same data powers the in-browser **Insights → Wrapped** card, which you can
 export as an image to share on social media. Everything is computed locally —
 no commit content leaves your machine.
+
+### Optional: build the local Git intelligence index
+
+For large repositories, `git-history-ui` can build a local SQLite/FTS index of
+commit metadata. The index lives under `~/.git-history-ui/`, is keyed per
+repository, and is used automatically for unfiltered text search when it is
+available. Nothing is uploaded.
+
+Most users can just use the floating **Search index** card in the app:
+
+- **Build** creates the index in the background.
+- **Rebuild** forces a fresh scan after major history changes.
+- **Cancel** stops an in-progress build.
+
+You can also drive it through the local API:
+
+```bash
+curl http://localhost:3000/api/index/status
+curl -X POST http://localhost:3000/api/index/build
+curl -X POST 'http://localhost:3000/api/index/build?wait=true'
+curl -X POST http://localhost:3000/api/index/rebuild
+curl -X POST http://localhost:3000/api/index/cancel
+```
+
+If the optional native `better-sqlite3` dependency cannot load for your Node
+version or platform, the app keeps working and falls back to the slower git
+path. Try `npm rebuild better-sqlite3` if you want to repair indexed search.
 
 ### Optional: bring your own AI key
 
@@ -309,6 +348,20 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local
 setup, commit conventions, test commands, and PR expectations.
 
 ## 🔐 Security
+
+`git-history-ui` is designed for local use and binds to `localhost` by default.
+The server now also applies API rate limiting, local-origin CORS checks,
+security headers, stricter request validation, safer repository path handling,
+and request-abort handling around expensive git operations.
+
+If you intentionally bind beyond localhost, protect API routes with a token:
+
+```bash
+npx git-history-ui@latest --host 0.0.0.0 --token "$GIT_HISTORY_UI_TOKEN"
+# API clients may send either:
+#   Authorization: Bearer <token>
+#   X-Git-History-Token: <token>
+```
 
 Please do not open public issues for security vulnerabilities. See
 [SECURITY.md](SECURITY.md) for the responsible disclosure process.
