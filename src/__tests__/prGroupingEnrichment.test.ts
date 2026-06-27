@@ -20,10 +20,15 @@ function commit(over: Partial<Commit>): Commit {
 }
 
 const ok = (json: unknown): Response =>
-  ({ ok: true, status: 200, json: async () => json, text: async () => JSON.stringify(json) } as unknown as Response);
+  ({
+    ok: true,
+    status: 200,
+    json: async () => json,
+    text: async () => JSON.stringify(json)
+  }) as unknown as Response;
 
 const fail = (status: number): Response =>
-  ({ ok: false, status, json: async () => ({}), text: async () => '' } as unknown as Response);
+  ({ ok: false, status, json: async () => ({}), text: async () => '' }) as unknown as Response;
 
 function fakeGit(commits: Commit[], remote: string | null = null): GitService {
   return {
@@ -70,7 +75,13 @@ describe('buildCommitGroups — GitHub enrichment', () => {
         title: 'Add OAuth login flow',
         user: { login: 'alice' },
         html_url: 'https://github.com/acme/widgets/pull/42',
-        labels: [{ name: 'feature' }, { name: 'auth' }, { /* nameless */ }],
+        labels: [
+          { name: 'feature' },
+          { name: 'auth' },
+          {
+            /* nameless */
+          }
+        ],
         merged_at: '2026-05-01T00:00:00Z',
         state: 'closed'
       });
@@ -85,9 +96,7 @@ describe('buildCommitGroups — GitHub enrichment', () => {
   });
 
   it('survives 401/network failures by leaving the group unenriched', async () => {
-    const commits = [
-      commit({ hash: 's1', subject: 'feat: payments cleanup (#7)' })
-    ];
+    const commits = [commit({ hash: 's1', subject: 'feat: payments cleanup (#7)' })];
     const svc = fakeGit(commits, 'https://github.com/acme/widgets');
     global.fetch = jest.fn(async () => fail(401)) as unknown as typeof fetch;
 
