@@ -9,7 +9,7 @@ describe('GroupsService', () => {
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      providers: [provideHttpClient(), provideHttpClientTesting()]
+      providers: [provideHttpClient(), provideHttpClientTesting()],
     });
     service = TestBed.inject(GroupsService);
     http = TestBed.inject(HttpTestingController);
@@ -20,14 +20,16 @@ describe('GroupsService', () => {
   });
 
   it('sends branch filters with grouped commit requests', () => {
-    service.list({
-      since: '2026-01-01',
-      until: '2026-02-01',
-      author: 'Ada',
-      branch: 'feature/ui-refresh'
-    }).subscribe((groups) => {
-      expect(groups).toEqual([]);
-    });
+    service
+      .list({
+        since: '2026-01-01',
+        until: '2026-02-01',
+        author: 'Ada',
+        branch: 'feature/ui-refresh',
+      })
+      .subscribe((groups) => {
+        expect(groups).toEqual([]);
+      });
 
     const req = http.expectOne((request) => request.url === '/api/groups');
     expect(req.request.params.get('since')).toBe('2026-01-01');

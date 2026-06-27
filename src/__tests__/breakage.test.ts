@@ -73,10 +73,12 @@ describe('getFileBreakageAnalysis', () => {
     expect(r.summary).toMatch(/no commit history/i);
   });
 
-  it('rejects empty or null-byte file paths', async () => {
+  it('rejects unsafe file paths', async () => {
     const svc = fakeGit({ commits: [] });
     await expect(getFileBreakageAnalysis(svc, '')).rejects.toThrow(/Invalid path/);
     await expect(getFileBreakageAnalysis(svc, 'foo\0bar')).rejects.toThrow(/Invalid path/);
+    await expect(getFileBreakageAnalysis(svc, '../secret')).rejects.toThrow(/Invalid path/);
+    await expect(getFileBreakageAnalysis(svc, '/etc/passwd')).rejects.toThrow(/Invalid path/);
   });
 
   it('flags fix commits and scores the immediate predecessor as the prime suspect', async () => {

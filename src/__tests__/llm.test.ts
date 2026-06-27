@@ -16,7 +16,9 @@ describe('heuristic LLM provider', () => {
 
     it('expands synonyms', () => {
       const exp = expandKeywords('login bug');
-      expect(exp).toEqual(expect.arrayContaining(['login', 'auth', 'authentication', 'bug', 'fix']));
+      expect(exp).toEqual(
+        expect.arrayContaining(['login', 'auth', 'authentication', 'bug', 'fix'])
+      );
     });
   });
 

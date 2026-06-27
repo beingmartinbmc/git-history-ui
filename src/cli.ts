@@ -26,6 +26,7 @@ program
   .option('--no-open', 'do not automatically open browser')
   .option('--cwd <path>', 'path to the git repository (defaults to cwd)')
   .option('--llm <provider>', 'LLM provider: heuristic, anthropic, openai (default: auto)')
+  .option('--token <token>', 'protect API routes with a bearer/header token for non-local clients')
   .option('--preset <name>', 'load filters from a saved preset')
   .option('--save-preset <name>', 'save the current flags as a preset for next time')
   // Default action: when the user runs `git-history-ui` with no subcommand,
@@ -117,6 +118,7 @@ interface MainOptions {
   open: boolean;
   cwd?: string;
   llm?: string;
+  token?: string;
   preset?: string;
   savePreset?: string;
 }
@@ -177,7 +179,8 @@ async function main(): Promise<void> {
       cwd: options.cwd,
       llm: options.llm
         ? { provider: options.llm as 'heuristic' | 'anthropic' | 'openai' }
-        : undefined
+        : undefined,
+      authToken: options.token
     });
     close = result.close;
     console.log(chalk.green(`Listening on ${result.url}`));
