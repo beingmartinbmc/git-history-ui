@@ -115,6 +115,11 @@ describe('GitService', () => {
     expect(result.commits.map((c) => c.hash)).toEqual([thirdHash]);
   });
 
+  it('uses extended regexp for alternation searches', async () => {
+    const result = await svc.getCommits({ search: 'extend|initial' });
+    expect(result.commits.map((c) => c.hash)).toEqual([thirdHash, firstHash]);
+  });
+
   it('attaches branches and tags from the ref index', async () => {
     const result = await svc.getCommits({ pageSize: 10 });
     const second = result.commits.find((c) => c.hash === secondHash)!;

@@ -48,7 +48,7 @@
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.{ts,js}\" \"frontend/src/**/*.{ts,html,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js}\" \"frontend/src/**/*.{ts,html,css}\"",
-    "audit:prod": "npm audit --omit=dev --audit-level=moderate",
+    "audit:prod": "npm audit --omit=dev --audit-level=moderate --registry=https://registry.npmjs.org",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist build coverage frontend/dist frontend/.angular",
     "copy-frontend": "rm -rf build/frontend && mkdir -p build/frontend && cp -r frontend/dist/frontend/browser/* build/frontend/",

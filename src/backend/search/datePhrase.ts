@@ -23,7 +23,9 @@ export function parseDatePhrase(query: string, now: Date = new Date()): DateRang
   const text = ' ' + query.toLowerCase() + ' ';
 
   // "in the last N days/weeks/months/years" or "past N weeks" or "last 3 months"
-  const recent = text.match(/\b(?:in\s+the\s+)?(?:last|past)\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)\b/);
+  const recent = text.match(
+    /\b(?:in\s+the\s+)?(?:last|past)\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)\b/
+  );
   if (recent) {
     const n = parseInt(recent[1], 10);
     const unit = recent[2];
@@ -65,11 +67,13 @@ export function parseDatePhrase(query: string, now: Date = new Date()): DateRang
   }
 
   // "since <weekday>"
-  const sinceWd = text.match(/\bsince\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
+  const sinceWd = text.match(
+    /\bsince\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/
+  );
   if (sinceWd) {
     const target = WEEKDAYS.indexOf(sinceWd[1]);
     const cur = now.getUTCDay();
-    const diff = ((cur - target + 7) % 7) || 7;
+    const diff = (cur - target + 7) % 7 || 7;
     return { since: iso(subtract(now, diff, 'day')), matchedPhrase: sinceWd[0] };
   }
 
@@ -102,7 +106,11 @@ function iso(d: Date): string {
 }
 
 function normalizeDate(s: string): string {
-  return s.replace(/\//g, '-').split('-').map((p, i) => (i === 0 ? p : p.padStart(2, '0'))).join('-');
+  return s
+    .replace(/\//g, '-')
+    .split('-')
+    .map((p, i) => (i === 0 ? p : p.padStart(2, '0')))
+    .join('-');
 }
 
 /** Strip date-related phrases from the query so they don't pollute keyword search. */

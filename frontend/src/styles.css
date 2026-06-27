@@ -69,10 +69,12 @@
   --radius-lg: 14px;
   --radius-xl: 18px;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Mono',
-    'Liberation Mono', 'Courier New', monospace;
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Mono', 'Liberation Mono', 'Courier New',
+    monospace;
 }
 
 /* ------- Design tokens (dark) ------- */
@@ -202,13 +204,21 @@ button {
   font-size: 13px;
   font-weight: 500;
   border-radius: calc(var(--radius-sm) + 2px);
-  background:
-    linear-gradient(180deg, color-mix(in oklab, var(--bg-surface) 92%, white 8%), var(--bg-surface-2));
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--bg-surface) 92%, white 8%),
+    var(--bg-surface-2)
+  );
   color: var(--fg-primary);
   border: 1px solid var(--border-soft);
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  transition: background 120ms, border-color 120ms, color 120ms, transform 60ms, box-shadow 120ms;
+  transition:
+    background 120ms,
+    border-color 120ms,
+    color 120ms,
+    transform 60ms,
+    box-shadow 120ms;
 }
 .btn:hover {
   background: var(--bg-hover);
@@ -261,8 +271,11 @@ button {
 }
 
 .panel-card {
-  background:
-    linear-gradient(180deg, color-mix(in oklab, var(--bg-panel) 94%, white 6%), var(--bg-panel));
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--bg-panel) 94%, white 6%),
+    var(--bg-panel)
+  );
   border: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
@@ -292,10 +305,19 @@ button {
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--fg-muted) 14%, transparent), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--fg-muted) 14%, transparent),
+    transparent
+  );
   animation: shimmer 1.4s infinite;
 }
-@keyframes shimmer { to { transform: translateX(100%); } }
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
 
 .kbd {
   display: inline-flex;
