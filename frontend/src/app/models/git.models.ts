@@ -53,6 +53,25 @@ export interface PaginatedCommits {
   hasPrevious: boolean;
 }
 
+export type IndexPhase = 'idle' | 'checking' | 'indexing' | 'done' | 'cancelled' | 'error';
+
+export interface IndexProgress {
+  phase: IndexPhase;
+  indexed: number;
+  startedAt: string | null;
+  updatedAt: string | null;
+  message?: string;
+}
+
+export interface IndexStatus {
+  available: boolean;
+  total: number;
+  builtAt?: string;
+  refsSig?: string;
+  running: boolean;
+  progress: IndexProgress;
+}
+
 export interface NlInterpretation {
   keywords: string[];
   expandedKeywords: string[];

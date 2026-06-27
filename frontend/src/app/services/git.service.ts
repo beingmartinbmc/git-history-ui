@@ -1,7 +1,14 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { BlameLine, Commit, DiffFile, GitOptions, PaginatedCommits } from '../models/git.models';
+import {
+  BlameLine,
+  Commit,
+  DiffFile,
+  GitOptions,
+  IndexStatus,
+  PaginatedCommits,
+} from '../models/git.models';
 import { ObservableCache, TTL } from './observable-cache';
 
 @Injectable({ providedIn: 'root' })
@@ -159,6 +166,23 @@ export class GitService {
       () => this.http.get<string[]>(`${this.base}/authors`),
       TTL.VOLATILE,
     );
+  }
+
+  getIndexStatus(): Observable<IndexStatus> {
+    return this.http.get<IndexStatus>(`${this.base}/index/status`);
+  }
+
+  buildIndex(wait = false): Observable<IndexStatus> {
+    const params = wait ? new HttpParams().set('wait', 'true') : undefined;
+    return this.http.post<IndexStatus>(`${this.base}/index/build`, {}, { params });
+  }
+
+  rebuildIndex(): Observable<IndexStatus> {
+    return this.http.post<IndexStatus>(`${this.base}/index/rebuild`, {});
+  }
+
+  cancelIndexBuild(): Observable<IndexStatus> {
+    return this.http.post<IndexStatus>(`${this.base}/index/cancel`, {});
   }
 }
 

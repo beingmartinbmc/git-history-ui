@@ -6,7 +6,7 @@ import {
   computed,
   effect,
   inject,
-  signal
+  signal,
 } from '@angular/core';
 import { BlameLine } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
@@ -40,64 +40,84 @@ interface BlameRow extends BlameLine {
       </div>
     </div>
   `,
-  styles: [`
-    :host { display: block; font-family: var(--font-mono, monospace); font-size: 12.5px; }
-    .empty { padding: 1.5rem; color: var(--fg-muted); text-align: center; }
-    .empty.error { color: var(--danger); }
-    .blame {
-      display: block;
-      background: var(--bg-surface);
-      border: 1px solid var(--border-soft);
-      border-radius: var(--radius-md);
-      overflow: auto;
-      max-height: 70vh;
-    }
-    .row {
-      display: grid;
-      grid-template-columns: 220px 50px 1fr;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0 0.5rem;
-      border-bottom: 1px solid color-mix(in oklab, var(--border-soft) 50%, transparent);
-    }
-    .row:hover { background: var(--bg-elevated); }
-    .meta {
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-      font-size: 11px;
-      color: var(--fg-muted);
-      padding: 0.15rem 0;
-      border-right: 1px solid var(--border-soft);
-    }
-    .meta.invisible > * { visibility: hidden; }
-    .hash {
-      color: var(--accent);
-      cursor: pointer;
-      text-decoration: none;
-    }
-    .hash:hover { text-decoration: underline; }
-    .author {
-      max-width: 100px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .date { color: var(--fg-subtle); }
-    .line-no {
-      color: var(--fg-subtle);
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-      font-size: 11px;
-    }
-    .code {
-      margin: 0;
-      padding: 0.15rem 0;
-      white-space: pre;
-      overflow-x: auto;
-      color: var(--fg-primary);
-    }
-  `]
+  styles: [
+    `
+      :host {
+        display: block;
+        font-family: var(--font-mono, monospace);
+        font-size: 12.5px;
+      }
+      .empty {
+        padding: 1.5rem;
+        color: var(--fg-muted);
+        text-align: center;
+      }
+      .empty.error {
+        color: var(--danger);
+      }
+      .blame {
+        display: block;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-md);
+        overflow: auto;
+        max-height: 70vh;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 220px 50px 1fr;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0 0.5rem;
+        border-bottom: 1px solid color-mix(in oklab, var(--border-soft) 50%, transparent);
+      }
+      .row:hover {
+        background: var(--bg-elevated);
+      }
+      .meta {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        font-size: 11px;
+        color: var(--fg-muted);
+        padding: 0.15rem 0;
+        border-right: 1px solid var(--border-soft);
+      }
+      .meta.invisible > * {
+        visibility: hidden;
+      }
+      .hash {
+        color: var(--accent);
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .hash:hover {
+        text-decoration: underline;
+      }
+      .author {
+        max-width: 100px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .date {
+        color: var(--fg-subtle);
+      }
+      .line-no {
+        color: var(--fg-subtle);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-size: 11px;
+      }
+      .code {
+        margin: 0;
+        padding: 0.15rem 0;
+        white-space: pre;
+        overflow-x: auto;
+        color: var(--fg-primary);
+      }
+    `,
+  ],
 })
 export class BlameComponent {
   private gitService = inject(GitService);
@@ -152,7 +172,7 @@ export class BlameComponent {
       error: (err) => {
         this.error.set(err?.error?.error ?? 'Failed to load blame');
         this.loading.set(false);
-      }
+      },
     });
   }
 }

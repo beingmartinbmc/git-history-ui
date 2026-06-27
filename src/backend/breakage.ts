@@ -1,4 +1,4 @@
-import type { GitService } from './gitService';
+import { isSafeRepoPath, type GitService } from './gitService';
 
 /**
  * Breakage Analysis — heuristic, SZZ-lite "what likely broke this file".
@@ -89,7 +89,7 @@ export async function getFileBreakageAnalysis(
   file: string,
   options: { limit?: number; signal?: AbortSignal } = {}
 ): Promise<BreakageAnalysis> {
-  if (!file || file.includes('\0')) throw new Error('Invalid path');
+  if (!isSafeRepoPath(file)) throw new Error('Invalid path');
   const limit = clamp(options.limit ?? COMMITS_LIMIT, 10, 1000);
   const { signal } = options;
   const checkAborted = () => {

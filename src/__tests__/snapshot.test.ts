@@ -22,7 +22,7 @@ describe('getSnapshot', () => {
     const svc = fakeGitService({
       branches: ['main', 'feature'],
       tags: ['v1.0.0'],
-      rev: (ref) => ({ main: 'aaa', feature: 'bbb', 'v1.0.0': 'ccc', HEAD: 'aaa' }[ref] ?? null)
+      rev: (ref) => ({ main: 'aaa', feature: 'bbb', 'v1.0.0': 'ccc', HEAD: 'aaa' })[ref] ?? null
     });
     const snap = await getSnapshot(svc, '2026-01-01');
     expect(snap.at).toBe('2026-01-01');
