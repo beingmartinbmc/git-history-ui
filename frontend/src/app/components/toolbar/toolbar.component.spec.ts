@@ -11,7 +11,7 @@ describe('ToolbarComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [ToolbarComponent],
-      providers: [provideRouter([])]
+      providers: [provideRouter([])],
     }).compileComponents();
 
     fixture = TestBed.createComponent(ToolbarComponent);
@@ -41,7 +41,7 @@ describe('ToolbarComponent', () => {
       since: '2026-01-01',
       until: '2026-02-01',
       file: 'src/app.ts',
-      search: 'modern UI'
+      search: 'modern UI',
     });
 
     fixture.detectChanges();
@@ -62,7 +62,7 @@ describe('ToolbarComponent', () => {
       since: undefined,
       until: undefined,
       file: undefined,
-      search: undefined
+      search: undefined,
     });
     expect(component.activeFilterCount()).toBe(0);
   });

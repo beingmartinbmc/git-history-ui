@@ -27,6 +27,16 @@ const ROOT_DIR = path.join(os.homedir(), '.git-history-ui');
  * doesn't need to import `child_process` directly. (The hot-loop driver
  * is inside `GitService`.)
  */
+export type IndexPhase = 'idle' | 'checking' | 'indexing' | 'done' | 'error' | 'cancelled';
+
+export interface IndexProgress {
+  phase: IndexPhase;
+  indexed: number;
+  startedAt: string | null;
+  updatedAt: string | null;
+  message?: string;
+}
+
 export interface IndexStats {
   available: boolean;
   total: number;
@@ -47,16 +57,30 @@ interface SqliteStatement {
 type SqliteCtor = new (file: string) => SqliteDB;
 
 let _Sqlite: SqliteCtor | null | undefined;
+let _sqliteUnavailableReason = 'better-sqlite3 not installed';
 function loadSqlite(): SqliteCtor | null {
   if (_Sqlite !== undefined) return _Sqlite;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require('better-sqlite3');
-    _Sqlite = (mod?.default ?? mod) as SqliteCtor;
-  } catch {
+    const Ctor = (mod?.default ?? mod) as SqliteCtor;
+    // Requiring better-sqlite3 can succeed even when the native binding was
+    // compiled for a different Node ABI. Probe construction so availability
+    // reflects whether SQLite can actually be opened in this runtime.
+    const probe = new Ctor(':memory:');
+    probe.close();
+    _Sqlite = Ctor;
+    _sqliteUnavailableReason = '';
+  } catch (err) {
     _Sqlite = null;
+    _sqliteUnavailableReason = err instanceof Error ? err.message : 'better-sqlite3 not installed';
   }
   return _Sqlite;
+}
+
+function sqliteUnavailableReason(): string {
+  loadSqlite();
+  return _sqliteUnavailableReason || 'better-sqlite3 unavailable';
 }
 
 export type GitRunner = (args: string[]) => Promise<string>;
@@ -72,6 +96,12 @@ export class SqliteIndex {
   private db: SqliteDB | null = null;
   private buildPromise: Promise<void> | null = null;
   private streamGit: GitStreamRunner | null;
+  private progress: IndexProgress = {
+    phase: 'idle',
+    indexed: 0,
+    startedAt: null,
+    updatedAt: null
+  };
 
   constructor(
     repoCwd: string,
@@ -123,15 +153,16 @@ export class SqliteIndex {
         /* FTS5 unavailable — searches fall back to LIKE. */
       }
       return true;
-    } catch {
+    } catch (err) {
       this.db = null;
+      _sqliteUnavailableReason = err instanceof Error ? err.message : 'failed to open SQLite index';
       return false;
     }
   }
 
   async stats(): Promise<IndexStats> {
     if (!this.open()) {
-      return { available: false, total: 0, builtAt: null, reason: 'better-sqlite3 not installed' };
+      return { available: false, total: 0, builtAt: null, reason: sqliteUnavailableReason() };
     }
     const total = (this.db!.prepare('SELECT COUNT(*) as n FROM commits').get() as { n: number }).n;
     const builtAt =
@@ -141,6 +172,10 @@ export class SqliteIndex {
           | undefined
       )?.v ?? null;
     return { available: true, total, builtAt };
+  }
+
+  getProgress(): IndexProgress {
+    return { ...this.progress };
   }
 
   /** Synchronously build the index from `git log --all`. Idempotent. */
@@ -161,11 +196,15 @@ export class SqliteIndex {
 
   private async doBuild(opts: { signal?: AbortSignal } = {}): Promise<void> {
     if (!this.db) return;
+    this.setProgress('checking', 0, 'checking refs');
     const sig = await this.refSignature();
     const stored = (
       this.db.prepare("SELECT v FROM meta WHERE k='refsSig'").get() as { v: string } | undefined
     )?.v;
-    if (stored === sig) return;
+    if (stored === sig) {
+      this.setProgress('done', await this.rowCount(), 'already up to date');
+      return;
+    }
     const head = await this.currentHead();
     const storedHead =
       (
@@ -182,6 +221,7 @@ export class SqliteIndex {
       `--pretty=format:${SQLITE_LOG_FORMAT}${RECORD_SEP}`
     ];
 
+    let indexed = 0;
     this.db.exec('BEGIN');
     try {
       if (!canIncrement) {
@@ -205,6 +245,11 @@ export class SqliteIndex {
         }
       })();
 
+      this.setProgress(
+        'indexing',
+        indexed,
+        canIncrement ? 'indexing new commits' : 'rebuilding index'
+      );
       const ingest = (record: string) => {
         const trimmed = record.trim();
         if (!trimmed) return;
@@ -213,6 +258,14 @@ export class SqliteIndex {
         const [hash, shortHash, author, email, date, parentsStr, subject, ...rest] = fields;
         const body = rest.join(FIELD_SEP);
         ins.run(hash, shortHash, author, email, date, parentsStr, subject, body);
+        indexed++;
+        if (indexed === 1 || indexed % 250 === 0) {
+          this.setProgress(
+            'indexing',
+            indexed,
+            canIncrement ? 'indexing new commits' : 'rebuilding index'
+          );
+        }
         if (insFts) {
           try {
             insFts.run(hash, subject, body);
@@ -256,8 +309,14 @@ export class SqliteIndex {
         .prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('builtAt', ?)")
         .run(new Date().toISOString());
       this.db.exec('COMMIT');
+      this.setProgress('done', await this.rowCount(), 'index ready');
     } catch (err) {
       this.db.exec('ROLLBACK');
+      if (opts.signal?.aborted || isAbortError(err)) {
+        this.setProgress('cancelled', indexed, 'index build cancelled');
+      } else {
+        this.setProgress('error', indexed, err instanceof Error ? err.message : String(err));
+      }
       throw err;
     }
   }
@@ -306,6 +365,12 @@ export class SqliteIndex {
     }));
   }
 
+  invalidate() {
+    if (!this.open()) return;
+    this.db!.prepare("DELETE FROM meta WHERE k IN ('refsSig', 'indexedHead', 'builtAt')").run();
+    this.setProgress('idle', 0, 'index invalidated');
+  }
+
   close() {
     if (this.db) {
       this.db.close();
@@ -345,4 +410,24 @@ export class SqliteIndex {
       .then(() => true)
       .catch(() => false);
   }
+
+  private async rowCount(): Promise<number> {
+    if (!this.db) return 0;
+    return (this.db.prepare('SELECT COUNT(*) as n FROM commits').get() as { n: number }).n;
+  }
+
+  private setProgress(phase: IndexPhase, indexed: number, message?: string) {
+    const now = new Date().toISOString();
+    this.progress = {
+      phase,
+      indexed,
+      startedAt: this.progress.startedAt && phase !== 'checking' ? this.progress.startedAt : now,
+      updatedAt: now,
+      message
+    };
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'AbortError' || /aborted|abort/i.test(err.message));
 }

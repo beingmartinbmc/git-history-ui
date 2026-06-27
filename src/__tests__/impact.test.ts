@@ -54,11 +54,7 @@ function fakeGit(opts: FakeOpts): GitService {
 describe('getCommitImpact', () => {
   it('returns files, modules and dedup’d related commits', async () => {
     const svc = fakeGit({
-      diff: [
-        { file: 'src/a.ts' },
-        { file: 'src/b.ts' },
-        { file: 'README.md' }
-      ],
+      diff: [{ file: 'src/a.ts' }, { file: 'src/b.ts' }, { file: 'README.md' }],
       files: {
         'src/a.ts': "import {x} from './b';\nimport './b'; // duplicate normalized\n",
         'src/b.ts': 'export const x = 1;\n'
@@ -76,9 +72,7 @@ describe('getCommitImpact', () => {
     const result = await getCommitImpact(svc, 'h');
     expect(result.files).toEqual(['src/a.ts', 'src/b.ts', 'README.md']);
     expect(result.modules).toEqual(expect.arrayContaining(['src', '(root)']));
-    expect(result.dependencyRipple).toEqual([
-      { from: 'src/a.ts', to: 'src/b' }
-    ]);
+    expect(result.dependencyRipple).toEqual([{ from: 'src/a.ts', to: 'src/b' }]);
     expect(result.relatedCommits.map((c) => c.hash)).toEqual(['r2', 'r1']);
   });
 

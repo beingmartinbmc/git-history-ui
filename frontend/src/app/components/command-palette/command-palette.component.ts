@@ -8,7 +8,7 @@ import {
   computed,
   effect,
   inject,
-  signal
+  signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Commit } from '../../models/git.models';
@@ -53,80 +53,89 @@ import { UiStateService } from '../../services/ui-state.service';
       </div>
     </div>
   `,
-  styles: [`
-    .backdrop {
-      position: fixed; inset: 0;
-      background: var(--bg-overlay);
-      backdrop-filter: blur(2px);
-      z-index: 90;
-    }
-    .palette {
-      position: fixed;
-      top: 12vh;
-      left: 50%;
-      transform: translateX(-50%);
-      width: min(640px, calc(100vw - 32px));
-      background: color-mix(in oklab, var(--bg-glass) 96%, transparent);
-      border: 1px solid var(--border-soft);
-      border-radius: var(--radius-xl);
-      box-shadow: var(--shadow-lg), var(--shadow-glow);
-      backdrop-filter: blur(18px) saturate(1.2);
-      z-index: 100;
-      overflow: hidden;
-    }
-    .search {
-      width: 100%;
-      border: 0;
-      outline: 0;
-      padding: 1rem 1.1rem;
-      background: transparent;
-      color: var(--fg-primary);
-      font-size: 14px;
-      border-bottom: 1px solid var(--border-soft);
-    }
-    .results {
-      list-style: none;
-      margin: 0;
-      padding: 0.25rem 0;
-      max-height: 50vh;
-      overflow: auto;
-    }
-    .result {
-      display: grid;
-      grid-template-columns: 70px 1fr auto;
-      align-items: center;
-      gap: 0.6rem;
-      padding: 0.52rem 1rem;
-      cursor: pointer;
-      font-size: 13px;
-    }
-    .result.active {
-      background: color-mix(in oklab, var(--accent) 12%, transparent);
-      box-shadow: inset 3px 0 0 var(--accent);
-    }
-    .result.empty {
-      grid-template-columns: 1fr;
-      color: var(--fg-muted);
-      cursor: default;
-    }
-    .hash { font-family: var(--font-mono); color: var(--fg-muted); }
-    .subj {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      color: var(--fg-primary);
-    }
-    .auth { color: var(--fg-muted); font-size: 11px; }
-    .footer {
-      display: flex;
-      gap: 1rem;
-      padding: 0.4rem 0.75rem;
-      background: color-mix(in oklab, var(--bg-surface-2) 84%, transparent);
-      border-top: 1px solid var(--border-soft);
-      font-size: 11px;
-      color: var(--fg-muted);
-    }
-  `]
+  styles: [
+    `
+      .backdrop {
+        position: fixed;
+        inset: 0;
+        background: var(--bg-overlay);
+        backdrop-filter: blur(2px);
+        z-index: 90;
+      }
+      .palette {
+        position: fixed;
+        top: 12vh;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(640px, calc(100vw - 32px));
+        background: color-mix(in oklab, var(--bg-glass) 96%, transparent);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-lg), var(--shadow-glow);
+        backdrop-filter: blur(18px) saturate(1.2);
+        z-index: 100;
+        overflow: hidden;
+      }
+      .search {
+        width: 100%;
+        border: 0;
+        outline: 0;
+        padding: 1rem 1.1rem;
+        background: transparent;
+        color: var(--fg-primary);
+        font-size: 14px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .results {
+        list-style: none;
+        margin: 0;
+        padding: 0.25rem 0;
+        max-height: 50vh;
+        overflow: auto;
+      }
+      .result {
+        display: grid;
+        grid-template-columns: 70px 1fr auto;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.52rem 1rem;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .result.active {
+        background: color-mix(in oklab, var(--accent) 12%, transparent);
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+      .result.empty {
+        grid-template-columns: 1fr;
+        color: var(--fg-muted);
+        cursor: default;
+      }
+      .hash {
+        font-family: var(--font-mono);
+        color: var(--fg-muted);
+      }
+      .subj {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--fg-primary);
+      }
+      .auth {
+        color: var(--fg-muted);
+        font-size: 11px;
+      }
+      .footer {
+        display: flex;
+        gap: 1rem;
+        padding: 0.4rem 0.75rem;
+        background: color-mix(in oklab, var(--bg-surface-2) 84%, transparent);
+        border-top: 1px solid var(--border-soft);
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+    `,
+  ],
 })
 export class CommandPaletteComponent {
   state = inject(UiStateService);
@@ -141,11 +150,12 @@ export class CommandPaletteComponent {
     const list = this.state.commits();
     if (!q) return list.slice(0, 50);
     return list
-      .filter((c) =>
-        c.hash.toLowerCase().startsWith(q) ||
-        c.shortHash.toLowerCase().startsWith(q) ||
-        c.subject.toLowerCase().includes(q) ||
-        c.author.toLowerCase().includes(q)
+      .filter(
+        (c) =>
+          c.hash.toLowerCase().startsWith(q) ||
+          c.shortHash.toLowerCase().startsWith(q) ||
+          c.subject.toLowerCase().includes(q) ||
+          c.author.toLowerCase().includes(q),
       )
       .slice(0, 50);
   });
@@ -177,9 +187,7 @@ export class CommandPaletteComponent {
   onKey(ev: KeyboardEvent) {
     if (ev.key === 'ArrowDown') {
       ev.preventDefault();
-      this.index.update((i) =>
-        Math.min(this.results().length - 1, i + 1)
-      );
+      this.index.update((i) => Math.min(this.results().length - 1, i + 1));
     } else if (ev.key === 'ArrowUp') {
       ev.preventDefault();
       this.index.update((i) => Math.max(0, i - 1));

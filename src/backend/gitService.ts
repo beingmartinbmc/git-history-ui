@@ -201,7 +201,7 @@ export class GitService {
     // accurate number here.
     const total = hasNext
       ? (this.getCachedTotal(cacheKey) ??
-        (await this.getTotalCount(cacheKey, filterArgs, revision)))
+        (await this.getTotalCount(cacheKey, filterArgs, revision, opts)))
       : skip + commits.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -216,12 +216,24 @@ export class GitService {
     };
   }
 
+  async countCommits(options: GitOptions = {}, opts: GitStreamOptions = {}): Promise<number> {
+    if (!(await this.verifyRepository())) {
+      throw new NotARepositoryError();
+    }
+    const revision = this.revisionArg(options);
+    const filterArgs = this.buildFilterArgs(options);
+    const cacheKey = [revision, ...filterArgs].join(' ');
+    return (
+      this.getCachedTotal(cacheKey) ?? this.getTotalCount(cacheKey, filterArgs, revision, opts)
+    );
+  }
+
   async getCommitsForFiles(
     files: string[],
     limit = 20,
     opts: GitStreamOptions = {}
   ): Promise<Commit[]> {
-    const safeFiles = files.filter((f) => f && !f.includes('\0')).slice(0, 10);
+    const safeFiles = files.filter((f) => f && isSafeRepoPath(f)).slice(0, 10);
     if (safeFiles.length === 0) return [];
     const refs = await this.getRefIndex();
     const commits: Commit[] = [];
@@ -249,7 +261,8 @@ export class GitService {
   private async getTotalCount(
     cacheKey: string,
     filterArgs: string[],
-    revision: string
+    revision: string,
+    opts: GitStreamOptions = {}
   ): Promise<number> {
     const now = Date.now();
     const cached = this.countCache.get(cacheKey);
@@ -265,10 +278,10 @@ export class GitService {
 
     let total = 0;
     try {
-      const out = await this.git(['rev-list', '--count', ...revArgs]);
+      const out = await this.git(['rev-list', '--count', ...revArgs], opts);
       total = parseInt(out.trim(), 10) || 0;
     } catch {
-      const fallback = await this.git(['log', '--oneline', revision, ...filterArgs]).catch(
+      const fallback = await this.git(['log', '--oneline', revision, ...filterArgs], opts).catch(
         () => ''
       );
       total = fallback ? fallback.split('\n').filter(Boolean).length : 0;
@@ -283,8 +296,13 @@ export class GitService {
     if (options.author) args.push(`--author=${options.author}`);
     if (options.since) args.push(`--since=${options.since}`);
     if (options.until) args.push(`--until=${options.until}`);
-    if (options.search) args.push(`--grep=${options.search}`, '--regexp-ignore-case');
-    if (options.file) args.push('--', options.file);
+    if (options.search) {
+      args.push(`--grep=${options.search}`, '--regexp-ignore-case', '--extended-regexp');
+    }
+    if (options.file) {
+      assertSafeRepoPath(options.file);
+      args.push('--', options.file);
+    }
     return args;
   }
 
@@ -492,7 +510,7 @@ export class GitService {
     totalCommits: number;
     contributors: string[];
   }> {
-    if (filePath.includes('\0')) throw new Error('Invalid path');
+    assertSafeRepoPath(filePath);
     const out = await this.git(['log', '--follow', '--pretty=format:%aI%x1f%an', '--', filePath]);
     const dates: string[] = [];
     const authors = new Set<string>();
@@ -520,7 +538,7 @@ export class GitService {
     opts: GitStreamOptions = {}
   ): Promise<string> {
     if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
-    if (filePath.includes('\0')) throw new Error('Invalid path');
+    assertSafeRepoPath(filePath);
     return this.git(['show', `${hash}:${filePath}`], { ...opts, maxBuffer: 1024 * 1024 });
   }
 
@@ -719,7 +737,7 @@ export class GitService {
   }
 
   async getBlame(filePath: string): Promise<BlameLine[]> {
-    if (filePath.includes('\0')) throw new Error('Invalid path');
+    assertSafeRepoPath(filePath);
     const raw = await this.git(['blame', '--porcelain', '--', filePath]);
     return parsePorcelainBlame(raw);
   }
@@ -772,9 +790,24 @@ function isPlausibleHash(hash: string): boolean {
   return typeof hash === 'string' && /^[0-9a-fA-F]{4,40}$/.test(hash);
 }
 
+export function isSafeRepoPath(filePath: string): boolean {
+  if (typeof filePath !== 'string') return false;
+  if (!filePath || filePath.includes('\0') || filePath.startsWith('/')) return false;
+  return !filePath.split(/[\\/]+/).some((part) => part === '..');
+}
+
+function assertSafeRepoPath(filePath: string): void {
+  if (!isSafeRepoPath(filePath)) throw new Error('Invalid path');
+}
+
 function isSafeRef(ref: string): boolean {
-  // Allow alphanumerics, slash, dot, dash, underscore, plus HEAD shorthand chars.
-  return typeof ref === 'string' && /^[A-Za-z0-9_./@^~+-]{1,200}$/.test(ref);
+  if (typeof ref !== 'string' || ref.length === 0 || ref.length > 200) return false;
+  if (ref.startsWith('-') || ref.startsWith('^')) return false;
+  if (ref.includes('..') || ref.includes('@{') || ref.endsWith('/') || ref.endsWith('.'))
+    return false;
+  // Allow ordinary branch/tag/ref names plus HEAD/@ shorthands; reject revision syntax
+  // (`..`, `^`, `~`) and option-like values (`--all`) from user-supplied branch filters.
+  return /^[A-Za-z0-9_./@+-]+$/.test(ref);
 }
 
 function isIsoLikeDate(s: string): boolean {
