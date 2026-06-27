@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
+import { timingSafeEqual } from 'crypto';
 import { createServer, type Server as HttpServer } from 'http';
 import path from 'path';
 import fs from 'fs';
@@ -16,7 +17,7 @@ import { getFileBreakageAnalysis } from './breakage';
 import { computeInsights } from './insights';
 import { computeWrapped } from './wrapped';
 import { AnnotationsStore } from './annotations';
-import { SqliteIndex } from './cache/sqliteIndex';
+import { SqliteIndex, type IndexProgress, type IndexStats } from './cache/sqliteIndex';
 
 export interface ServerOptions {
   port?: number;
@@ -29,6 +30,8 @@ export interface ServerOptions {
   /** Inject a pre-built LLM service (escape hatch for tests). Overrides `llm`. */
   llmService?: LlmService;
   githubToken?: string;
+  /** Optional bearer/header/query token for protecting API routes on shared networks. */
+  authToken?: string;
 }
 
 export interface BootResult {
@@ -50,30 +53,53 @@ export async function startServer(
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
+  const authToken = options.authToken ?? process.env.GIT_HISTORY_UI_TOKEN;
 
   app.use(
     helmet({
-      contentSecurityPolicy: false,
       crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'same-origin' }
+      crossOriginResourcePolicy: { policy: 'same-origin' },
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          'default-src': ["'self'"],
+          'base-uri': ["'self'"],
+          'object-src': ["'none'"],
+          'frame-ancestors': ["'none'"],
+          'script-src': ["'self'", "'unsafe-inline'"],
+          'style-src': ["'self'", "'unsafe-inline'"],
+          'img-src': ["'self'", 'data:'],
+          'connect-src': ["'self'"]
+        }
+      }
+    })
+  );
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && !isAllowedOrigin(origin)) {
+      res.status(403).json({ error: 'CORS not allowed' });
+      return;
+    }
+    next();
+  });
+
+  app.use(
+    cors({
+      origin: (origin, cb) => cb(null, !origin || isAllowedOrigin(origin)),
+      methods: ['GET', 'POST', 'DELETE'],
+      allowedHeaders: ['Content-Type', 'X-Requested-With', 'Authorization', 'X-Git-History-Token']
     })
   );
 
   app.use(
-    cors({
-      origin: (origin, cb) => {
-        if (!origin) return cb(null, true);
-        if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
-          return cb(null, true);
-        }
-        return cb(new Error('CORS not allowed'), false);
-      },
-      methods: ['GET', 'POST', 'DELETE'],
-      allowedHeaders: ['Content-Type', 'X-Requested-With']
+    compression({
+      filter: (req, res) => {
+        if (req.path === '/api/commits/stream') return false;
+        return compression.filter(req, res);
+      }
     })
   );
-
-  app.use(compression());
   app.use(express.json({ limit: '128kb' }));
 
   const apiLimiter = rateLimit({
@@ -83,6 +109,7 @@ export async function startServer(
     legacyHeaders: false
   });
   app.use('/api', apiLimiter);
+  app.use('/api', requireAuth(authToken));
 
   const gitService = new GitService(cwd);
   const llmConfig = options.llm ?? {};
@@ -95,6 +122,7 @@ export async function startServer(
     (args) => gitService.runRaw(args, { maxBuffer: 256 * 1024 * 1024 }),
     (args, onChunk, streamOpts) => gitService.streamRaw(args, onChunk, streamOpts)
   );
+  const indexBuild = createIndexBuildController(sqliteIndex);
 
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
@@ -120,17 +148,38 @@ export async function startServer(
   app.get(
     '/api/index/stats',
     wrap(async (_req, res) => {
-      const stats = await sqliteIndex.stats();
-      res.json(stats);
+      res.json(await indexBuild.status());
+    })
+  );
+
+  app.get(
+    '/api/index/status',
+    wrap(async (_req, res) => {
+      res.json(await indexBuild.status());
     })
   );
 
   app.post(
     '/api/index/build',
     wrap(async (req, res) => {
-      const signal = requestAbortSignal(req);
-      const stats = await sqliteIndex.build({ signal });
-      res.json(stats);
+      const wait = booleanParam(req.query.wait, false);
+      const status = wait ? await indexBuild.buildAndWait() : await indexBuild.start();
+      res.status(status.running && !wait ? 202 : 200).json(status);
+    })
+  );
+
+  app.post(
+    '/api/index/rebuild',
+    wrap(async (_req, res) => {
+      const status = await indexBuild.start(true);
+      res.status(202).json(status);
+    })
+  );
+
+  app.post(
+    '/api/index/cancel',
+    wrap(async (_req, res) => {
+      res.json(await indexBuild.cancel());
     })
   );
 
@@ -142,6 +191,7 @@ export async function startServer(
     res.flushHeaders?.();
 
     const send = (event: string, data: unknown) => {
+      if (cancelled) return;
       res.write(`event: ${event}\n`);
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
@@ -155,44 +205,41 @@ export async function startServer(
 
     (async () => {
       try {
-        const author = stringParam(req.query.author);
-        const since = stringParam(req.query.since);
-        const until = stringParam(req.query.until);
-        const file = stringParam(req.query.file);
-        const search = stringParam(req.query.search ?? req.query.q);
-        const branch = stringParam(req.query.branch);
-        const page = numberParam(req.query.page, 1);
-        const pageSize = numberParam(req.query.pageSize, 100);
-        const result = await gitService.getCommits(
-          {
-            author,
-            since,
-            until,
-            file,
-            search,
-            branch,
-            page,
-            pageSize
-          },
-          { signal: controller.signal }
-        );
+        const options = commitOptionsFromQuery(req.query, 100);
+        const page = Math.max(1, options.page || 1);
+        const pageSize = clampNumber(options.pageSize || 100, 1, 500);
+        const skip = (page - 1) * pageSize;
+        const streamOptions = { ...options, page: undefined, pageSize: undefined };
 
-        let count = 0;
-        for (const commit of result.commits) {
+        let seen = 0;
+        let emitted = 0;
+        let hasNext = false;
+        for await (const commit of gitService.streamCommits(streamOptions, 200, {
+          signal: controller.signal
+        })) {
           if (cancelled) break;
+          if (seen++ < skip) continue;
+          if (emitted >= pageSize) {
+            hasNext = true;
+            break;
+          }
           send('commit', commit);
-          count++;
+          emitted++;
           // Yield to the event loop occasionally so large pages don't block heartbeats.
-          if (count % 50 === 0) await new Promise((r) => setImmediate(r));
+          if (emitted % 50 === 0) await new Promise((r) => setImmediate(r));
         }
+
         if (!cancelled) {
+          const total = hasNext
+            ? await gitService.countCommits(streamOptions, { signal: controller.signal })
+            : skip + emitted;
           send('done', {
-            total: result.total,
-            page: result.page,
-            pageSize: result.pageSize,
-            totalPages: result.totalPages,
-            hasNext: result.hasNext,
-            hasPrevious: result.hasPrevious
+            total,
+            page,
+            pageSize,
+            totalPages: Math.max(1, Math.ceil(total / pageSize)),
+            hasNext,
+            hasPrevious: page > 1
           });
           res.end();
         }
@@ -208,19 +255,7 @@ export async function startServer(
     '/api/commits',
     wrap(async (req, res) => {
       const signal = requestAbortSignal(req);
-      const result = await gitService.getCommits(
-        {
-          file: stringParam(req.query.file),
-          since: stringParam(req.query.since),
-          until: stringParam(req.query.until),
-          author: stringParam(req.query.author),
-          branch: stringParam(req.query.branch),
-          search: stringParam(req.query.search ?? req.query.q),
-          page: numberParam(req.query.page, 1),
-          pageSize: numberParam(req.query.pageSize, 25)
-        },
-        { signal }
-      );
+      const result = await gitService.getCommits(commitOptionsFromQuery(req.query, 25), { signal });
       res.json(result);
     })
   );
@@ -264,7 +299,7 @@ export async function startServer(
         return;
       }
       const page = numberParam(req.query.page, 1);
-      const pageSize = numberParam(req.query.pageSize, 25);
+      const pageSize = clampNumber(numberParam(req.query.pageSize, 25), 1, 500);
       const hasFilters = !!(
         stringParam(req.query.branch) ||
         stringParam(req.query.file) ||
@@ -316,7 +351,7 @@ export async function startServer(
         author: stringParam(req.query.author),
         branch: stringParam(req.query.branch),
         githubToken,
-        maxCommits: numberParam(req.query.maxCommits, 1000)
+        maxCommits: clampNumber(numberParam(req.query.maxCommits, 1000), 1, 5000)
       });
       res.json(groups);
     })
@@ -366,7 +401,7 @@ export async function startServer(
         res.status(400).json({ error: 'file query param is required' });
         return;
       }
-      const limit = numberParam(req.query.limit, 200);
+      const limit = clampNumber(numberParam(req.query.limit, 200), 1, 1000);
       const analysis = await getFileBreakageAnalysis(gitService, file, {
         limit,
         signal: requestAbortSignal(req)
@@ -383,7 +418,7 @@ export async function startServer(
         since: stringParam(req.query.since),
         until: stringParam(req.query.until),
         branch: stringParam(req.query.branch),
-        maxCommits: numberParam(req.query.maxCommits, 500),
+        maxCommits: clampNumber(numberParam(req.query.maxCommits, 500), 1, 5000),
         signal
       });
       res.json(bundle);
@@ -401,7 +436,7 @@ export async function startServer(
         until: stringParam(req.query.until),
         branch: stringParam(req.query.branch),
         author: stringParam(req.query.author),
-        maxCommits: numberParam(req.query.maxCommits, 5000),
+        maxCommits: clampNumber(numberParam(req.query.maxCommits, 5000), 1, 20_000),
         signal
       });
       res.json(wrapped);
@@ -470,7 +505,7 @@ export async function startServer(
   app.post(
     '/api/annotations/:hash',
     wrap(async (req, res) => {
-      const author = typeof req.body?.author === 'string' ? req.body.author : 'anonymous';
+      const author = sanitizeAnnotationAuthor(req.body?.author);
       const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
       if (!body) {
         res.status(400).json({ error: 'body is required' });
@@ -506,14 +541,19 @@ export async function startServer(
     '/api/share',
     wrap(async (req, res) => {
       const state = req.body?.viewState;
-      if (!state || typeof state !== 'object') {
+      if (!state || typeof state !== 'object' || Array.isArray(state)) {
         res.status(400).json({ error: 'viewState body field is required' });
         return;
       }
-      // Build a query string from a flat key/value object.
+      // Build a query string from a flat key/value object. Nested containers are
+      // rejected instead of being coerced to "[object Object]" or array indices.
       const params = new URLSearchParams();
       for (const [k, v] of Object.entries(state as Record<string, unknown>)) {
         if (v === null || v === undefined || v === '') continue;
+        if (typeof v === 'object') {
+          res.status(400).json({ error: 'viewState values must be scalar' });
+          return;
+        }
         params.set(k, String(v));
       }
       const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
@@ -567,8 +607,9 @@ export async function startServer(
       return;
     }
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('API error:', message);
-    res.status(500).json({ error: message });
+    const safeMessage = sanitizeErrorMessage(message);
+    console.error('API error:', safeMessage);
+    res.status(500).json({ error: safeMessage });
   });
 
   const httpServer = createServer(app);
@@ -592,9 +633,111 @@ export async function startServer(
   return { server: httpServer, url, close };
 }
 
+interface IndexStatus extends IndexStats {
+  running: boolean;
+  progress: IndexProgress;
+}
+
+function createIndexBuildController(index: SqliteIndex) {
+  let controller: AbortController | null = null;
+  let running: Promise<IndexStats> | null = null;
+
+  const status = async (): Promise<IndexStatus> => ({
+    ...(await index.stats()),
+    running: !!running,
+    progress: index.getProgress()
+  });
+
+  const start = async (force = false): Promise<IndexStatus> => {
+    if (running) return status();
+    if (force) index.invalidate();
+    controller = new AbortController();
+    running = index
+      .build({ signal: controller.signal })
+      .catch((err) => {
+        if (controller?.signal.aborted) return index.stats();
+        throw err;
+      })
+      .finally(() => {
+        running = null;
+        controller = null;
+      });
+    return status();
+  };
+
+  const buildAndWait = async (): Promise<IndexStatus> => {
+    if (!running) await start();
+    await running;
+    return status();
+  };
+
+  const cancel = async (): Promise<IndexStatus> => {
+    controller?.abort();
+    if (running) await running.catch(() => undefined);
+    return status();
+  };
+
+  return { status, start, buildAndWait, cancel };
+}
+
 function wrap(handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) {
   return (req: Request, res: Response, next: NextFunction) => {
     handler(req, res, next).catch(next);
+  };
+}
+
+function isAllowedOrigin(origin: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
+function requireAuth(token: string | undefined) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!token || isLoopbackRequest(req)) {
+      next();
+      return;
+    }
+    const supplied = authTokenFromRequest(req);
+    if (supplied && safeTokenEqual(supplied, token)) {
+      next();
+      return;
+    }
+    res.status(401).json({ error: 'Unauthorized' });
+  };
+}
+
+function safeTokenEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+
+function authTokenFromRequest(req: Request): string | undefined {
+  const bearer = req.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (bearer) return bearer;
+  const header = req.headers['x-git-history-token'];
+  if (typeof header === 'string') return header;
+  if (Array.isArray(header)) return header[0];
+  return stringParam(req.query.token);
+}
+
+function isLoopbackRequest(req: Request): boolean {
+  const ip = req.ip || req.socket.remoteAddress || '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip === 'localhost';
+}
+
+function commitOptionsFromQuery(
+  query: Request['query'],
+  defaultPageSize: number
+): import('./gitService').GitOptions {
+  return {
+    author: stringParam(query.author),
+    since: stringParam(query.since),
+    until: stringParam(query.until),
+    file: stringParam(query.file),
+    search: stringParam(query.search ?? query.q),
+    branch: stringParam(query.branch),
+    page: numberParam(query.page, 1),
+    pageSize: clampNumber(numberParam(query.pageSize, defaultPageSize), 1, 500)
   };
 }
 
@@ -606,6 +749,34 @@ function stringParam(v: unknown): string | undefined {
 function numberParam(v: unknown, fallback: number): number {
   const n = typeof v === 'string' ? parseInt(v, 10) : NaN;
   return Number.isFinite(n) ? n : fallback;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function booleanParam(v: unknown, fallback: boolean): boolean {
+  if (typeof v !== 'string') return fallback;
+  return v === '1' || v.toLowerCase() === 'true';
+}
+
+function sanitizeAnnotationAuthor(value: unknown): string {
+  if (typeof value !== 'string') return 'anonymous';
+  const cleaned = Array.from(value)
+    .filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return code >= 32 && code !== 127;
+    })
+    .join('')
+    .trim();
+  return cleaned.slice(0, 80) || 'anonymous';
+}
+
+function sanitizeErrorMessage(message: string): string {
+  return message.replace(
+    /'([^']+)' is outside repository at '[^']+'/g,
+    "'$1' is outside repository"
+  );
 }
 
 function requestAbortSignal(req: Request): AbortSignal {

@@ -16,11 +16,18 @@ describe('GitService — extra coverage', () => {
 
   beforeAll(() => {
     repo = makeRepo('ghui-extra-');
-    const seedContent = Array.from({ length: 40 }, (_, i) => `// line ${i}\nexport const v${i} = ${i};`).join('\n');
+    const seedContent = Array.from(
+      { length: 40 },
+      (_, i) => `// line ${i}\nexport const v${i} = ${i};`
+    ).join('\n');
     h1 = repo.commit('alpha.ts', seedContent, 'feat: alpha');
     repo.git(['mv', 'alpha.ts', 'beta.ts']);
     // Keep most content identical (same 40 lines) so git -M detects the rename.
-    h2 = repo.commit('beta.ts', seedContent + '\n// trailing change\n', 'refactor: rename alpha to beta');
+    h2 = repo.commit(
+      'beta.ts',
+      seedContent + '\n// trailing change\n',
+      'refactor: rename alpha to beta'
+    );
     repo.commit('README.md', '# hi\n', 'docs: add readme');
     repo.git(['rm', 'README.md']);
     h3 = repo.commit('placeholder.txt', 'p', 'chore: drop readme');
@@ -60,8 +67,11 @@ describe('GitService — extra coverage', () => {
     await expect(svc.revAt('HEAD', 'not-a-date')).rejects.toThrow(/Invalid date/);
     await expect(svc.getFileAtCommit('nope', 'x')).rejects.toThrow(/Invalid commit hash/);
     await expect(svc.getFileAtCommit(h1, 'a\0b')).rejects.toThrow(/Invalid path/);
+    await expect(svc.getFileAtCommit(h1, '../alpha.ts')).rejects.toThrow(/Invalid path/);
     await expect(svc.getFileStats('x\0y')).rejects.toThrow(/Invalid path/);
+    await expect(svc.getFileStats('../alpha.ts')).rejects.toThrow(/Invalid path/);
     await expect(svc.getBlame('x\0y')).rejects.toThrow(/Invalid path/);
+    await expect(svc.getBlame('/etc/passwd')).rejects.toThrow(/Invalid path/);
   });
 
   it('range-diffs two commits', async () => {
@@ -139,7 +149,10 @@ describe('GitService — extra coverage', () => {
       LC_ALL: 'C'
     };
     require('child_process').execFileSync('git', ['add', 'beta.ts'], { cwd: repo.dir, env });
-    require('child_process').execFileSync('git', ['commit', '-q', '-m', 'chore: zed'], { cwd: repo.dir, env });
+    require('child_process').execFileSync('git', ['commit', '-q', '-m', 'chore: zed'], {
+      cwd: repo.dir,
+      env
+    });
     const authors = await svc.getAuthors();
     expect(authors).toEqual([...authors].sort((a, b) => a.localeCompare(b)));
     expect(authors).toContain('Tester');
@@ -229,8 +242,11 @@ describe('GitService — extra coverage', () => {
     }
   });
 
-  it('rejects unsafe branch names', async () => {
+  it('rejects unsafe branch names and revision syntax', async () => {
     await expect(svc.getCommits({ branch: 'bad branch;rm -rf' })).rejects.toThrow(/Invalid branch/);
+    await expect(svc.getCommits({ branch: '--all' })).rejects.toThrow(/Invalid branch/);
+    await expect(svc.getCommits({ branch: 'HEAD~1' })).rejects.toThrow(/Invalid branch/);
+    await expect(svc.getCommits({ branch: 'main..feature' })).rejects.toThrow(/Invalid branch/);
   });
 
   it('getNumstat normalizes renamed paths to the destination file', async () => {
@@ -271,8 +287,9 @@ describe('GitService — extra coverage', () => {
   it('streamRaw rejects immediately when called with an already-aborted signal', async () => {
     const ac = new AbortController();
     ac.abort();
-    await expect(svc.streamRaw(['log', '--pretty=oneline'], () => {}, { signal: ac.signal }))
-      .rejects.toThrow(/aborted/);
+    await expect(
+      svc.streamRaw(['log', '--pretty=oneline'], () => {}, { signal: ac.signal })
+    ).rejects.toThrow(/aborted/);
   });
 
   it('streamRaw rejects if the consumer callback throws', async () => {

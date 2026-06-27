@@ -5,7 +5,7 @@ import {
   computed,
   effect,
   inject,
-  signal
+  signal,
 } from '@angular/core';
 import { CommitGroup } from '../../models/git.models';
 import { GroupsService } from '../../services/groups.service';
@@ -38,10 +38,12 @@ import { UiStateService } from '../../services/ui-state.service';
           <span class="count">{{ g.commits.length }}</span>
         </button>
         <ul class="commits" *ngIf="isExpanded(g.id)">
-          <li *ngFor="let h of g.commits"
-              class="commit"
-              [class.selected]="h === state.selectedHash()"
-              (click)="state.selectHash(h)">
+          <li
+            *ngFor="let h of g.commits"
+            class="commit"
+            [class.selected]="h === state.selectedHash()"
+            (click)="state.selectHash(h)"
+          >
             <code class="hash">{{ shortHash(h) }}</code>
             <span class="subject">{{ subjectFor(h) }}</span>
           </li>
@@ -49,121 +51,149 @@ import { UiStateService } from '../../services/ui-state.service';
       </li>
     </ul>
   `,
-  styles: [`
-    :host {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      overflow: hidden;
-    }
-    .head {
-      display: flex;
-      justify-content: space-between;
-      padding: 0.6rem 0.85rem;
-      border-bottom: 1px solid var(--border-soft);
-      background: color-mix(in oklab, var(--bg-surface) 92%, transparent);
-    }
-    .title { font-weight: 600; font-size: 13px; }
-    .meta { font-size: 11px; color: var(--fg-muted); }
-    .empty {
-      padding: 1rem 0.85rem;
-      color: var(--fg-muted);
-      font-size: 12px;
-    }
-    .empty.error { color: var(--danger); }
-    .groups {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      overflow-y: auto;
-      flex: 1;
-    }
-    .group {
-      border-bottom: 1px solid var(--border-soft);
-      transition: background 120ms;
-    }
-    .group.expanded {
-      background: color-mix(in oklab, var(--accent) 5%, transparent);
-    }
-    .group-head {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.58rem 0.85rem;
-      background: transparent;
-      border: 0;
-      color: var(--fg-primary);
-      cursor: pointer;
-      text-align: left;
-    }
-    .group-head:hover { background: color-mix(in oklab, var(--bg-hover) 72%, transparent); }
-    .caret {
-      display: inline-block;
-      width: 10px;
-      transition: transform 0.15s ease;
-      color: var(--fg-muted);
-    }
-    .caret.open { transform: rotate(90deg); }
-    .badge {
-      font-size: 10px;
-      letter-spacing: 0.04em;
-      padding: 1px 6px;
-      border-radius: 999px;
-      background: var(--bg-surface-2);
-      color: var(--fg-secondary);
-      text-transform: uppercase;
-    }
-    .badge.src-merge { background: rgba(99, 102, 241, 0.18); color: var(--accent); }
-    .badge.src-squash { background: rgba(16, 185, 129, 0.18); color: #10b981; }
-    .badge.src-conventional { background: rgba(245, 158, 11, 0.18); color: #d97706; }
-    .pr { font-size: 11px; color: var(--fg-muted); }
-    .g-title {
-      flex: 1;
-      font-size: 13px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .count {
-      font-size: 11px;
-      color: var(--fg-muted);
-      background: var(--bg-surface-2);
-      border: 1px solid var(--border-soft);
-      padding: 1px 6px;
-      border-radius: 999px;
-    }
-    .commits {
-      list-style: none;
-      margin: 0;
-      padding: 0 0 0.4rem 0;
-      background: color-mix(in oklab, var(--bg-surface-2) 72%, transparent);
-    }
-    .commit {
-      display: flex;
-      gap: 0.6rem;
-      align-items: center;
-      padding: 0.34rem 0.85rem 0.34rem 2rem;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    .commit:hover { background: var(--bg-hover); }
-    .commit.selected {
-      background: color-mix(in oklab, var(--accent) 18%, transparent);
-      box-shadow: inset 3px 0 0 var(--accent);
-    }
-    .commit .hash {
-      font-family: var(--font-mono, monospace);
-      font-size: 11px;
-      color: var(--fg-muted);
-    }
-    .commit .subject {
-      flex: 1;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-  `]
+  styles: [
+    `
+      :host {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        overflow: hidden;
+      }
+      .head {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.6rem 0.85rem;
+        border-bottom: 1px solid var(--border-soft);
+        background: color-mix(in oklab, var(--bg-surface) 92%, transparent);
+      }
+      .title {
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .meta {
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .empty {
+        padding: 1rem 0.85rem;
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+      .empty.error {
+        color: var(--danger);
+      }
+      .groups {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .group {
+        border-bottom: 1px solid var(--border-soft);
+        transition: background 120ms;
+      }
+      .group.expanded {
+        background: color-mix(in oklab, var(--accent) 5%, transparent);
+      }
+      .group-head {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.58rem 0.85rem;
+        background: transparent;
+        border: 0;
+        color: var(--fg-primary);
+        cursor: pointer;
+        text-align: left;
+      }
+      .group-head:hover {
+        background: color-mix(in oklab, var(--bg-hover) 72%, transparent);
+      }
+      .caret {
+        display: inline-block;
+        width: 10px;
+        transition: transform 0.15s ease;
+        color: var(--fg-muted);
+      }
+      .caret.open {
+        transform: rotate(90deg);
+      }
+      .badge {
+        font-size: 10px;
+        letter-spacing: 0.04em;
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: var(--bg-surface-2);
+        color: var(--fg-secondary);
+        text-transform: uppercase;
+      }
+      .badge.src-merge {
+        background: rgba(99, 102, 241, 0.18);
+        color: var(--accent);
+      }
+      .badge.src-squash {
+        background: rgba(16, 185, 129, 0.18);
+        color: #10b981;
+      }
+      .badge.src-conventional {
+        background: rgba(245, 158, 11, 0.18);
+        color: #d97706;
+      }
+      .pr {
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .g-title {
+        flex: 1;
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .count {
+        font-size: 11px;
+        color: var(--fg-muted);
+        background: var(--bg-surface-2);
+        border: 1px solid var(--border-soft);
+        padding: 1px 6px;
+        border-radius: 999px;
+      }
+      .commits {
+        list-style: none;
+        margin: 0;
+        padding: 0 0 0.4rem 0;
+        background: color-mix(in oklab, var(--bg-surface-2) 72%, transparent);
+      }
+      .commit {
+        display: flex;
+        gap: 0.6rem;
+        align-items: center;
+        padding: 0.34rem 0.85rem 0.34rem 2rem;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .commit:hover {
+        background: var(--bg-hover);
+      }
+      .commit.selected {
+        background: color-mix(in oklab, var(--accent) 18%, transparent);
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+      .commit .hash {
+        font-family: var(--font-mono, monospace);
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .commit .subject {
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    `,
+  ],
 })
 export class GroupedListComponent {
   state = inject(UiStateService);
@@ -209,10 +239,14 @@ export class GroupedListComponent {
 
   sourceLabel(s: CommitGroup['source']): string {
     switch (s) {
-      case 'merge': return 'PR';
-      case 'squash': return 'PR (sq)';
-      case 'conventional': return 'Feat';
-      case 'standalone': return 'commit';
+      case 'merge':
+        return 'PR';
+      case 'squash':
+        return 'PR (sq)';
+      case 'conventional':
+        return 'Feat';
+      case 'standalone':
+        return 'commit';
     }
   }
 
@@ -230,7 +264,7 @@ export class GroupedListComponent {
       error: (err) => {
         this.error.set(this.errMsg(err));
         this.loading.set(false);
-      }
+      },
     });
   }
 

@@ -63,9 +63,7 @@ export function computeContributorStats(commits: Commit[]): ContributorStat[] {
  * Compute file churn from a sequence of {commit, files}. Caller is expected to
  * fetch diff for each commit (potentially expensively); this is a pure aggregator.
  */
-export function computeFileChurn(
-  pairs: Array<{ commit: Commit; files: DiffFile[] }>
-): FileChurn[] {
+export function computeFileChurn(pairs: Array<{ commit: Commit; files: DiffFile[] }>): FileChurn[] {
   const map = new Map<string, FileChurn & { authorSet: Set<string> }>();
   for (const { commit, files } of pairs) {
     for (const f of files) {
@@ -135,8 +133,7 @@ export function computeRiskyFiles(churn: FileChurn[], limit = 20): RiskyFile[] {
         0.4 * (c.commits / Math.max(1, maxCommits)) +
         0.4 * (churnRaw / Math.max(1, maxChurn)) +
         0.2 * Math.min(1, c.authors / 5);
-      const ageDays =
-        (now - new Date(c.lastTouched || 0).getTime()) / (1000 * 60 * 60 * 24);
+      const ageDays = (now - new Date(c.lastTouched || 0).getTime()) / (1000 * 60 * 60 * 24);
       const recencyBoost = ageDays < 30 ? 0.15 : ageDays < 90 ? 0.08 : 0;
       const score = Math.min(1, norm + recencyBoost);
       const reasons: string[] = [];

@@ -11,6 +11,7 @@ import { ActivatedRoute, RouterOutlet } from '@angular/router';
 import { catchError, debounceTime, of, switchMap } from 'rxjs';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { CommandPaletteComponent } from './components/command-palette/command-palette.component';
+import { IndexStatusComponent } from './components/index-status/index-status.component';
 import { ShortcutsModalComponent } from './components/shortcuts-modal/shortcuts-modal.component';
 import { ToolbarComponent } from './components/toolbar/toolbar.component';
 import { Commit } from './models/git.models';
@@ -26,6 +27,7 @@ import { UiStateService } from './services/ui-state.service';
     RouterOutlet,
     ToolbarComponent,
     CommandPaletteComponent,
+    IndexStatusComponent,
     ShortcutsModalComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -42,6 +44,7 @@ import { UiStateService } from './services/ui-state.service';
       <span class="spinner"></span> Loading commits…
     </div>
 
+    <app-index-status />
     <app-command-palette />
     <app-shortcuts-modal />
   `,
