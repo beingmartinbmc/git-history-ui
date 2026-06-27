@@ -22,12 +22,20 @@ describe('AppComponent deep links', () => {
       'getAuthors',
       'getBranches',
       'getTags',
+      'getIndexStatus',
+      'buildIndex',
+      'rebuildIndex',
+      'cancelIndexBuild',
     ]);
     git.streamCommits.and.returnValue(of(page([commit('head-ref', 'latest')])));
     git.getCommits.and.returnValue(of(page([commit('head-ref', 'latest')])));
     git.getAuthors.and.returnValue(of([]));
     git.getBranches.and.returnValue(of([]));
     git.getTags.and.returnValue(of([]));
+    git.getIndexStatus.and.returnValue(of(indexStatus()));
+    git.buildIndex.and.returnValue(of(indexStatus()));
+    git.rebuildIndex.and.returnValue(of(indexStatus()));
+    git.cancelIndexBuild.and.returnValue(of(indexStatus()));
 
     const search = jasmine.createSpyObj<SearchService>('SearchService', ['naturalLanguage']);
     search.naturalLanguage.and.returnValue(of(nlPage([])));
@@ -98,6 +106,20 @@ describe('AppComponent deep links', () => {
       },
       usedLlm: false,
       llmProvider: 'heuristic',
+    };
+  }
+
+  function indexStatus() {
+    return {
+      available: true,
+      total: 0,
+      running: false,
+      progress: {
+        phase: 'idle' as const,
+        indexed: 0,
+        startedAt: null,
+        updatedAt: null,
+      },
     };
   }
 
