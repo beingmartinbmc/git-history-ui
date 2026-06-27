@@ -6,6 +6,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-06-27
+
+### Added
+
+- Added optional SQLite-backed Git intelligence index endpoints and frontend status controls for build, rebuild, cancel, and progress visibility.
+- Added broad server validation and security edge-case test coverage for malformed input, unsafe paths, and boundary conditions.
+
+### Changed
+
+- Hardened server request validation, git parsing, repository path handling, and index/cache behavior for safer local operation.
+- Improved frontend robustness across command palette, grouped lists, blame, shortcuts, and Angular startup configuration.
+
+### Fixed
+
+- Mocked index-status dependencies in app deep-link specs so frontend tests cover the new root status component reliably.
+
 ## [5.1.1] - 2026-06-10
 
 ### Changed
