@@ -49,16 +49,25 @@ function request(opts: {
 }
 
 function fetchRaw(
-  url: string
+  url: string,
+  headers: Record<string, string> = {}
 ): Promise<{ status: number; data: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
-    http
-      .get(url, (res) => {
+    const u = new URL(url);
+    const req = http.get(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        headers
+      },
+      (res) => {
         let data = '';
         res.on('data', (chunk) => (data += chunk));
         res.on('end', () => resolve({ status: res.statusCode || 0, data, headers: res.headers }));
-      })
-      .on('error', reject);
+      }
+    );
+    req.on('error', reject);
   });
 }
 
@@ -215,14 +224,43 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(typeof r.body.available).toBe('boolean');
   });
 
-  it('POST /api/index/build builds the index when sqlite is available', async () => {
-    const r = await request({ url: `${url}/api/index/build`, method: 'POST', body: {} });
-    expect(r.status).toBe(200);
+  it('POST /api/index/build starts the background index and wait=true waits for completion', async () => {
+    const started = await request({ url: `${url}/api/index/build`, method: 'POST', body: {} });
+    expect([200, 202]).toContain(started.status);
+    expect(typeof started.body.running).toBe('boolean');
+    expect(started.body.progress).toBeTruthy();
+
+    const waited = await request({
+      url: `${url}/api/index/build?wait=true`,
+      method: 'POST',
+      body: {}
+    });
+    expect(waited.status).toBe(200);
+    expect(waited.body.running).toBe(false);
+    expect(waited.body.progress.phase).toMatch(/done|idle|cancelled|error/);
+  });
+
+  it('GET /api/index/status and cancel expose progress state', async () => {
+    const status = await request({ url: `${url}/api/index/status` });
+    expect(status.status).toBe(200);
+    expect(status.body.progress).toHaveProperty('phase');
+
+    const cancel = await request({ url: `${url}/api/index/cancel`, method: 'POST', body: {} });
+    expect(cancel.status).toBe(200);
+    expect(cancel.body.running).toBe(false);
+  });
+
+  it('POST /api/index/rebuild requests a forced rebuild', async () => {
+    const r = await request({ url: `${url}/api/index/rebuild`, method: 'POST', body: {} });
+    expect(r.status).toBe(202);
+    expect(r.body.progress).toHaveProperty('phase');
+    await request({ url: `${url}/api/index/cancel`, method: 'POST', body: {} });
   });
 
   it('GET /api/commits/stream emits commit + done events', async () => {
-    const raw = await fetchRaw(`${url}/api/commits/stream`);
+    const raw = await fetchRaw(`${url}/api/commits/stream`, { 'Accept-Encoding': 'gzip' });
     expect(raw.headers['content-type']).toContain('text/event-stream');
+    expect(raw.headers['content-encoding']).toBeUndefined();
     expect(raw.data).toContain('event: commit');
     expect(raw.data).toContain('event: done');
   });
@@ -234,6 +272,11 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(raw.data).toContain('"total":2');
     expect(raw.data).toContain('"pageSize":1');
     expect(raw.data).toContain('"hasNext":true');
+  });
+
+  it('GET /api/commits/stream clamps oversized pageSize', async () => {
+    const raw = await fetchRaw(`${url}/api/commits/stream?pageSize=999999`);
+    expect(raw.data).toContain('"pageSize":500');
   });
 
   it('annotations CRUD: POST → GET → DELETE', async () => {
@@ -255,7 +298,7 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(after.body).toEqual([]);
   });
 
-  it('annotations: empty body → 400; oversize body → 413', async () => {
+  it('annotations: empty body → 400; oversize body → 413; author is bounded', async () => {
     const r1 = await request({
       url: `${url}/api/annotations/${secondHash}`,
       method: 'POST',
@@ -268,6 +311,15 @@ describe('HTTP server — full endpoint coverage', () => {
       body: { author: 'a', body: 'x'.repeat(6000) }
     });
     expect(r2.status).toBe(413);
+
+    const r3 = await request({
+      url: `${url}/api/annotations/${secondHash}`,
+      method: 'POST',
+      body: { author: `alice\n${'x'.repeat(200)}`, body: 'bounded author' }
+    });
+    expect(r3.status).toBe(201);
+    expect(r3.body.author).not.toContain('\n');
+    expect(r3.body.author.length).toBeLessThanOrEqual(80);
   });
 
   it('annotations DELETE for unknown id → 404', async () => {
@@ -317,9 +369,23 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(r.body.mode).toBe('local');
   });
 
-  it('POST /api/share rejects missing viewState', async () => {
-    const r = await request({ url: `${url}/api/share`, method: 'POST', body: {} });
-    expect(r.status).toBe(400);
+  it('POST /api/share rejects missing or non-flat viewState', async () => {
+    const missing = await request({ url: `${url}/api/share`, method: 'POST', body: {} });
+    expect(missing.status).toBe(400);
+
+    const array = await request({
+      url: `${url}/api/share`,
+      method: 'POST',
+      body: { viewState: ['abc'] }
+    });
+    expect(array.status).toBe(400);
+
+    const nested = await request({
+      url: `${url}/api/share`,
+      method: 'POST',
+      body: { viewState: { filters: { author: 'alice' } } }
+    });
+    expect(nested.status).toBe(400);
   });
 
   it('500 errors are logged and surfaced as JSON', async () => {
@@ -355,6 +421,32 @@ describe('HTTP server — empty repo path', () => {
   });
 });
 
+describe('HTTP server — optional API auth token', () => {
+  it('requires a configured token for non-loopback clients', async () => {
+    const repo = makeRepo('ghui-auth-');
+    repo.commit('a.txt', 'a', 'init');
+    const result = await startServer(0, '127.0.0.1', { cwd: repo.dir, authToken: 'secret' });
+    const addr = result.server.address() as AddressInfo;
+    const authUrl = `http://127.0.0.1:${addr.port}`;
+    try {
+      const unauthorized = await request({
+        url: `${authUrl}/api/health`,
+        headers: { 'X-Forwarded-For': '203.0.113.10' }
+      });
+      expect(unauthorized.status).toBe(401);
+
+      const authorized = await request({
+        url: `${authUrl}/api/health`,
+        headers: { 'X-Forwarded-For': '203.0.113.10', Authorization: 'Bearer secret' }
+      });
+      expect(authorized.status).toBe(200);
+    } finally {
+      await result.close();
+      repo.cleanup();
+    }
+  });
+});
+
 describe('HTTP server — CORS', () => {
   let repo: TestRepo;
   let url: string;
@@ -384,8 +476,8 @@ describe('HTTP server — CORS', () => {
       url: `${url}/api/health`,
       headers: { Origin: 'https://evil.example.com' }
     });
-    // The cors middleware errors on disallowed origins → 500 via the error handler.
-    expect(blocked.status).toBe(500);
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error).toBe('CORS not allowed');
   });
 });
 
