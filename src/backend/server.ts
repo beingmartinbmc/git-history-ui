@@ -626,6 +626,13 @@ export async function startServer(
 
   const close = (): Promise<void> =>
     new Promise<void>((resolve) => {
+      // Close the SQLite index first so better-sqlite3 can checkpoint the WAL
+      // and remove the -wal / -shm sidecar files before the process exits.
+      try {
+        sqliteIndex.close();
+      } catch {
+        /* best-effort */
+      }
       httpServer.close(() => resolve());
       setTimeout(() => resolve(), 5_000).unref();
     });

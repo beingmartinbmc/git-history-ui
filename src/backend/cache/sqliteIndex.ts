@@ -130,6 +130,30 @@ export class SqliteIndex {
     try {
       fs.mkdirSync(path.dirname(this.dbFile), { recursive: true });
       this.db = new Ctor(this.dbFile);
+      // Performance pragmas for a local, single-writer index.
+      //   WAL        — fewer fsyncs and better single-connection write throughput.
+      //                Note: WAL snapshot isolation only helps *separate* reader
+      //                connections; we use one shared connection so searches may
+      //                observe an in-progress build transaction. This is safe
+      //                because the index is a rebuildable cache, never the source
+      //                of truth, and doBuild() rolls back on error.
+      //   NORMAL     — safe under WAL; we never risk data loss that can't be
+      //                recovered by a rebuild triggered by the next ref-sig check.
+      //   mmap/cache — cut read syscalls on large histories.
+      // All pragmas are best-effort — ignore if the SQLite build lacks them.
+      try {
+        this.db.exec(
+          [
+            'PRAGMA journal_mode = WAL;',
+            'PRAGMA synchronous = NORMAL;',
+            'PRAGMA temp_store = MEMORY;',
+            'PRAGMA mmap_size = 268435456;', // 256 MiB
+            'PRAGMA cache_size = -16000;' // ~16 MiB page cache
+          ].join('\n')
+        );
+      } catch {
+        /* pragmas are best-effort; index still works without them */
+      }
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
         CREATE TABLE IF NOT EXISTS commits (

@@ -27,6 +27,43 @@ describe('SqliteIndex', () => {
     return require('../backend/cache/sqliteIndex') as typeof import('../backend/cache/sqliteIndex');
   };
 
+  interface MockSqliteInstance {
+    file: string;
+    execCalls: string[];
+    closed: boolean;
+  }
+
+  const installMockSqlite = (opts: { throwOnPragma?: boolean } = {}) => {
+    const instances: MockSqliteInstance[] = [];
+
+    class MockSqlite {
+      execCalls: string[] = [];
+      closed = false;
+
+      constructor(public file: string) {
+        instances.push(this);
+      }
+
+      exec(sql: string): void {
+        this.execCalls.push(sql);
+        if (opts.throwOnPragma && sql.includes('PRAGMA journal_mode')) {
+          throw new Error('pragma unsupported');
+        }
+      }
+
+      prepare(): never {
+        throw new Error('prepare not implemented');
+      }
+
+      close(): void {
+        this.closed = true;
+      }
+    }
+
+    jest.doMock('better-sqlite3', () => MockSqlite);
+    return instances;
+  };
+
   it('reports availability based on better-sqlite3 presence and native binding compatibility', () => {
     const { SqliteIndex } = fresh();
     expect(typeof SqliteIndex.isAvailable()).toBe('boolean');
@@ -304,6 +341,53 @@ describe('SqliteIndex', () => {
         idx.close();
       } finally {
         repo.cleanup();
+      }
+    });
+  });
+
+  it('applies local-cache SQLite performance pragmas before creating schema', async () => {
+    await withTempHomeAsync(async () => {
+      jest.resetModules();
+      const instances = installMockSqlite();
+      const { SqliteIndex } =
+        require('../backend/cache/sqliteIndex') as typeof import('../backend/cache/sqliteIndex');
+      const idx = new SqliteIndex('/tmp/mock-repo', async () => '');
+      try {
+        expect(idx.open()).toBe(true);
+        const db = instances.find((instance) => instance.file !== ':memory:');
+        expect(db).toBeDefined();
+        expect(db!.execCalls[0]).toContain('PRAGMA journal_mode = WAL;');
+        expect(db!.execCalls[0]).toContain('PRAGMA synchronous = NORMAL;');
+        expect(db!.execCalls[0]).toContain('PRAGMA temp_store = MEMORY;');
+        expect(db!.execCalls[0]).toContain('PRAGMA mmap_size = 268435456;');
+        expect(db!.execCalls[0]).toContain('PRAGMA cache_size = -16000;');
+        expect(db!.execCalls[1]).toContain('CREATE TABLE IF NOT EXISTS meta');
+        expect(db!.execCalls[2]).toContain('CREATE VIRTUAL TABLE IF NOT EXISTS commits_fts');
+      } finally {
+        idx.close();
+        jest.dontMock('better-sqlite3');
+      }
+    });
+  });
+
+  it('continues opening the SQLite index when performance pragmas are unsupported', async () => {
+    await withTempHomeAsync(async () => {
+      jest.resetModules();
+      const instances = installMockSqlite({ throwOnPragma: true });
+      const { SqliteIndex } =
+        require('../backend/cache/sqliteIndex') as typeof import('../backend/cache/sqliteIndex');
+      const idx = new SqliteIndex('/tmp/mock-repo', async () => '');
+      try {
+        expect(idx.open()).toBe(true);
+        expect(idx.isOpen()).toBe(true);
+        const db = instances.find((instance) => instance.file !== ':memory:');
+        expect(db).toBeDefined();
+        expect(db!.execCalls[0]).toContain('PRAGMA journal_mode = WAL;');
+        expect(db!.execCalls[1]).toContain('CREATE TABLE IF NOT EXISTS meta');
+        expect(db!.execCalls[2]).toContain('CREATE VIRTUAL TABLE IF NOT EXISTS commits_fts');
+      } finally {
+        idx.close();
+        jest.dontMock('better-sqlite3');
       }
     });
   });

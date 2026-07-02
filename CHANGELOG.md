@@ -6,6 +6,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- Tuned the optional SQLite commit index with WAL journal mode, `synchronous=NORMAL`, memory temp store, and enlarged mmap/page-cache settings for faster search on large histories. All pragmas degrade gracefully on older SQLite builds.
+- Fixed WAL sidecar file leak: `sqliteIndex.close()` is now called during server shutdown so `better-sqlite3` checkpoints and removes the `-wal`/`-shm` files before the process exits.
+
 ## [5.2.1] - 2026-06-27
 
 ### Documentation
