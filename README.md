@@ -48,12 +48,6 @@ npx git-history-ui@latest
 
 ## ⚡ 10-second workflow
 
-<p align="center">
-  <video src="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/demo.mp4" controls muted playsinline width="900">
-    <a href="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/demo.mp4">▶ Watch the demo</a>
-  </video>
-</p>
-
 > `npx git-history-ui@latest` is the fastest way to see it for yourself —
 > it opens in your browser in under a second.
 
