@@ -6,6 +6,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-07-06
+
 ### Added
 
 - **Deep linking.** `git-history-ui://open?repo=...&at=...&pr=...` protocol
