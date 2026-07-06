@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/beingmartinbmc/git-history-ui">
-    <img src="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/banner.png" alt="Git History UI — Git intelligence in your browser" width="900">
+    <img src="https://raw.githubusercontent.com/beingmartinbmc/git-history-ui/main/docs/images/banner.png" alt="Git History UI — Git intelligence in your browser" width="900">
   </a>
 </p>
 
@@ -48,19 +48,13 @@ npx git-history-ui@latest
 
 ## ⚡ 10-second workflow
 
-<p align="center">
-  <video src="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/demo.mp4" controls muted playsinline width="900">
-    <a href="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/demo.mp4">▶ Watch the demo</a>
-  </video>
-</p>
-
 > `npx git-history-ui@latest` is the fastest way to see it for yourself —
 > it opens in your browser in under a second.
 
 ## 🖼️ Preview
 
 <p align="center">
-  <img src="https://github.com/beingmartinbmc/git-history-ui/raw/main/docs/images/preview.png" alt="Git History UI — commit graph, commit list, and side-by-side diff viewer" width="900">
+  <img src="https://raw.githubusercontent.com/beingmartinbmc/git-history-ui/main/docs/images/preview.png" alt="Git History UI — commit graph, commit list, and side-by-side diff viewer" width="900">
 </p>
 
 ## 🤔 Why this exists
