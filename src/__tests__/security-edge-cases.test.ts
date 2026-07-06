@@ -295,7 +295,7 @@ describe('Security & edge cases — HTTP server', () => {
       url: `${url}/api/diff?from=...&to=...`
     });
     expect(r.status).toBe(400);
-    expect(r.body.error).toMatch(/Invalid commit hash/);
+    expect(r.body.error).toMatch(/Invalid ref/);
   });
 
   // === SHARE ENDPOINT ABUSE ===

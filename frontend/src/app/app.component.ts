@@ -184,11 +184,13 @@ export class AppComponent {
         this.pendingSharedCommit.set(hash);
         this.state.selectHash(hash);
       }
+      const activeFile = params.get('activeFile');
+      if (activeFile) this.state.activeFilePath.set(activeFile);
       // PR deep link: switch to grouped view and set PR filter
       const pr = params.get('pr');
-      if (pr) {
+      if (pr && /^\d+$/.test(pr)) {
         this.state.viewMode.set('grouped');
-        this.state.patchFilters({ search: `#${pr}` });
+        this.state.focusedPrNumber.set(Number(pr));
       }
       // Restore shared filters
       const author = params.get('author');

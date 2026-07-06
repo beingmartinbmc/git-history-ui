@@ -109,7 +109,9 @@ program
 // `main()` runs from the root `.action()` when no subcommand is given,
 // or the `presets` handler runs for that subcommand. Either way, parseAsync
 // drives the right path.
-void program.parseAsync();
+if (require.main === module) {
+  void program.parseAsync();
+}
 
 interface MainOptions {
   port: string;
@@ -128,7 +130,7 @@ interface MainOptions {
   pr?: string;
 }
 
-function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: string } {
+export function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: string } {
   try {
     const url = new URL(raw);
     return {
@@ -146,7 +148,7 @@ function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: strin
  * Checks ~/repo-name, ~/Development/repo-name, and common parent dirs.
  * Verifies the candidate's git remote actually matches the requested URL.
  */
-function resolveRepoToLocal(repoUrl: string): string | undefined {
+export function resolveRepoToLocal(repoUrl: string): string | undefined {
   let repoName: string;
   let urlPath: string; // e.g. "owner/repo" from https://github.com/owner/repo
   try {
@@ -177,6 +179,8 @@ function resolveRepoToLocal(repoUrl: string): string | undefined {
     join(home, 'projects', repoName),
     join(home, 'src', repoName),
     join(home, 'repositories', repoName),
+    join(home, 'repositories', 'personal', repoName),
+    join(home, 'repositories', 'work', repoName),
     join(home, 'code', repoName)
   ];
   for (const dir of candidates) {
@@ -199,14 +203,23 @@ function repoRemoteMatches(dir: string, urlPath: string): boolean {
       encoding: 'utf8',
       timeout: 3000
     });
-    const normalized = urlPath.toLowerCase();
-    return remotes
-      .toLowerCase()
-      .split('\n')
-      .some((line: string) => line.includes(normalized));
+    const normalized = normalizeRepoPath(urlPath);
+    return remotes.split('\n').some((line: string) => normalizeRepoPath(line).endsWith(normalized));
   } catch {
-    return true; // can't verify → don't reject
+    return false;
   }
+}
+
+function normalizeRepoPath(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+\((fetch|push)\)$/i, '')
+    .replace(/^git@[^:]+:/, '')
+    .replace(/^https?:\/\/[^/]+\//, '')
+    .replace(/^ssh:\/\/git@[^/]+\//, '')
+    .replace(/\.git$/, '')
+    .replace(/^\/+|\/+$/g, '');
 }
 
 async function main(): Promise<void> {

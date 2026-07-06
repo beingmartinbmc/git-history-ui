@@ -481,6 +481,7 @@ export class GitService {
     for (const line of raw.split('\n').filter(Boolean)) {
       const m = line.match(/^(-|\d+)\t(-|\d+)\t(.+)$/);
       if (!m) continue;
+      const binary = m[1] === '-' || m[2] === '-';
       const add = m[1] === '-' ? 0 : parseInt(m[1], 10);
       const del = m[2] === '-' ? 0 : parseInt(m[2], 10);
       let filePath = m[3];
@@ -499,8 +500,9 @@ export class GitService {
       const info = statusMap.get(filePath);
       if (info?.oldFile) oldFile = info.oldFile;
       const statusCode = info?.code ?? 'M';
-      const status =
-        statusCode === 'A'
+      const status = binary
+        ? 'binary'
+        : statusCode === 'A'
           ? 'added'
           : statusCode === 'D'
             ? 'deleted'
@@ -510,7 +512,7 @@ export class GitService {
                 ? 'copied'
                 : 'modified';
       files.push({ file: filePath, oldFile, status, additions: add, deletions: del });
-      totalLines += add + del;
+      totalLines += binary ? 1 : add + del;
     }
     return { files, totalLines };
   }
@@ -537,8 +539,8 @@ export class GitService {
   }
 
   async getRangeDiff(from: string, to: string, opts: GitStreamOptions = {}): Promise<DiffFile[]> {
-    if (!isPlausibleHash(from) || !isPlausibleHash(to)) {
-      throw new Error('Invalid commit hash');
+    if (!isSafeRef(from) || !isSafeRef(to)) {
+      throw new Error('Invalid ref');
     }
     const raw = await this.git(['diff', '-M', '--no-color', from, to], {
       ...opts,
@@ -786,6 +788,11 @@ export class GitService {
     const refs = await this.getRefIndex();
     const filterArgs = this.buildFilterArgs(options);
     const revision = this.revisionArg(options);
+    const page = Math.max(1, options.page || 1);
+    const pageSize = options.pageSize ? clamp(options.pageSize, 1, 1000) : 0;
+    const pagingArgs = pageSize
+      ? [`--max-count=${pageSize}`, `--skip=${(page - 1) * pageSize}`]
+      : [];
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     opts.signal?.addEventListener('abort', onAbort, { once: true });
@@ -800,7 +807,7 @@ export class GitService {
     };
 
     const streamPromise = this.streamRecords(
-      ['log', `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`, revision, ...filterArgs],
+      ['log', ...pagingArgs, `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`, revision, ...filterArgs],
       (record) => {
         const commits = this.parseLog(`${record}${RECORD_SEP}`, refs);
         queue.push(...commits);

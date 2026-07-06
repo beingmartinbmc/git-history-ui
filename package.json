@@ -22,6 +22,7 @@
     "dist/**/*",
     "build/**/*",
     "scripts/check-native.js",
+    "scripts/register-protocol.js",
     "docs/**/*.md",
     "public/**/*",
     "README.md",

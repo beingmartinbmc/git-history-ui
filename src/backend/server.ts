@@ -131,6 +131,7 @@ export async function startServer(
   const insightsCache = new ResultCache<InsightsBundle>(15_000);
   const groupsCache = new ResultCache<CommitGroup[]>(15_000);
   const wrappedCache = new ResultCache<WrappedStats>(30_000);
+  let shareOrigin = `http://${host}:${port}`;
 
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
@@ -217,16 +218,14 @@ export async function startServer(
         const page = Math.max(1, options.page || 1);
         const pageSize = clampNumber(options.pageSize || 100, 1, 500);
         const skip = (page - 1) * pageSize;
-        const streamOptions = { ...options, page: undefined, pageSize: undefined };
+        const streamOptions = { ...options, page, pageSize: pageSize + 1 };
 
-        let seen = 0;
         let emitted = 0;
         let hasNext = false;
         for await (const commit of gitService.streamCommits(streamOptions, 200, {
           signal: controller.signal
         })) {
           if (cancelled) break;
-          if (seen++ < skip) continue;
           if (emitted >= pageSize) {
             hasNext = true;
             break;
@@ -240,7 +239,9 @@ export async function startServer(
         if (!cancelled) {
           const total = hasNext
             ? await gitService.countCommits(streamOptions, { signal: controller.signal })
-            : skip + emitted;
+            : emitted === 0 && page > 1
+              ? await gitService.countCommits(streamOptions, { signal: controller.signal })
+              : skip + emitted;
           send('done', {
             total,
             page,
@@ -658,9 +659,7 @@ export async function startServer(
         }
         params.set(k, String(v));
       }
-      const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-      const host = req.headers.host || 'localhost';
-      const url = `${proto}://${host}/?${params.toString()}`;
+      const url = `${shareOrigin}/?${params.toString()}`;
       res.status(201).json({ url, expiresAt: null, mode: 'local' });
     })
   );
@@ -840,40 +839,59 @@ export async function startServer(
     }
     const message = err instanceof Error ? err.message : 'Unknown error';
     const safeMessage = sanitizeErrorMessage(message);
-    const status = httpStatusForError(safeMessage);
+    const status = httpStatusForError(safeMessage, err);
     if (status >= 500) console.error('API error:', safeMessage);
     res.status(status).json({ error: safeMessage });
   });
 
   const httpServer = createServer(app);
 
-  await new Promise<void>((resolve, reject) => {
-    httpServer.once('error', reject);
-    httpServer.listen(port, host, () => {
-      httpServer.off('error', reject);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.once('error', reject);
+      httpServer.listen(port, host, () => {
+        httpServer.off('error', reject);
+        resolve();
+      });
     });
-  });
+  } catch (err) {
+    refWatcher.stop();
+    await indexBuild.cancel().catch(() => undefined);
+    sqliteIndex.close();
+    throw err;
+  }
 
-  const url = `http://${host}:${port}`;
+  const address = httpServer.address();
+  const actualPort = typeof address === 'object' && address ? address.port : port;
+  const displayHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
+  const url = `http://${displayHost}:${actualPort}`;
+  shareOrigin = url;
 
-  const close = (): Promise<void> =>
-    new Promise<void>((resolve) => {
-      refWatcher.stop();
-      indexBuild.cancel().catch(() => {});
-      for (const client of sseClients) {
-        client.end();
-      }
-      sseClients.clear();
-      httpServer.close(() => resolve());
+  const close = async (): Promise<void> => {
+    refWatcher.stop();
+    await indexBuild.cancel().catch(() => undefined);
+    sqliteIndex.close();
+    for (const client of sseClients) {
+      client.end();
+    }
+    sseClients.clear();
+    await new Promise<void>((resolve) => {
+      let resolved = false;
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+      httpServer.close(() => finish());
       // Force-close lingering connections after a grace period
       setTimeout(() => {
         if (typeof httpServer.closeAllConnections === 'function') {
           httpServer.closeAllConnections();
         }
-        resolve();
+        finish();
       }, 5_000).unref();
     });
+  };
 
   return { server: httpServer, url, close };
 }
@@ -1017,10 +1035,21 @@ function sanitizeAnnotationAuthor(value: unknown): string {
   return cleaned.slice(0, 80) || 'anonymous';
 }
 
-function httpStatusForError(message: string): number {
+function httpStatusForError(message: string, err?: unknown): number {
+  const typedErr = err as { status?: unknown; statusCode?: unknown } | undefined;
+  const explicitStatus =
+    err && typeof err === 'object' ? Number(typedErr?.status ?? typedErr?.statusCode) : 0;
+  if (Number.isInteger(explicitStatus) && explicitStatus >= 400 && explicitStatus < 500) {
+    return explicitStatus;
+  }
   const m = message.toLowerCase();
   if (/invalid (commit )?hash|invalid branch|invalid ref|invalid path/.test(m)) return 400;
-  if (/unknown revision|bad object|not a valid object|path .+ does not exist/.test(m)) return 404;
+  if (
+    /unknown revision|bad object|not a valid object|ambiguous argument|path .+ does not exist/.test(
+      m
+    )
+  )
+    return 404;
   return 500;
 }
 

@@ -1,6 +1,8 @@
 import { spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { parseProtocolUrl, resolveRepoToLocal } from '../cli';
+import { withTempHome } from './helpers/repo';
 
 /**
  * Smoke-tests the compiled CLI to guard against the v3.2.0 regression
@@ -52,5 +54,30 @@ describe('cli', () => {
     expect(out).toMatch(/Starting git-history-ui/);
     // And the help banner must NOT have been the only output.
     expect(out).not.toMatch(/Usage: git-history-ui \[options\] \[command\]\n\nBeautiful/);
+  });
+
+  it('parses protocol URLs and resolves nested personal repository checkouts', () => {
+    withTempHome((home) => {
+      const repoDir = path.join(home, 'repositories', 'personal', 'git-history-ui');
+      fs.mkdirSync(repoDir, { recursive: true });
+      spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repoDir });
+      spawnSync(
+        'git',
+        ['remote', 'add', 'origin', 'git@github.com:beingmartinbmc/git-history-ui.git'],
+        {
+          cwd: repoDir
+        }
+      );
+
+      const parsed = parseProtocolUrl(
+        'git-history-ui://open?repo=https%3A%2F%2Fgithub.com%2Fbeingmartinbmc%2Fgit-history-ui.git&at=abc1234&pr=42'
+      );
+      expect(parsed).toEqual({
+        repo: 'https://github.com/beingmartinbmc/git-history-ui.git',
+        at: 'abc1234',
+        pr: '42'
+      });
+      expect(resolveRepoToLocal(parsed.repo!)).toBe(repoDir);
+    });
   });
 });

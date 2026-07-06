@@ -2,10 +2,12 @@ import { CommonModule, DatePipe } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
   signal,
+  untracked,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -698,6 +700,7 @@ export class CommitDetailComponent {
   private insightsApi = inject(InsightsService);
   private annotationsApi = inject(AnnotationsService);
   private router = inject(Router);
+  private destroyRef = inject(DestroyRef);
 
   commit = this.state.selected;
 
@@ -713,6 +716,9 @@ export class CommitDetailComponent {
   commentDraft = '';
   commentAuthor = 'me';
   private sidebarSub?: { unsubscribe(): void };
+  private impactSub?: { unsubscribe(): void };
+  private explainSub?: { unsubscribe(): void };
+  private diffSub?: { unsubscribe(): void };
 
   loading = signal(false);
 
@@ -776,8 +782,11 @@ export class CommitDetailComponent {
 
   constructor() {
     effect(() => {
-      void this.fileMetas();
-      this.activeFileIndex.set(0);
+      const metas = this.fileMetas();
+      const sharedFile = untracked(() => this.state.activeFilePath());
+      const sharedIdx = sharedFile ? metas.files.findIndex((f) => f.file === sharedFile) : -1;
+      this.activeFileIndex.set(sharedIdx >= 0 ? sharedIdx : 0);
+      if (sharedIdx >= 0) this.state.activeFilePath.set(null);
       this.activeFile.set(null);
       this.loading.set(false);
     });
@@ -788,12 +797,13 @@ export class CommitDetailComponent {
       const idx = Math.min(this.activeFileIndex(), metas.files.length - 1);
       const meta = metas.files[idx];
       const c = this.commit();
+      this.diffSub?.unsubscribe();
       if (!c || !meta) {
         this.activeFile.set(null);
         return;
       }
       this.activeFileLoading.set(true);
-      this.git.getDiffFile(c.hash, meta.file).subscribe({
+      this.diffSub = this.git.getDiffFile(c.hash, meta.file).subscribe({
         next: (f) => {
           this.activeFile.set(f);
           this.activeFileLoading.set(false);
@@ -805,11 +815,20 @@ export class CommitDetailComponent {
       });
     });
 
+    this.destroyRef.onDestroy(() => {
+      this.sidebarSub?.unsubscribe();
+      this.impactSub?.unsubscribe();
+      this.explainSub?.unsubscribe();
+      this.diffSub?.unsubscribe();
+    });
+
     // Whenever the selected commit changes, reset side-panel state and load annotations.
     // Cancel any in-flight request from a previous selection.
     effect(() => {
       const c = this.commit();
       this.sidebarSub?.unsubscribe();
+      this.impactSub?.unsubscribe();
+      this.explainSub?.unsubscribe();
       this.impact.set(null);
       this.explanation.set(null);
       this.explainError.set(null);
@@ -856,8 +875,11 @@ export class CommitDetailComponent {
   onLoadImpact() {
     const c = this.commit();
     if (!c) return;
+    // Cancel a previous in-flight impact request so a stale response can't
+    // clobber a newer one (e.g. rapid "Refresh impact" clicks).
+    this.impactSub?.unsubscribe();
     this.loadingImpact.set(true);
-    this.insightsApi.impact(c.hash).subscribe({
+    this.impactSub = this.insightsApi.impact(c.hash).subscribe({
       next: (i) => {
         this.impact.set(i);
         this.loadingImpact.set(false);
@@ -869,9 +891,10 @@ export class CommitDetailComponent {
   onExplain() {
     const c = this.commit();
     if (!c || this.explaining()) return;
+    this.explainSub?.unsubscribe();
     this.explaining.set(true);
     this.explainError.set(null);
-    this.insightsApi.explainCommit(c.hash).subscribe({
+    this.explainSub = this.insightsApi.explainCommit(c.hash).subscribe({
       next: (r) => {
         this.explanation.set(r.summary);
         this.explaining.set(false);

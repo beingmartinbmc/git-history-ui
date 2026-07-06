@@ -214,6 +214,7 @@ export class GroupedListComponent {
   constructor() {
     effect(() => {
       const f = this.state.filters();
+      void this.state.focusedPrNumber();
       this.load(f.since, f.until, f.author, f.branch);
     });
   }
@@ -257,9 +258,15 @@ export class GroupedListComponent {
       next: (g) => {
         this.groups.set(g);
         this.loading.set(false);
-        // Auto-expand the first group with a PR.
-        const first = g.find((x) => x.prNumber);
-        if (first) this.expanded.set(new Set([first.id]));
+        const focusedPr = this.state.focusedPrNumber();
+        const focused = focusedPr ? g.find((x) => x.prNumber === focusedPr) : undefined;
+        const first = focused ?? g.find((x) => x.prNumber);
+        if (first) {
+          this.expanded.set(new Set([first.id]));
+          if (focused?.commits[0]) {
+            this.state.selectHash(focused.commits[0]);
+          }
+        }
       },
       error: (err) => {
         this.error.set(this.errMsg(err));

@@ -21,6 +21,8 @@ export class UiStateService {
   readonly tags = signal<string[]>([]);
 
   readonly selectedHash = signal<string | null>(null);
+  readonly activeFilePath = signal<string | null>(null);
+  readonly focusedPrNumber = signal<number | null>(null);
   readonly commitIndex = computed(() => {
     const map = new Map<string, { commit: Commit; index: number }>();
     this.commits().forEach((commit, index) => map.set(commit.hash, { commit, index }));

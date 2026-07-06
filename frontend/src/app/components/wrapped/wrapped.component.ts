@@ -1,5 +1,12 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { WrappedStats } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
@@ -290,6 +297,7 @@ export class WrappedComponent {
   private insightsApi = inject(InsightsService);
   private renderer = inject(WrappedCardRenderer);
   private git = inject(GitService);
+  private destroyRef = inject(DestroyRef);
 
   readonly stats = signal<WrappedStats | null>(null);
   readonly loading = signal<boolean>(false);
@@ -320,6 +328,7 @@ export class WrappedComponent {
       error: () => this.authors.set([]),
     });
     this.load();
+    this.destroyRef.onDestroy(() => this.loadSub?.unsubscribe());
   }
 
   canShare(): boolean {
@@ -361,11 +370,16 @@ export class WrappedComponent {
     return title && title.toLowerCase() !== 'git history' ? title : 'this repository';
   }
 
+  private loadSub?: { unsubscribe(): void };
+
   private load(): void {
+    // Cancel any in-flight request so an older year/author response can't
+    // land after a newer one and overwrite it.
+    this.loadSub?.unsubscribe();
     this.loading.set(true);
     this.error.set(null);
     this.status.set(null);
-    this.insightsApi
+    this.loadSub = this.insightsApi
       .wrapped({ year: this.year(), author: this.author().trim() || undefined })
       .subscribe({
         next: (s) => {
