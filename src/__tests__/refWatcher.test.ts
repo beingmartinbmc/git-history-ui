@@ -1,0 +1,56 @@
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { RefWatcher } from '../backend/refWatcher';
+
+describe('RefWatcher', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'refwatcher-'));
+    const gitDir = path.join(tmpDir, '.git');
+    fs.mkdirSync(path.join(gitDir, 'refs'), { recursive: true });
+    fs.writeFileSync(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('emits change when a ref file is modified', (done) => {
+    const watcher = new RefWatcher(tmpDir, 50); // 50ms debounce for test speed
+    watcher.on('change', () => {
+      watcher.stop();
+      done();
+    });
+    watcher.start();
+
+    // Simulate a commit by touching HEAD
+    setTimeout(() => {
+      fs.writeFileSync(path.join(tmpDir, '.git', 'HEAD'), 'ref: refs/heads/feature\n');
+    }, 20);
+  });
+
+  it('stop() prevents further events', (done) => {
+    const watcher = new RefWatcher(tmpDir, 30);
+    let fired = false;
+    watcher.on('change', () => {
+      fired = true;
+    });
+    watcher.start();
+    watcher.stop();
+
+    fs.writeFileSync(path.join(tmpDir, '.git', 'HEAD'), 'changed\n');
+
+    setTimeout(() => {
+      expect(fired).toBe(false);
+      done();
+    }, 100);
+  });
+
+  it('does not throw when .git does not exist', () => {
+    const watcher = new RefWatcher('/nonexistent/path');
+    expect(() => watcher.start()).not.toThrow();
+    watcher.stop();
+  });
+});

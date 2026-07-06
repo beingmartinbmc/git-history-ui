@@ -980,6 +980,8 @@ function isPlausibleHash(hash: string): boolean {
 export function isSafeRepoPath(filePath: string): boolean {
   if (typeof filePath !== 'string') return false;
   if (!filePath || filePath.includes('\0') || filePath.startsWith('/')) return false;
+  // Block Windows absolute paths (e.g. C:\, D:/)
+  if (/^[a-zA-Z]:/.test(filePath)) return false;
   return !filePath.split(/[\\/]+/).some((part) => part === '..');
 }
 
