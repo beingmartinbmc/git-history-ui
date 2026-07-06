@@ -25,13 +25,19 @@ Welcome to the **git-history-ui** wiki! This is the single source of truth for a
 
 A **local-first** Git history visualization tool that runs in your browser. It provides:
 
-- Natural-language and literal search over commit history
-- PR/feature grouping of flat commit lists  
-- Time-travel timeline with snapshot diffing  
+- Natural-language and literal search over commit history, plus code-content
+  (pickaxe) search
+- PR/feature grouping of flat commit lists
+- Time-travel timeline with snapshot diffing
+- Branch/tag compare view, and a stash & reflog explorer
 - Commit impact analysis (files, modules, ripple effects)
+- Lazy diff loading so large commits stay responsive
+- Live "new commits" notifications via SSE
+- Deep linking (`git-history-ui://` protocol, shareable query-param URLs)
 - AI-powered explanations and summaries (opt-in)
 - Breakage analysis (SZZ-lite suspect scoring)
 - "Git Wrapped" year-in-review cards
+- Export commits/insights/Wrapped as JSON or CSV
 
 **Key principle:** Your code never leaves your machine unless you explicitly configure an LLM provider API key.
 

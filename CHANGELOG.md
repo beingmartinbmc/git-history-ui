@@ -6,6 +6,104 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Deep linking.** `git-history-ui://open?repo=...&at=...&pr=...` protocol
+  URLs and `--repo-from-url`/`--at`/`--pr` CLI flags open a repo, commit, or
+  PR group directly; local repo resolution verifies the checkout's git
+  remote matches the requested URL before trusting it.
+- **Live updates.** `GET /api/events` (SSE) pushes a `new-commits`
+  notification when `.git/refs` changes; the UI shows a "new commits
+  available" toast and invalidates the insights/groups/wrapped caches.
+- **Lazy diff loading.** `GET /api/diff/:hash/files` returns per-file
+  metadata via `git diff-tree --numstat` (no patch parsing); `GET
+  /api/diff/:hash/file?path=...` fetches the full patch for one file only.
+  Commit detail now loads files incrementally instead of the whole diff.
+- **Code-content search (pickaxe).** `GET /api/pickaxe` searches commits by
+  added/removed string (`git log -S`) or regex (`git log -G`).
+- **Stash & reflog explorer.** `GET /api/stashes` and `GET /api/reflog`,
+  plus a `/stash` UI route.
+- **Branch/tag compare view.** New `/compare` route diffs any two refs.
+- **"Load more" / infinite scroll** for large commit lists; the selected
+  commit stays pinned while more history loads.
+- **Export.** `GET /api/export/commits` (JSON/CSV), `/api/export/insights`,
+  `/api/export/wrapped`, plus a toolbar Export action.
+- **Presets API.** `GET/POST/DELETE /api/presets/:name` exposes the CLI's
+  saved filter presets to the web UI.
+- **Server-side result caching** for `/api/insights`, `/api/groups`, and
+  `/api/wrapped`, invalidated automatically on new commits.
+- **`GitProcessQueue`** bounds concurrent `git` subprocesses (default 4)
+  across one-shot commands and streaming reads alike.
+- **Persistent GitHub PR-info cache** on disk, keyed per repository.
+- **Cross-process annotation locking** so concurrent writes to
+  `annotations.json` from multiple server instances stay safe.
+- **macOS and Windows protocol registration.** The post-install script now
+  registers `git-history-ui://` on macOS (a tiny user-local `.app` bundle
+  via Launch Services) and Windows (`HKCU` protocol-handler keys), matching
+  the existing Linux (`xdg-mime`) support.
+
+### Changed
+
+- SQLite indexed search (`/api/search`) now pushes `author`/`since`/`until`
+  filters into the SQL query and uses true `LIMIT`/`OFFSET` paging with an
+  exact `COUNT`-based total, instead of over-fetching and slicing in memory.
+- Anthropic LLM scoring batches candidates in groups of 40 to avoid response
+  truncation on large candidate sets.
+- Outbound requests to Anthropic, OpenAI, and the GitHub API now enforce
+  request timeouts (60s / 60s / 15s) instead of hanging indefinitely.
+- Graceful shutdown now stops the ref watcher, cancels any in-progress index
+  build, closes open SSE connections, and force-closes lingering HTTP
+  connections after a grace period.
+- Client input validation errors (invalid commit hash, branch, or path) now
+  return `400`, and unresolvable-but-well-formed refs return `404`, instead
+  of both surfacing as `500`.
+- The Chrome extension now re-injects its button across GitHub's SPA
+  navigation and ships real toolbar icons.
+- PR deep links (`?pr=`) now focus the exact PR group and select its first
+  commit, instead of the previous approximation of stuffing the PR number
+  into the free-text search box.
+- `POST /api/share` now builds URLs from the server's actual bind address
+  instead of the client-supplied `Host`/`X-Forwarded-Proto` headers.
+- `/api/commits/stream` paging now passes `--max-count`/`--skip` to
+  `git log` directly instead of streaming and discarding skipped records.
+
+### Fixed
+
+- Windows absolute paths (`C:\...`, `D:/...`) are now rejected by
+  `isSafeRepoPath`, closing a path-traversal gap that only affected Windows.
+- Streaming git reads (`streamRaw`, used by `streamCommits` and author/tag
+  listing) now go through the same concurrency queue as other git calls.
+- `git diff-tree --numstat` output parsing correctly pairs renamed files
+  with their numstat line.
+- Timeline range-diff now diffs against `HEAD` instead of a stale ref.
+- File-history route now reacts to `paramMap`/`queryParamMap` changes
+  instead of relying on a route snapshot, so navigating between files (or
+  deep-linking into the Breakage tab) reliably reloads.
+- Diff viewer no longer misclassifies `---`/`+++` content lines inside a
+  hunk as file-header metadata.
+- Git Wrapped now computes night-owl/weekend stats from each commit's local
+  author timezone instead of UTC.
+- Binary files in a diff are now flagged with `status: "binary"` and no
+  longer inflate `totalLines` (and therefore the "large diff" guard) using
+  git's `-`/`-` numstat placeholders.
+- `--repo-from-url` remote matching is stricter and safer: it normalizes
+  `git@host:owner/repo.git`, `https://`, and `ssh://` remote forms before
+  comparing, matches on path suffix instead of substring, and now rejects
+  the candidate (instead of accepting it) when the remote can't be read.
+- Server startup failures (e.g. port already in use) now clean up the ref
+  watcher, index build, and SQLite handle instead of leaking them; shutdown
+  also closes the SQLite index handle.
+- Binding to `0.0.0.0`/`::` or port `0` no longer prints an unusable/wrong
+  URL — the startup message now shows the actual bound port and a
+  browsable host.
+- Fixed several stale-response races in the frontend: rapid "Refresh
+  impact" clicks, repeated "Explain change" clicks, and Wrapped
+  year/author changes could previously let an older in-flight request
+  overwrite a newer one; all now cancel the prior subscription first.
+- `httpStatusForError` now respects an explicit `status`/`statusCode` on
+  the thrown error (e.g. from body-parser/rate-limit) instead of always
+  falling back to message-sniffing.
+
 ## [5.2.1] - 2026-06-27
 
 ### Documentation

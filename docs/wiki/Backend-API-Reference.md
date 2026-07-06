@@ -94,13 +94,22 @@ Server-Sent Events stream of commits. Same query params as `/api/commits`.
 
 Single commit by full or short hash.
 
+### `GET /api/events`
+
+Server-Sent Events stream. Emits a `new-commits` event whenever `.git/HEAD`
+or `.git/refs` changes (debounced ~1s), which the frontend uses to show a
+"New commits available" toast. Also invalidates the insights/groups/wrapped
+caches. Sends a `: heartbeat` comment every 30s to keep the connection alive.
+
 ---
 
 ## Diff
 
 ### `GET /api/diff/:hash`
 
-Diff for a single commit.
+Full diff for a single commit — every changed file, full patch text. Prefer
+the lazy endpoints below for commit detail views; this one still exists for
+callers (e.g. `explain-commit`) that need the whole patch at once.
 
 **Response:** `DiffFile[]`
 ```json
@@ -119,6 +128,61 @@ Diff for a single commit.
 ### `GET /api/diff?from=<hash>&to=<hash>`
 
 Range diff between two commits.
+
+### `GET /api/diff/:hash/files`
+
+Lazy diff — file metadata only, via `git diff-tree --numstat --name-status`.
+No patch text is parsed or returned, so this is cheap even for commits that
+touch hundreds of files.
+
+**Response:**
+```json
+{
+  "files": [
+    { "file": "src/app.ts", "oldFile": null, "status": "M", "additions": 15, "deletions": 3 }
+  ],
+  "totalLines": 18,
+  "isLarge": false
+}
+```
+
+`isLarge` is `true` when `totalLines > 5000` or more than 50 files changed —
+the frontend uses this to show a "large diff" guard before rendering.
+
+### `GET /api/diff/:hash/file?path=<file>`
+
+Full patch text for exactly one file in a commit, via a path-scoped
+`git diff`. `path` is required (`400` if missing) and validated against path
+traversal; returns `404` if the path isn't part of the commit's diff.
+
+**Response:** a single `DiffFile` object (same shape as one entry of the
+`/api/diff/:hash` array).
+
+---
+
+## Stash, Reflog & Pickaxe
+
+### `GET /api/stashes`
+
+List `git stash` entries.
+
+**Response:** `Array<{ index: number, message: string, hash: string, date: string }>`
+
+### `GET /api/reflog?limit=<n>`
+
+Recent `git reflog` entries. `limit` defaults to 50, max 200.
+
+**Response:** `Array<{ hash: string, selector: string, action: string, message: string }>`
+
+### `GET /api/pickaxe?pattern=<text>&mode=<S|G>`
+
+Code-content search — commits that added or removed a string (`git log -S`,
+the default) or matched a regex (`git log -G`, `mode=G`).
+
+**Query params:** `pattern` (required), `mode` (`S`|`G`), `author`, `since`,
+`until`, `file`, `branch`.
+
+**Response:** `{ "commits": Commit[], "total": number }`
 
 ---
 
@@ -162,7 +226,10 @@ Natural-language or literal search.
 ```
 
 **Behavior:**
-1. If SQLite index is available and no path/branch filters → uses FTS5 search
+1. If the SQLite index is available and no `file`/`branch` filter is set →
+   uses FTS5 search, with `author`/`since`/`until` pushed down into the SQL
+   query and true `LIMIT`/`OFFSET` paging (exact `total` via a matching
+   `COUNT` query — no over-fetch-and-slice).
 2. Otherwise → `parseNlQuery()` extracts intent → `runNlSearch()` fetches candidates from git → optional LLM re-ranking
 
 ---
@@ -305,9 +372,49 @@ List comments for a commit.
 
 ---
 
+## Export
+
+### `GET /api/export/commits`
+
+Same params as `/api/commits` (max `pageSize` 500), plus `format`
+(`json` default or `csv`). Streams the result as a file attachment
+(`commits.json` / `commits.csv`).
+
+### `GET /api/export/insights`
+
+**Query params:** `since`, `until`, `branch`. Downloads the insights bundle
+as `insights.json`.
+
+### `GET /api/export/wrapped`
+
+**Query params:** `year`. Downloads the Wrapped stats as `wrapped.json`.
+
+---
+
+## Presets
+
+CLI presets are also readable/writable from the UI, backed by the same
+`~/.git-history-ui/presets.json` file the CLI's `--preset`/`--save-preset`
+flags use.
+
+### `GET /api/presets`
+
+List all saved presets: `{ [name: string]: PresetFilters }`.
+
+### `POST /api/presets/:name`
+
+**Body:** a filter object (`{ file, since, author, port }`). `name` must be
+≤ 50 characters. **Response:** `201 { "name": "..." }`.
+
+### `DELETE /api/presets/:name`
+
+**Response:** `204` on success, `404` if the preset doesn't exist.
+
+---
+
 ## Index Management
 
-### `GET /api/index/status`
+### `GET /api/index/status` (alias: `GET /api/index/stats`)
 
 ```json
 {
@@ -326,7 +433,7 @@ Start building the index. `?wait=true` waits for completion.
 
 ### `POST /api/index/rebuild`
 
-Force a fresh index scan. **Response:** `202`.
+Force a fresh index scan, discarding the existing index. **Response:** `202`.
 
 ### `POST /api/index/cancel`
 
@@ -366,11 +473,13 @@ Simple lists.
 
 All errors return JSON: `{ "error": "<message>" }`
 
-- `400` — Bad request / missing params
+- `400` — Bad request / missing params, or an invalid commit hash, branch
+  name, or repository-relative path (rejected before any git call is made)
 - `401` — Unauthorized (token required but not provided)
 - `403` — CORS violation
-- `404` — Route not found
+- `404` — Route not found, or a valid-looking hash/ref/path that git can't
+  resolve (e.g. "unknown revision")
 - `413` — Payload too large (e.g., annotation body > 5000 chars)
 - `429` — Rate limited
-- `500` — Internal server error
+- `500` — Internal server error (unexpected failure, not a validation issue)
 - `503` — Service unavailable (AI endpoint with no key)

@@ -19,7 +19,9 @@ hosted instance URL configured in the popup.
 
 ## Status
 
-This is a Manifest V3 scaffold. Icons (`icon-16.png`, `icon-48.png`,
-`icon-128.png`) and Web Store packaging are TODO. The protocol-handler
-fallback is best-effort: browsers vary in how they expose protocol launch
-failure, so the script uses a `blur` heuristic with an 800ms timeout.
+This is a Manifest V3 extension. It re-injects the button across GitHub's
+SPA navigation (`MutationObserver` + URL polling), so the button reliably
+reappears when you navigate between PRs/commits without a full page load.
+Web Store packaging is still TODO. The protocol-handler fallback is
+best-effort: browsers vary in how they expose protocol launch failure, so
+the script uses a `blur` heuristic with an 800ms timeout.
