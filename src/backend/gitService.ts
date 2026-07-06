@@ -99,6 +99,9 @@ export class NotARepositoryError extends Error {
 
 export class GitService {
   private repoPath: string;
+  get cwd(): string {
+    return this.repoPath;
+  }
   private refIndexCache: RefIndex | null = null;
   private countCache = new Map<string, CountCacheEntry>();
   private authorsCache: AuthorsCacheEntry | null = null;
@@ -439,24 +442,30 @@ export class GitService {
     const parentsOut = await this.git(['log', '-1', '--pretty=format:%P', hash], opts);
     const parents = parentsOut.trim().split(/\s+/).filter(Boolean);
 
-    const args =
+    // --name-status gives us per-file status (A/D/M/R/C) in newline-separated lines.
+    // --numstat gives us add\tdel\tfile per line. Both are cheap (no patch parsing).
+    // We combine them with a single --numstat --name-status call (git merges the output
+    // into one pass but prints numstat first, then a blank, then name-status).
+    // Safer to do two fast calls than parse merged output.
+    const numArgs =
       parents.length === 0
-        ? ['diff-tree', '--root', '--numstat', '-M', '--no-color', '-z', hash]
-        : ['diff', '--numstat', '-M', '--no-color', '-z', `${hash}^1`, hash];
-    const raw = await this.git(args, opts);
+        ? ['diff-tree', '--root', '--numstat', '-M', '--no-color', hash]
+        : ['diff', '--numstat', '-M', '--no-color', `${hash}^1`, hash];
+    const raw = await this.git(numArgs, opts);
 
-    const nameArgs =
+    const statusArgs =
       parents.length === 0
         ? ['diff-tree', '--root', '--name-status', '-M', '--no-color', hash]
         : ['diff', '--name-status', '-M', '--no-color', `${hash}^1`, hash];
-    const statusRaw = await this.git(nameArgs, opts);
+    const statusRaw = await this.git(statusArgs, opts);
 
-    const statusMap = new Map<string, string>();
+    const statusMap = new Map<string, { code: string; oldFile?: string }>();
     for (const line of statusRaw.split('\n').filter(Boolean)) {
       const match = line.match(/^([AMDRC])\d*\t(.+?)(?:\t(.+))?$/);
       if (match) {
         const target = match[3] ?? match[2];
-        statusMap.set(target, match[1]);
+        const oldFile = match[3] ? match[2] : undefined;
+        statusMap.set(target, { code: match[1], oldFile });
       }
     }
 
@@ -468,16 +477,28 @@ export class GitService {
       deletions: number;
     }> = [];
     let totalLines = 0;
-    // --numstat -z separates fields with NUL; lines with tab
-    const numLines = raw.split('\n').filter(Boolean);
-    for (const line of numLines) {
-      const parts = line.replace(/\0/g, '\t').split('\t').filter(Boolean);
-      if (parts.length < 3) continue;
-      const add = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-      const del = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-      const filePath = parts.length > 3 ? parts[3] : parts[2];
-      const oldFile = parts.length > 3 ? parts[2] : undefined;
-      const statusCode = statusMap.get(filePath) ?? 'M';
+    // --numstat without -z: "add\tdel\tfile" per line, renames as "add\tdel\told => new"
+    for (const line of raw.split('\n').filter(Boolean)) {
+      const m = line.match(/^(-|\d+)\t(-|\d+)\t(.+)$/);
+      if (!m) continue;
+      const add = m[1] === '-' ? 0 : parseInt(m[1], 10);
+      const del = m[2] === '-' ? 0 : parseInt(m[2], 10);
+      let filePath = m[3];
+      let oldFile: string | undefined;
+      // Renames show as "old => new" or "{prefix/old => prefix/new}"
+      const renameMatch = filePath.match(/^(.+?)\{(.+?) => (.+?)\}(.*)$|^(.+?) => (.+)$/);
+      if (renameMatch) {
+        if (renameMatch[5] !== undefined) {
+          oldFile = renameMatch[5];
+          filePath = renameMatch[6];
+        } else {
+          oldFile = renameMatch[1] + renameMatch[2] + renameMatch[4];
+          filePath = renameMatch[1] + renameMatch[3] + renameMatch[4];
+        }
+      }
+      const info = statusMap.get(filePath);
+      if (info?.oldFile) oldFile = info.oldFile;
+      const statusCode = info?.code ?? 'M';
       const status =
         statusCode === 'A'
           ? 'added'

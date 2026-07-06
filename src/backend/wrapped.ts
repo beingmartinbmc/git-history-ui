@@ -233,10 +233,16 @@ export function aggregateWrapped(
     if (!Number.isNaN(d.getTime())) {
       const day = c.date.slice(0, 10);
       byDay.set(day, (byDay.get(day) ?? 0) + 1);
-      const hour = d.getUTCHours();
+      // Use the author's local time from the ISO offset, not UTC.
+      // c.date is ISO 8601 with offset (e.g. 2024-03-15T23:45:00+05:30).
+      // Parse HH from the date string to respect the author's timezone.
+      const localHourMatch = c.date.match(/T(\d{2}):/);
+      const hour = localHourMatch ? parseInt(localHourMatch[1], 10) : d.getUTCHours();
       byHour[hour]++;
       if (hour >= 22 || hour < 6) nightOwl++;
-      const dow = d.getUTCDay();
+      // For day-of-week, derive from the date portion (already local in ISO string)
+      const localDate = new Date(day + 'T12:00:00Z'); // noon UTC to avoid DST edge
+      const dow = localDate.getUTCDay();
       if (dow === 0 || dow === 6) weekend++;
     }
 

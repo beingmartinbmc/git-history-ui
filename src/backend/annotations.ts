@@ -180,10 +180,17 @@ export class AnnotationsStore {
     });
     return prev
       .then(() => this.acquireFileLock())
-      .then(fn)
-      .finally(async () => {
-        await this.releaseFileLock();
+      .then(async () => {
+        try {
+          await fn();
+        } finally {
+          await this.releaseFileLock();
+          release();
+        }
+      })
+      .catch((err) => {
         release();
+        throw err;
       });
   }
 
@@ -212,9 +219,10 @@ export class AnnotationsStore {
             await fs.promises.unlink(this.lockPath).catch(() => {});
             continue;
           }
-        } catch {
-          await fs.promises.unlink(this.lockPath).catch(() => {});
-          continue;
+        } catch (readErr) {
+          // ENOENT = lock was just released by its holder; retry acquire
+          if ((readErr as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          // Other read error: lock file exists but unreadable — wait and retry
         }
         await new Promise((r) => setTimeout(r, 20 + Math.random() * 30));
       }

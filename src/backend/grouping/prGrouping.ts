@@ -204,12 +204,13 @@ export async function buildCommitGroups(
 
   // Optional PR enrichment.
   if (opts.githubToken) {
-    loadPrCacheFromDisk();
+    const repoCwd = gitService.cwd;
+    loadPrCacheFromDisk(repoCwd);
     const remote = await gitService.getRemoteUrl().catch(() => null);
     const slug = remote ? parseGithubSlug(remote) : null;
     if (slug) {
       await enrichWithPrInfo(groups, slug, opts.githubToken);
-      savePrCacheToDisk();
+      savePrCacheToDisk(repoCwd);
     }
   }
 

@@ -712,6 +712,7 @@ export class CommitDetailComponent {
 
   commentDraft = '';
   commentAuthor = 'me';
+  private sidebarSub?: { unsubscribe(): void };
 
   loading = signal(false);
 
@@ -734,23 +735,21 @@ export class CommitDetailComponent {
           });
         }
         this.loading.set(true);
-        return this.git
-          .getDiffFiles(c.hash)
-          .pipe(
-            catchError(() =>
-              of({
-                files: [] as Array<{
-                  file: string;
-                  oldFile?: string;
-                  status: string;
-                  additions: number;
-                  deletions: number;
-                }>,
-                totalLines: 0,
-                isLarge: false,
-              }),
-            ),
-          );
+        return this.git.getDiffFiles(c.hash).pipe(
+          catchError(() =>
+            of({
+              files: [] as Array<{
+                file: string;
+                oldFile?: string;
+                status: string;
+                additions: number;
+                deletions: number;
+              }>,
+              totalLines: 0,
+              isLarge: false,
+            }),
+          ),
+        );
       }),
     ),
     {
@@ -807,17 +806,21 @@ export class CommitDetailComponent {
     });
 
     // Whenever the selected commit changes, reset side-panel state and load annotations.
+    // Cancel any in-flight request from a previous selection.
     effect(() => {
       const c = this.commit();
+      this.sidebarSub?.unsubscribe();
       this.impact.set(null);
       this.explanation.set(null);
       this.explainError.set(null);
+      this.explaining.set(false);
+      this.loadingImpact.set(false);
       this.shareCopied.set(false);
       if (!c) {
         this.comments.set([]);
         return;
       }
-      this.annotationsApi.list(c.hash).subscribe({
+      this.sidebarSub = this.annotationsApi.list(c.hash).subscribe({
         next: (list) => this.comments.set(list),
         error: () => this.comments.set([]),
       });

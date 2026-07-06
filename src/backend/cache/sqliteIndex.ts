@@ -358,9 +358,9 @@ export class SqliteIndex {
       const like = '%' + query + '%';
       rows = db
         .prepare(
-          `SELECT hash, short, subject, body, date, author, email, parents
-           FROM commits WHERE (subject LIKE ? OR body LIKE ?)${clause}
-           ORDER BY date DESC LIMIT ? OFFSET ?`
+          `SELECT c.hash, c.short, c.subject, c.body, c.date, c.author, c.email, c.parents
+           FROM commits c WHERE (c.subject LIKE ? OR c.body LIKE ?)${clause}
+           ORDER BY c.date DESC LIMIT ? OFFSET ?`
         )
         .all(like, like, ...params, limit, offset) as Row[];
     }

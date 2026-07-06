@@ -29,24 +29,31 @@ export class AnthropicProvider implements LlmService {
 
   async score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]> {
     if (candidates.length === 0) return [];
-    // Slice candidate text to keep prompt small.
     const items = candidates.map((c, i) => ({
       idx: i,
       id: c.id,
       text: c.text.replace(/\s+/g, ' ').slice(0, 240)
     }));
-    const prompt = [
-      'You score commit relevance to a developer query.',
-      'Return ONLY a JSON array of {idx:number,score:number} where score is in [0,1].',
-      'No prose, no markdown.',
-      `Query: ${query}`,
-      'Candidates:',
-      ...items.map((it) => `[${it.idx}] ${it.text}`)
-    ].join('\n');
 
-    const text = await this.call(prompt, 1024);
-    const parsed = parseScores(text, items.length);
-    return items.map((it) => ({ id: it.id, score: parsed[it.idx] ?? 0 }));
+    // Batch to avoid response truncation: each item ~20 output tokens,
+    // plus JSON overhead. 40 items ≈ 800 output tokens fits in 1024 safely.
+    const BATCH = 40;
+    const allScores: Record<number, number> = {};
+    for (let start = 0; start < items.length; start += BATCH) {
+      const batch = items.slice(start, start + BATCH);
+      const prompt = [
+        'You score commit relevance to a developer query.',
+        'Return ONLY a JSON array of {idx:number,score:number} where score is in [0,1].',
+        'No prose, no markdown.',
+        `Query: ${query}`,
+        'Candidates:',
+        ...batch.map((it) => `[${it.idx}] ${it.text}`)
+      ].join('\n');
+      const text = await this.call(prompt, 1024);
+      const parsed = parseScores(text, items.length);
+      for (const [k, v] of Object.entries(parsed)) allScores[Number(k)] = v;
+    }
+    return items.map((it) => ({ id: it.id, score: allScores[it.idx] ?? 0 }));
   }
 
   async summarize(text: string, opts?: { hint?: string; maxTokens?: number }): Promise<string> {
