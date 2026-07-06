@@ -78,7 +78,8 @@ export class AnthropicProvider implements LlmService {
         model: this.model,
         max_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }]
-      })
+      }),
+      signal: AbortSignal.timeout(60_000)
     });
     if (!resp.ok) {
       const err = await resp.text().catch(() => '');

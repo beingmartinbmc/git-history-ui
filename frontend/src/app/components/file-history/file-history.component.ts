@@ -601,6 +601,16 @@ export class FileHistoryComponent {
       const requestedTab = qp.get('tab');
       if (requestedTab === 'breakage' || requestedTab === 'blame' || requestedTab === 'history') {
         this.tab.set(requestedTab);
+        // If breakage tab was requested via deep link, ensure analysis loads
+        // (paramMap may have already fired load() before tab was set)
+        if (
+          requestedTab === 'breakage' &&
+          this.filePath() &&
+          !this.breakage() &&
+          !this.breakageLoading()
+        ) {
+          this.loadBreakage(this.filePath());
+        }
       }
     });
   }

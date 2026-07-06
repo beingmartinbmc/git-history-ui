@@ -679,50 +679,53 @@ export class GitService {
     onChunk: (chunk: Buffer) => void,
     opts: GitStreamOptions = {}
   ): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      let settled = false;
-      if (opts.signal?.aborted) {
-        reject(new Error('git stream aborted'));
-        return;
-      }
-      const child = spawn('git', args, {
-        cwd: this.repoPath,
-        env: {
-          ...process.env,
-          GIT_PAGER: 'cat',
-          GIT_TERMINAL_PROMPT: '0',
-          LC_ALL: 'C'
-        }
-      });
-      let stderr = '';
-      const rejectOnce = (err: unknown) => {
-        if (settled) return;
-        settled = true;
-        opts.signal?.removeEventListener('abort', onAbort);
-        child.kill();
-        reject(err instanceof Error ? err : new Error(String(err)));
-      };
-      const onAbort = () => rejectOnce(new Error('git stream aborted'));
-      opts.signal?.addEventListener('abort', onAbort, { once: true });
-      child.stdout.on('data', (chunk: Buffer) => {
-        try {
-          onChunk(chunk);
-        } catch (err) {
-          rejectOnce(err);
-        }
-      });
-      child.stderr.on('data', (chunk: Buffer) => {
-        if (stderr.length < 4096) stderr += chunk.toString('utf8');
-      });
-      child.on('error', rejectOnce);
-      child.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        opts.signal?.removeEventListener('abort', onAbort);
-        if (code === 0) resolve();
-        else reject(new Error(`git ${args[0]} exited ${code}: ${stderr.trim()}`));
-      });
-    });
+    return gitQueue.run(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          let settled = false;
+          if (opts.signal?.aborted) {
+            reject(new Error('git stream aborted'));
+            return;
+          }
+          const child = spawn('git', args, {
+            cwd: this.repoPath,
+            env: {
+              ...process.env,
+              GIT_PAGER: 'cat',
+              GIT_TERMINAL_PROMPT: '0',
+              LC_ALL: 'C'
+            }
+          });
+          let stderr = '';
+          const rejectOnce = (err: unknown) => {
+            if (settled) return;
+            settled = true;
+            opts.signal?.removeEventListener('abort', onAbort);
+            child.kill();
+            reject(err instanceof Error ? err : new Error(String(err)));
+          };
+          const onAbort = () => rejectOnce(new Error('git stream aborted'));
+          opts.signal?.addEventListener('abort', onAbort, { once: true });
+          child.stdout.on('data', (chunk: Buffer) => {
+            try {
+              onChunk(chunk);
+            } catch (err) {
+              rejectOnce(err);
+            }
+          });
+          child.stderr.on('data', (chunk: Buffer) => {
+            if (stderr.length < 4096) stderr += chunk.toString('utf8');
+          });
+          child.on('error', rejectOnce);
+          child.on('close', (code) => {
+            if (settled) return;
+            settled = true;
+            opts.signal?.removeEventListener('abort', onAbort);
+            if (code === 0) resolve();
+            else reject(new Error(`git ${args[0]} exited ${code}: ${stderr.trim()}`));
+          });
+        })
+    );
   }
 
   /**

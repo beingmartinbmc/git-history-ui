@@ -289,7 +289,8 @@ async function enrichWithPrInfo(
       const resp = await fetch(
         `https://api.github.com/repos/${slug.owner}/${slug.repo}/pulls/${n}`,
         {
-          headers
+          headers,
+          signal: AbortSignal.timeout(15_000)
         }
       );
       if (resp.status === 304 && cached) {

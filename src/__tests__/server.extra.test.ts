@@ -388,11 +388,9 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(nested.status).toBe(400);
   });
 
-  it('500 errors are logged and surfaced as JSON', async () => {
-    // Pass an invalid hash to force getCommit to throw a generic Error
-    // (not NotARepositoryError → goes through the 500 branch).
+  it('invalid hash errors are surfaced as 400 JSON', async () => {
     const r = await request({ url: `${url}/api/commit/zzzz` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid commit hash/);
   });
 });

@@ -840,8 +840,9 @@ export async function startServer(
     }
     const message = err instanceof Error ? err.message : 'Unknown error';
     const safeMessage = sanitizeErrorMessage(message);
-    console.error('API error:', safeMessage);
-    res.status(500).json({ error: safeMessage });
+    const status = httpStatusForError(safeMessage);
+    if (status >= 500) console.error('API error:', safeMessage);
+    res.status(status).json({ error: safeMessage });
   });
 
   const httpServer = createServer(app);
@@ -859,8 +860,19 @@ export async function startServer(
   const close = (): Promise<void> =>
     new Promise<void>((resolve) => {
       refWatcher.stop();
+      indexBuild.cancel().catch(() => {});
+      for (const client of sseClients) {
+        client.end();
+      }
+      sseClients.clear();
       httpServer.close(() => resolve());
-      setTimeout(() => resolve(), 5_000).unref();
+      // Force-close lingering connections after a grace period
+      setTimeout(() => {
+        if (typeof httpServer.closeAllConnections === 'function') {
+          httpServer.closeAllConnections();
+        }
+        resolve();
+      }, 5_000).unref();
     });
 
   return { server: httpServer, url, close };
@@ -1003,6 +1015,13 @@ function sanitizeAnnotationAuthor(value: unknown): string {
     .join('')
     .trim();
   return cleaned.slice(0, 80) || 'anonymous';
+}
+
+function httpStatusForError(message: string): number {
+  const m = message.toLowerCase();
+  if (/invalid (commit )?hash|invalid branch|invalid ref|invalid path/.test(m)) return 400;
+  if (/unknown revision|bad object|not a valid object|path .+ does not exist/.test(m)) return 404;
+  return 500;
 }
 
 function sanitizeErrorMessage(message: string): string {

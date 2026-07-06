@@ -3,6 +3,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import open from 'open';
+import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -143,11 +144,14 @@ function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: strin
 /**
  * Best-effort: given a GitHub/GitLab HTTPS URL, guess the local checkout path.
  * Checks ~/repo-name, ~/Development/repo-name, and common parent dirs.
+ * Verifies the candidate's git remote actually matches the requested URL.
  */
 function resolveRepoToLocal(repoUrl: string): string | undefined {
   let repoName: string;
+  let urlPath: string; // e.g. "owner/repo" from https://github.com/owner/repo
   try {
     const u = new URL(repoUrl);
+    urlPath = u.pathname.replace(/\.git$/, '').replace(/^\/+|\/+$/g, '');
     repoName =
       u.pathname
         .split('/')
@@ -155,6 +159,7 @@ function resolveRepoToLocal(repoUrl: string): string | undefined {
         .pop()
         ?.replace(/\.git$/, '') ?? '';
   } catch {
+    urlPath = repoUrl.replace(/\.git$/, '');
     repoName =
       repoUrl
         .split('/')
@@ -176,12 +181,32 @@ function resolveRepoToLocal(repoUrl: string): string | undefined {
   ];
   for (const dir of candidates) {
     try {
-      if (existsSync(join(dir, '.git'))) return dir;
+      if (!existsSync(join(dir, '.git'))) continue;
+      if (urlPath && !repoRemoteMatches(dir, urlPath)) continue;
+      return dir;
     } catch {
       /* skip */
     }
   }
   return undefined;
+}
+
+/** Check that at least one git remote contains the owner/repo path. */
+function repoRemoteMatches(dir: string, urlPath: string): boolean {
+  try {
+    const remotes = execFileSync('git', ['remote', '-v'], {
+      cwd: dir,
+      encoding: 'utf8',
+      timeout: 3000
+    });
+    const normalized = urlPath.toLowerCase();
+    return remotes
+      .toLowerCase()
+      .split('\n')
+      .some((line: string) => line.includes(normalized));
+  } catch {
+    return true; // can't verify → don't reject
+  }
 }
 
 async function main(): Promise<void> {
