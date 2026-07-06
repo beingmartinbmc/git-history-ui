@@ -263,6 +263,9 @@ export async function startServer(
   const refWatcher = new RefWatcher(cwd);
   const sseClients = new Set<import('http').ServerResponse>();
   refWatcher.on('change', () => {
+    insightsCache.clear();
+    groupsCache.clear();
+    wrappedCache.clear();
     const payload = `event: new-commits\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
     for (const client of sseClients) {
       client.write(payload);
@@ -323,24 +326,18 @@ export async function startServer(
     })
   );
 
-  // Lazy diff: returns only file metadata (no change bodies) for large commits
+  // Lazy diff: file metadata via git diff-tree --numstat (no patch parsing)
   app.get(
     '/api/diff/:hash/files',
     wrap(async (req, res) => {
-      const diff = await gitService.getDiff(req.params.hash, { signal: requestAbortSignal(req) });
-      const files = diff.map((f) => ({
-        file: f.file,
-        oldFile: f.oldFile,
-        status: f.status,
-        additions: f.additions,
-        deletions: f.deletions
-      }));
-      const totalLines = diff.reduce((s, f) => s + f.additions + f.deletions, 0);
+      const { files, totalLines } = await gitService.getDiffMeta(req.params.hash, {
+        signal: requestAbortSignal(req)
+      });
       res.json({ files, totalLines, isLarge: totalLines > 5000 || files.length > 50 });
     })
   );
 
-  // Lazy diff: returns diff body for a single file within a commit
+  // Lazy diff: full patch for a single file only (scoped git diff -- path)
   app.get(
     '/api/diff/:hash/file',
     wrap(async (req, res) => {
@@ -349,8 +346,9 @@ export async function startServer(
         res.status(400).json({ error: 'path query param is required' });
         return;
       }
-      const diff = await gitService.getDiff(req.params.hash, { signal: requestAbortSignal(req) });
-      const match = diff.find((f) => f.file === filePath);
+      const match = await gitService.getDiffForFile(req.params.hash, filePath, {
+        signal: requestAbortSignal(req)
+      });
       if (!match) {
         res.status(404).json({ error: 'file not found in diff' });
         return;
@@ -381,14 +379,9 @@ export async function startServer(
         const filters = { author, since, until };
         const total = await sqliteIndex.searchCount(q, filters);
         const start = (page - 1) * pageSize;
-        const commits = await sqliteIndex.search(q, pageSize, filters);
-        // ponytail: offset via SQL LIMIT; fetch only what we need
-        const offsetRows =
-          start > 0
-            ? await sqliteIndex.search(q, start + pageSize, filters).then((r) => r.slice(start))
-            : commits;
+        const commits = await sqliteIndex.search(q, pageSize, filters, start);
         res.json({
-          commits: start > 0 ? offsetRows : commits,
+          commits,
           total,
           page,
           pageSize,

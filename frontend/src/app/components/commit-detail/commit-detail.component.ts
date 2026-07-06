@@ -715,33 +715,95 @@ export class CommitDetailComponent {
 
   loading = signal(false);
 
-  files = toSignal(
+  /** Lightweight file metadata (no patch bodies). */
+  fileMetas = toSignal(
     toObservable(this.commit).pipe(
       switchMap((c) => {
         if (!c) {
           this.loading.set(false);
-          return of([] as DiffFile[]);
+          return of({
+            files: [] as Array<{
+              file: string;
+              oldFile?: string;
+              status: string;
+              additions: number;
+              deletions: number;
+            }>,
+            totalLines: 0,
+            isLarge: false,
+          });
         }
         this.loading.set(true);
-        return this.git.getDiff(c.hash).pipe(catchError(() => of([] as DiffFile[])));
+        return this.git
+          .getDiffFiles(c.hash)
+          .pipe(
+            catchError(() =>
+              of({
+                files: [] as Array<{
+                  file: string;
+                  oldFile?: string;
+                  status: string;
+                  additions: number;
+                  deletions: number;
+                }>,
+                totalLines: 0,
+                isLarge: false,
+              }),
+            ),
+          );
       }),
     ),
-    { initialValue: [] as DiffFile[] },
+    {
+      initialValue: {
+        files: [] as Array<{
+          file: string;
+          oldFile?: string;
+          status: string;
+          additions: number;
+          deletions: number;
+        }>,
+        totalLines: 0,
+        isLarge: false,
+      },
+    },
   );
 
+  files = computed(() => this.fileMetas().files as unknown as DiffFile[]);
+
   activeFileIndex = signal(0);
-  activeFile = computed(() => {
-    const list = this.files();
-    if (!list.length) return null;
-    const idx = Math.min(this.activeFileIndex(), list.length - 1);
-    return list[idx];
-  });
+  /** Full diff (with patch body) for the currently selected file, loaded lazily. */
+  activeFile = signal<DiffFile | null>(null);
+  private activeFileLoading = signal(false);
 
   constructor() {
     effect(() => {
-      void this.files();
+      void this.fileMetas();
       this.activeFileIndex.set(0);
+      this.activeFile.set(null);
       this.loading.set(false);
+    });
+
+    // Lazy-load the full diff when active file index changes
+    effect(() => {
+      const metas = this.fileMetas();
+      const idx = Math.min(this.activeFileIndex(), metas.files.length - 1);
+      const meta = metas.files[idx];
+      const c = this.commit();
+      if (!c || !meta) {
+        this.activeFile.set(null);
+        return;
+      }
+      this.activeFileLoading.set(true);
+      this.git.getDiffFile(c.hash, meta.file).subscribe({
+        next: (f) => {
+          this.activeFile.set(f);
+          this.activeFileLoading.set(false);
+        },
+        error: () => {
+          this.activeFile.set(meta as unknown as DiffFile);
+          this.activeFileLoading.set(false);
+        },
+      });
     });
 
     // Whenever the selected commit changes, reset side-panel state and load annotations.
@@ -767,7 +829,7 @@ export class CommitDetailComponent {
   }
 
   selectFile(f: DiffFile) {
-    const idx = this.files().findIndex((x) => x.file === f.file);
+    const idx = this.fileMetas().files.findIndex((x) => x.file === f.file);
     if (idx >= 0) this.activeFileIndex.set(idx);
   }
 

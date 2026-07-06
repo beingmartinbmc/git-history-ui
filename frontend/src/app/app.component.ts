@@ -184,6 +184,12 @@ export class AppComponent {
         this.pendingSharedCommit.set(hash);
         this.state.selectHash(hash);
       }
+      // PR deep link: switch to grouped view and set PR filter
+      const pr = params.get('pr');
+      if (pr) {
+        this.state.viewMode.set('grouped');
+        this.state.patchFilters({ search: `#${pr}` });
+      }
       // Restore shared filters
       const author = params.get('author');
       const since = params.get('since');

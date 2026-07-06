@@ -416,6 +416,105 @@ export class GitService {
     return parseUnifiedDiff(raw);
   }
 
+  /**
+   * Lightweight diff metadata (file list + stats) without patch bodies.
+   * Uses git diff-tree --numstat which is orders of magnitude cheaper than
+   * full diff parsing for large commits.
+   */
+  async getDiffMeta(
+    hash: string,
+    opts: GitStreamOptions = {}
+  ): Promise<{
+    files: Array<{
+      file: string;
+      oldFile?: string;
+      status: string;
+      additions: number;
+      deletions: number;
+    }>;
+    totalLines: number;
+  }> {
+    if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
+
+    const parentsOut = await this.git(['log', '-1', '--pretty=format:%P', hash], opts);
+    const parents = parentsOut.trim().split(/\s+/).filter(Boolean);
+
+    const args =
+      parents.length === 0
+        ? ['diff-tree', '--root', '--numstat', '-M', '--no-color', '-z', hash]
+        : ['diff', '--numstat', '-M', '--no-color', '-z', `${hash}^1`, hash];
+    const raw = await this.git(args, opts);
+
+    const nameArgs =
+      parents.length === 0
+        ? ['diff-tree', '--root', '--name-status', '-M', '--no-color', hash]
+        : ['diff', '--name-status', '-M', '--no-color', `${hash}^1`, hash];
+    const statusRaw = await this.git(nameArgs, opts);
+
+    const statusMap = new Map<string, string>();
+    for (const line of statusRaw.split('\n').filter(Boolean)) {
+      const match = line.match(/^([AMDRC])\d*\t(.+?)(?:\t(.+))?$/);
+      if (match) {
+        const target = match[3] ?? match[2];
+        statusMap.set(target, match[1]);
+      }
+    }
+
+    const files: Array<{
+      file: string;
+      oldFile?: string;
+      status: string;
+      additions: number;
+      deletions: number;
+    }> = [];
+    let totalLines = 0;
+    // --numstat -z separates fields with NUL; lines with tab
+    const numLines = raw.split('\n').filter(Boolean);
+    for (const line of numLines) {
+      const parts = line.replace(/\0/g, '\t').split('\t').filter(Boolean);
+      if (parts.length < 3) continue;
+      const add = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
+      const del = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
+      const filePath = parts.length > 3 ? parts[3] : parts[2];
+      const oldFile = parts.length > 3 ? parts[2] : undefined;
+      const statusCode = statusMap.get(filePath) ?? 'M';
+      const status =
+        statusCode === 'A'
+          ? 'added'
+          : statusCode === 'D'
+            ? 'deleted'
+            : statusCode === 'R'
+              ? 'renamed'
+              : statusCode === 'C'
+                ? 'copied'
+                : 'modified';
+      files.push({ file: filePath, oldFile, status, additions: add, deletions: del });
+      totalLines += add + del;
+    }
+    return { files, totalLines };
+  }
+
+  /** Full diff for a single file within a commit, avoiding parsing the entire patch. */
+  async getDiffForFile(
+    hash: string,
+    filePath: string,
+    opts: GitStreamOptions = {}
+  ): Promise<DiffFile | null> {
+    if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
+    assertSafeRepoPath(filePath);
+
+    const parentsOut = await this.git(['log', '-1', '--pretty=format:%P', hash], opts);
+    const parents = parentsOut.trim().split(/\s+/).filter(Boolean);
+
+    const args =
+      parents.length === 0
+        ? ['diff-tree', '--root', '-p', '-M', '--no-color', hash, '--', filePath]
+        : ['diff', '-M', '--no-color', `${hash}^1`, hash, '--', filePath];
+    const raw = await this.git(args, { ...opts, maxBuffer: 64 * 1024 * 1024 });
+    const parsed = parseUnifiedDiff(raw);
+    return parsed[0] ?? null;
+  }
+
   async getRangeDiff(from: string, to: string, opts: GitStreamOptions = {}): Promise<DiffFile[]> {
     if (!isPlausibleHash(from) || !isPlausibleHash(to)) {
       throw new Error('Invalid commit hash');

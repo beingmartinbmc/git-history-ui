@@ -31,6 +31,10 @@ export class ResultCache<T> {
     return entry.value;
   }
 
+  clear(): void {
+    this.store.clear();
+  }
+
   set(key: string, value: T): void {
     if (this.store.size >= this.maxEntries) {
       const oldest = this.store.keys().next().value;

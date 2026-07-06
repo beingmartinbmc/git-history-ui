@@ -3,8 +3,9 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import open from 'open';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import { startServer } from './backend/server';
 import { PresetsStore, type PresetFilters } from './backend/presets';
 
@@ -139,6 +140,50 @@ function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: strin
   }
 }
 
+/**
+ * Best-effort: given a GitHub/GitLab HTTPS URL, guess the local checkout path.
+ * Checks ~/repo-name, ~/Development/repo-name, and common parent dirs.
+ */
+function resolveRepoToLocal(repoUrl: string): string | undefined {
+  let repoName: string;
+  try {
+    const u = new URL(repoUrl);
+    repoName =
+      u.pathname
+        .split('/')
+        .filter(Boolean)
+        .pop()
+        ?.replace(/\.git$/, '') ?? '';
+  } catch {
+    repoName =
+      repoUrl
+        .split('/')
+        .filter(Boolean)
+        .pop()
+        ?.replace(/\.git$/, '') ?? '';
+  }
+  if (!repoName) return undefined;
+  const home = homedir();
+  const candidates = [
+    join(home, repoName),
+    join(home, 'Development', repoName),
+    join(home, 'dev', repoName),
+    join(home, 'repos', repoName),
+    join(home, 'projects', repoName),
+    join(home, 'src', repoName),
+    join(home, 'repositories', repoName),
+    join(home, 'code', repoName)
+  ];
+  for (const dir of candidates) {
+    try {
+      if (existsSync(join(dir, '.git'))) return dir;
+    } catch {
+      /* skip */
+    }
+  }
+  return undefined;
+}
+
 async function main(): Promise<void> {
   const options = program.opts<MainOptions>();
   const presetsStore = new PresetsStore();
@@ -148,9 +193,19 @@ async function main(): Promise<void> {
     const parsed = parseProtocolUrl(options.repoFromUrl);
     if (parsed.at && !options.at) options.at = parsed.at;
     if (parsed.pr && !options.pr) options.pr = parsed.pr;
-    // If repo URL matches cwd, proceed; otherwise print guidance
-    if (parsed.repo) {
-      console.log(chalk.gray(`Protocol URL: repo=${parsed.repo}`));
+    if (parsed.repo && !options.cwd) {
+      const localPath = resolveRepoToLocal(parsed.repo);
+      if (localPath) {
+        options.cwd = localPath;
+        console.log(chalk.gray(`Protocol URL: resolved repo to ${localPath}`));
+      } else {
+        console.warn(
+          chalk.yellow(
+            `Could not find local clone for ${parsed.repo}.\n` +
+              `Clone it and re-run, or use --cwd to point at the checkout.`
+          )
+        );
+      }
     }
   }
 

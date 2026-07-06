@@ -328,7 +328,8 @@ export class SqliteIndex {
   async search(
     query: string,
     limit = 50,
-    filters?: { author?: string; since?: string; until?: string }
+    filters?: { author?: string; since?: string; until?: string },
+    offset = 0
   ): Promise<Commit[]> {
     if (!this.open()) return [];
     const db = this.db!;
@@ -350,18 +351,18 @@ export class SqliteIndex {
           `SELECT c.hash, c.short, c.subject, c.body, c.date, c.author, c.email, c.parents
            FROM commits_fts f JOIN commits c ON c.rowid = f.rowid
            WHERE commits_fts MATCH ?${clause}
-           ORDER BY rank, c.date DESC LIMIT ?`
+           ORDER BY rank, c.date DESC LIMIT ? OFFSET ?`
         )
-        .all(query, ...params, limit) as Row[];
+        .all(query, ...params, limit, offset) as Row[];
     } catch {
       const like = '%' + query + '%';
       rows = db
         .prepare(
           `SELECT hash, short, subject, body, date, author, email, parents
            FROM commits WHERE (subject LIKE ? OR body LIKE ?)${clause}
-           ORDER BY date DESC LIMIT ?`
+           ORDER BY date DESC LIMIT ? OFFSET ?`
         )
-        .all(like, like, ...params, limit) as Row[];
+        .all(like, like, ...params, limit, offset) as Row[];
     }
     return rows.map(rowToCommit);
   }
