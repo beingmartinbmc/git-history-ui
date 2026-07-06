@@ -18,6 +18,11 @@ import { computeInsights } from './insights';
 import { computeWrapped } from './wrapped';
 import { AnnotationsStore } from './annotations';
 import { SqliteIndex, type IndexProgress, type IndexStats } from './cache/sqliteIndex';
+import { ResultCache } from './cache/resultCache';
+import { RefWatcher } from './refWatcher';
+import type { InsightsBundle } from './aggregations';
+import type { CommitGroup } from './grouping/prGrouping';
+import type { WrappedStats } from './wrapped';
 
 export interface ServerOptions {
   port?: number;
@@ -123,6 +128,10 @@ export async function startServer(
     (args, onChunk, streamOpts) => gitService.streamRaw(args, onChunk, streamOpts)
   );
   const indexBuild = createIndexBuildController(sqliteIndex);
+  const insightsCache = new ResultCache<InsightsBundle>(15_000);
+  const groupsCache = new ResultCache<CommitGroup[]>(15_000);
+  const wrappedCache = new ResultCache<WrappedStats>(30_000);
+  let shareOrigin = `http://${host}:${port}`;
 
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
@@ -209,16 +218,14 @@ export async function startServer(
         const page = Math.max(1, options.page || 1);
         const pageSize = clampNumber(options.pageSize || 100, 1, 500);
         const skip = (page - 1) * pageSize;
-        const streamOptions = { ...options, page: undefined, pageSize: undefined };
+        const streamOptions = { ...options, page, pageSize: pageSize + 1 };
 
-        let seen = 0;
         let emitted = 0;
         let hasNext = false;
         for await (const commit of gitService.streamCommits(streamOptions, 200, {
           signal: controller.signal
         })) {
           if (cancelled) break;
-          if (seen++ < skip) continue;
           if (emitted >= pageSize) {
             hasNext = true;
             break;
@@ -232,7 +239,9 @@ export async function startServer(
         if (!cancelled) {
           const total = hasNext
             ? await gitService.countCommits(streamOptions, { signal: controller.signal })
-            : skip + emitted;
+            : emitted === 0 && page > 1
+              ? await gitService.countCommits(streamOptions, { signal: controller.signal })
+              : skip + emitted;
           send('done', {
             total,
             page,
@@ -249,6 +258,34 @@ export async function startServer(
         res.end();
       }
     })();
+  });
+
+  // Live ref watcher: pushes SSE events when .git/refs change
+  const refWatcher = new RefWatcher(cwd);
+  const sseClients = new Set<import('http').ServerResponse>();
+  refWatcher.on('change', () => {
+    insightsCache.clear();
+    groupsCache.clear();
+    wrappedCache.clear();
+    const payload = `event: new-commits\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
+    for (const client of sseClients) {
+      client.write(payload);
+    }
+  });
+  refWatcher.start();
+
+  app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    sseClients.add(res);
+    const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 30_000);
+    req.on('close', () => {
+      sseClients.delete(res);
+      clearInterval(heartbeat);
+    });
   });
 
   app.get(
@@ -290,6 +327,37 @@ export async function startServer(
     })
   );
 
+  // Lazy diff: file metadata via git diff-tree --numstat (no patch parsing)
+  app.get(
+    '/api/diff/:hash/files',
+    wrap(async (req, res) => {
+      const { files, totalLines } = await gitService.getDiffMeta(req.params.hash, {
+        signal: requestAbortSignal(req)
+      });
+      res.json({ files, totalLines, isLarge: totalLines > 5000 || files.length > 50 });
+    })
+  );
+
+  // Lazy diff: full patch for a single file only (scoped git diff -- path)
+  app.get(
+    '/api/diff/:hash/file',
+    wrap(async (req, res) => {
+      const filePath = stringParam(req.query.path);
+      if (!filePath) {
+        res.status(400).json({ error: 'path query param is required' });
+        return;
+      }
+      const match = await gitService.getDiffForFile(req.params.hash, filePath, {
+        signal: requestAbortSignal(req)
+      });
+      if (!match) {
+        res.status(404).json({ error: 'file not found in diff' });
+        return;
+      }
+      res.json(match);
+    })
+  );
+
   app.get(
     '/api/search',
     wrap(async (req, res) => {
@@ -300,27 +368,26 @@ export async function startServer(
       }
       const page = numberParam(req.query.page, 1);
       const pageSize = clampNumber(numberParam(req.query.pageSize, 25), 1, 500);
-      const hasFilters = !!(
-        stringParam(req.query.branch) ||
-        stringParam(req.query.file) ||
-        stringParam(req.query.author) ||
-        stringParam(req.query.since) ||
-        stringParam(req.query.until)
-      );
+      const author = stringParam(req.query.author);
+      const since = stringParam(req.query.since);
+      const until = stringParam(req.query.until);
+      const branch = stringParam(req.query.branch);
+      const file = stringParam(req.query.file);
+      // SQLite can handle author + date filters; only branch and file need git log
+      const needsGitFallback = !!(branch || file);
       const stats = await sqliteIndex.stats().catch(() => ({ available: false, total: 0 }));
-      if (!hasFilters && stats.available && stats.total > 0) {
-        const end = page * pageSize + 1;
-        const rows = await sqliteIndex.search(q, end);
+      if (!needsGitFallback && stats.available && stats.total > 0) {
+        const filters = { author, since, until };
+        const total = await sqliteIndex.searchCount(q, filters);
         const start = (page - 1) * pageSize;
-        const commits = rows.slice(start, start + pageSize);
-        const total = rows.length;
+        const commits = await sqliteIndex.search(q, pageSize, filters, start);
         res.json({
           commits,
           total,
           page,
           pageSize,
           totalPages: Math.max(1, Math.ceil(total / pageSize)),
-          hasNext: rows.length > start + pageSize,
+          hasNext: start + pageSize < total,
           hasPrevious: page > 1,
           parsedQuery: parseNlQuery(q),
           usedLlm: false,
@@ -330,11 +397,11 @@ export async function startServer(
       }
       const result = await runNlSearch(gitService, getLlm(), {
         query: q,
-        branch: stringParam(req.query.branch),
-        file: stringParam(req.query.file),
-        author: stringParam(req.query.author),
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
+        branch,
+        file,
+        author,
+        since,
+        until,
         page,
         pageSize
       });
@@ -345,14 +412,26 @@ export async function startServer(
   app.get(
     '/api/groups',
     wrap(async (req, res) => {
+      const since = stringParam(req.query.since);
+      const until = stringParam(req.query.until);
+      const author = stringParam(req.query.author);
+      const branch = stringParam(req.query.branch);
+      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 1000), 1, 5000);
+      const cacheKey = ResultCache.key({ since, until, author, branch, maxCommits });
+      const cached = groupsCache.get(cacheKey);
+      if (cached) {
+        res.json(cached);
+        return;
+      }
       const groups = await buildCommitGroups(gitService, {
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
-        author: stringParam(req.query.author),
-        branch: stringParam(req.query.branch),
+        since,
+        until,
+        author,
+        branch,
         githubToken,
-        maxCommits: clampNumber(numberParam(req.query.maxCommits, 1000), 1, 5000)
+        maxCommits
       });
+      groupsCache.set(cacheKey, groups);
       res.json(groups);
     })
   );
@@ -413,14 +492,25 @@ export async function startServer(
   app.get(
     '/api/insights',
     wrap(async (req, res) => {
+      const since = stringParam(req.query.since);
+      const until = stringParam(req.query.until);
+      const branch = stringParam(req.query.branch);
+      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 500), 1, 5000);
+      const cacheKey = ResultCache.key({ since, until, branch, maxCommits });
+      const cached = insightsCache.get(cacheKey);
+      if (cached) {
+        res.json(cached);
+        return;
+      }
       const signal = requestAbortSignal(req);
       const bundle = await computeInsights(gitService, {
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
-        branch: stringParam(req.query.branch),
-        maxCommits: clampNumber(numberParam(req.query.maxCommits, 500), 1, 5000),
+        since,
+        until,
+        branch,
+        maxCommits,
         signal
       });
+      insightsCache.set(cacheKey, bundle);
       res.json(bundle);
     })
   );
@@ -430,15 +520,28 @@ export async function startServer(
     wrap(async (req, res) => {
       const signal = requestAbortSignal(req);
       const yearParam = numberParam(req.query.year, 0);
+      const year = yearParam > 0 ? yearParam : undefined;
+      const since = stringParam(req.query.since);
+      const until = stringParam(req.query.until);
+      const branch = stringParam(req.query.branch);
+      const author = stringParam(req.query.author);
+      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 5000), 1, 20_000);
+      const cacheKey = ResultCache.key({ year, since, until, branch, author, maxCommits });
+      const cached = wrappedCache.get(cacheKey);
+      if (cached) {
+        res.json(cached);
+        return;
+      }
       const wrapped = await computeWrapped(gitService, {
-        year: yearParam > 0 ? yearParam : undefined,
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
-        branch: stringParam(req.query.branch),
-        author: stringParam(req.query.author),
-        maxCommits: clampNumber(numberParam(req.query.maxCommits, 5000), 1, 20_000),
+        year,
+        since,
+        until,
+        branch,
+        author,
+        maxCommits,
         signal
       });
+      wrappedCache.set(cacheKey, wrapped);
       res.json(wrapped);
     })
   );
@@ -556,9 +659,7 @@ export async function startServer(
         }
         params.set(k, String(v));
       }
-      const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-      const host = req.headers.host || 'localhost';
-      const url = `${proto}://${host}/?${params.toString()}`;
+      const url = `${shareOrigin}/?${params.toString()}`;
       res.status(201).json({ url, expiresAt: null, mode: 'local' });
     })
   );
@@ -573,6 +674,136 @@ export async function startServer(
       }
       const blame = await gitService.getBlame(file);
       res.json(blame);
+    })
+  );
+
+  // Pickaxe: search for code content changes (git log -S/-G)
+  app.get(
+    '/api/pickaxe',
+    wrap(async (req, res) => {
+      const pattern = stringParam(req.query.pattern);
+      if (!pattern) {
+        res.status(400).json({ error: 'pattern query param is required' });
+        return;
+      }
+      const mode = stringParam(req.query.mode) === 'G' ? 'G' : 'S';
+      const commits = await gitService.pickaxeSearch(pattern, {
+        mode: mode as 'S' | 'G',
+        author: stringParam(req.query.author),
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
+        file: stringParam(req.query.file),
+        branch: stringParam(req.query.branch),
+        signal: requestAbortSignal(req)
+      });
+      res.json({ commits, total: commits.length });
+    })
+  );
+
+  // Stash explorer
+  app.get(
+    '/api/stashes',
+    wrap(async (req, res) => {
+      const stashes = await gitService.getStashes({ signal: requestAbortSignal(req) });
+      res.json(stashes);
+    })
+  );
+
+  // Reflog explorer
+  app.get(
+    '/api/reflog',
+    wrap(async (req, res) => {
+      const limit = clampNumber(numberParam(req.query.limit, 50), 1, 200);
+      const entries = await gitService.getReflog(limit, { signal: requestAbortSignal(req) });
+      res.json(entries);
+    })
+  );
+
+  // Export endpoints
+  app.get(
+    '/api/export/commits',
+    wrap(async (req, res) => {
+      const format = stringParam(req.query.format) === 'csv' ? 'csv' : 'json';
+      const result = await gitService.getCommits(commitOptionsFromQuery(req.query, 500), {
+        signal: requestAbortSignal(req)
+      });
+      if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename=commits.csv');
+        const header = 'hash,shortHash,author,authorEmail,date,subject\n';
+        const rows = result.commits.map(
+          (c) =>
+            `${c.hash},${c.shortHash},${csvEscape(c.author)},${csvEscape(c.authorEmail)},${c.date},${csvEscape(c.subject)}`
+        );
+        res.send(header + rows.join('\n'));
+      } else {
+        res.setHeader('Content-Disposition', 'attachment; filename=commits.json');
+        res.json(result.commits);
+      }
+    })
+  );
+
+  app.get(
+    '/api/export/insights',
+    wrap(async (req, res) => {
+      const signal = requestAbortSignal(req);
+      const bundle = await computeInsights(gitService, {
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
+        branch: stringParam(req.query.branch),
+        signal
+      });
+      res.setHeader('Content-Disposition', 'attachment; filename=insights.json');
+      res.json(bundle);
+    })
+  );
+
+  app.get(
+    '/api/export/wrapped',
+    wrap(async (req, res) => {
+      const signal = requestAbortSignal(req);
+      const yearParam = numberParam(req.query.year, 0);
+      const wrapped = await computeWrapped(gitService, {
+        year: yearParam > 0 ? yearParam : undefined,
+        signal
+      });
+      res.setHeader('Content-Disposition', 'attachment; filename=wrapped.json');
+      res.json(wrapped);
+    })
+  );
+
+  // Presets API (expose CLI presets to the UI)
+  app.get(
+    '/api/presets',
+    wrap(async (_req, res) => {
+      const { PresetsStore } = await import('./presets');
+      const store = new PresetsStore();
+      res.json(await store.list());
+    })
+  );
+
+  app.post(
+    '/api/presets/:name',
+    wrap(async (req, res) => {
+      const name = req.params.name;
+      if (!name || name.length > 50) {
+        res.status(400).json({ error: 'invalid preset name' });
+        return;
+      }
+      const { PresetsStore } = await import('./presets');
+      const store = new PresetsStore();
+      await store.save(name, req.body ?? {});
+      res.status(201).json({ name });
+    })
+  );
+
+  app.delete(
+    '/api/presets/:name',
+    wrap(async (req, res) => {
+      const { PresetsStore } = await import('./presets');
+      const store = new PresetsStore();
+      const ok = await store.delete(req.params.name);
+      res.status(ok ? 204 : 404).end();
     })
   );
 
@@ -608,27 +839,59 @@ export async function startServer(
     }
     const message = err instanceof Error ? err.message : 'Unknown error';
     const safeMessage = sanitizeErrorMessage(message);
-    console.error('API error:', safeMessage);
-    res.status(500).json({ error: safeMessage });
+    const status = httpStatusForError(safeMessage, err);
+    if (status >= 500) console.error('API error:', safeMessage);
+    res.status(status).json({ error: safeMessage });
   });
 
   const httpServer = createServer(app);
 
-  await new Promise<void>((resolve, reject) => {
-    httpServer.once('error', reject);
-    httpServer.listen(port, host, () => {
-      httpServer.off('error', reject);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.once('error', reject);
+      httpServer.listen(port, host, () => {
+        httpServer.off('error', reject);
+        resolve();
+      });
     });
-  });
+  } catch (err) {
+    refWatcher.stop();
+    await indexBuild.cancel().catch(() => undefined);
+    sqliteIndex.close();
+    throw err;
+  }
 
-  const url = `http://${host}:${port}`;
+  const address = httpServer.address();
+  const actualPort = typeof address === 'object' && address ? address.port : port;
+  const displayHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
+  const url = `http://${displayHost}:${actualPort}`;
+  shareOrigin = url;
 
-  const close = (): Promise<void> =>
-    new Promise<void>((resolve) => {
-      httpServer.close(() => resolve());
-      setTimeout(() => resolve(), 5_000).unref();
+  const close = async (): Promise<void> => {
+    refWatcher.stop();
+    await indexBuild.cancel().catch(() => undefined);
+    sqliteIndex.close();
+    for (const client of sseClients) {
+      client.end();
+    }
+    sseClients.clear();
+    await new Promise<void>((resolve) => {
+      let resolved = false;
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+      httpServer.close(() => finish());
+      // Force-close lingering connections after a grace period
+      setTimeout(() => {
+        if (typeof httpServer.closeAllConnections === 'function') {
+          httpServer.closeAllConnections();
+        }
+        finish();
+      }, 5_000).unref();
     });
+  };
 
   return { server: httpServer, url, close };
 }
@@ -772,6 +1035,24 @@ function sanitizeAnnotationAuthor(value: unknown): string {
   return cleaned.slice(0, 80) || 'anonymous';
 }
 
+function httpStatusForError(message: string, err?: unknown): number {
+  const typedErr = err as { status?: unknown; statusCode?: unknown } | undefined;
+  const explicitStatus =
+    err && typeof err === 'object' ? Number(typedErr?.status ?? typedErr?.statusCode) : 0;
+  if (Number.isInteger(explicitStatus) && explicitStatus >= 400 && explicitStatus < 500) {
+    return explicitStatus;
+  }
+  const m = message.toLowerCase();
+  if (/invalid (commit )?hash|invalid branch|invalid ref|invalid path/.test(m)) return 400;
+  if (
+    /unknown revision|bad object|not a valid object|ambiguous argument|path .+ does not exist/.test(
+      m
+    )
+  )
+    return 404;
+  return 500;
+}
+
 function sanitizeErrorMessage(message: string): string {
   return message.replace(
     /'([^']+)' is outside repository at '[^']+'/g,
@@ -783,6 +1064,11 @@ function requestAbortSignal(req: Request): AbortSignal {
   const controller = new AbortController();
   req.on('close', () => controller.abort());
   return controller.signal;
+}
+
+function csvEscape(value: string): string {
+  if (/[,"\n\r]/.test(value)) return '"' + value.replace(/"/g, '""') + '"';
+  return value;
 }
 
 function pkgVersion(): string {

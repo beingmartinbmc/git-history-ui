@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process';
 import { StringDecoder } from 'string_decoder';
 import { promisify } from 'util';
+import { gitQueue } from './gitProcessQueue';
 
 const execFileAsync = promisify(execFile);
 
@@ -98,6 +99,9 @@ export class NotARepositoryError extends Error {
 
 export class GitService {
   private repoPath: string;
+  get cwd(): string {
+    return this.repoPath;
+  }
   private refIndexCache: RefIndex | null = null;
   private countCache = new Map<string, CountCacheEntry>();
   private authorsCache: AuthorsCacheEntry | null = null;
@@ -415,9 +419,128 @@ export class GitService {
     return parseUnifiedDiff(raw);
   }
 
+  /**
+   * Lightweight diff metadata (file list + stats) without patch bodies.
+   * Uses git diff-tree --numstat which is orders of magnitude cheaper than
+   * full diff parsing for large commits.
+   */
+  async getDiffMeta(
+    hash: string,
+    opts: GitStreamOptions = {}
+  ): Promise<{
+    files: Array<{
+      file: string;
+      oldFile?: string;
+      status: string;
+      additions: number;
+      deletions: number;
+    }>;
+    totalLines: number;
+  }> {
+    if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
+
+    const parentsOut = await this.git(['log', '-1', '--pretty=format:%P', hash], opts);
+    const parents = parentsOut.trim().split(/\s+/).filter(Boolean);
+
+    // --name-status gives us per-file status (A/D/M/R/C) in newline-separated lines.
+    // --numstat gives us add\tdel\tfile per line. Both are cheap (no patch parsing).
+    // We combine them with a single --numstat --name-status call (git merges the output
+    // into one pass but prints numstat first, then a blank, then name-status).
+    // Safer to do two fast calls than parse merged output.
+    const numArgs =
+      parents.length === 0
+        ? ['diff-tree', '--root', '--numstat', '-M', '--no-color', hash]
+        : ['diff', '--numstat', '-M', '--no-color', `${hash}^1`, hash];
+    const raw = await this.git(numArgs, opts);
+
+    const statusArgs =
+      parents.length === 0
+        ? ['diff-tree', '--root', '--name-status', '-M', '--no-color', hash]
+        : ['diff', '--name-status', '-M', '--no-color', `${hash}^1`, hash];
+    const statusRaw = await this.git(statusArgs, opts);
+
+    const statusMap = new Map<string, { code: string; oldFile?: string }>();
+    for (const line of statusRaw.split('\n').filter(Boolean)) {
+      const match = line.match(/^([AMDRC])\d*\t(.+?)(?:\t(.+))?$/);
+      if (match) {
+        const target = match[3] ?? match[2];
+        const oldFile = match[3] ? match[2] : undefined;
+        statusMap.set(target, { code: match[1], oldFile });
+      }
+    }
+
+    const files: Array<{
+      file: string;
+      oldFile?: string;
+      status: string;
+      additions: number;
+      deletions: number;
+    }> = [];
+    let totalLines = 0;
+    // --numstat without -z: "add\tdel\tfile" per line, renames as "add\tdel\told => new"
+    for (const line of raw.split('\n').filter(Boolean)) {
+      const m = line.match(/^(-|\d+)\t(-|\d+)\t(.+)$/);
+      if (!m) continue;
+      const binary = m[1] === '-' || m[2] === '-';
+      const add = m[1] === '-' ? 0 : parseInt(m[1], 10);
+      const del = m[2] === '-' ? 0 : parseInt(m[2], 10);
+      let filePath = m[3];
+      let oldFile: string | undefined;
+      // Renames show as "old => new" or "{prefix/old => prefix/new}"
+      const renameMatch = filePath.match(/^(.+?)\{(.+?) => (.+?)\}(.*)$|^(.+?) => (.+)$/);
+      if (renameMatch) {
+        if (renameMatch[5] !== undefined) {
+          oldFile = renameMatch[5];
+          filePath = renameMatch[6];
+        } else {
+          oldFile = renameMatch[1] + renameMatch[2] + renameMatch[4];
+          filePath = renameMatch[1] + renameMatch[3] + renameMatch[4];
+        }
+      }
+      const info = statusMap.get(filePath);
+      if (info?.oldFile) oldFile = info.oldFile;
+      const statusCode = info?.code ?? 'M';
+      const status = binary
+        ? 'binary'
+        : statusCode === 'A'
+          ? 'added'
+          : statusCode === 'D'
+            ? 'deleted'
+            : statusCode === 'R'
+              ? 'renamed'
+              : statusCode === 'C'
+                ? 'copied'
+                : 'modified';
+      files.push({ file: filePath, oldFile, status, additions: add, deletions: del });
+      totalLines += binary ? 1 : add + del;
+    }
+    return { files, totalLines };
+  }
+
+  /** Full diff for a single file within a commit, avoiding parsing the entire patch. */
+  async getDiffForFile(
+    hash: string,
+    filePath: string,
+    opts: GitStreamOptions = {}
+  ): Promise<DiffFile | null> {
+    if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
+    assertSafeRepoPath(filePath);
+
+    const parentsOut = await this.git(['log', '-1', '--pretty=format:%P', hash], opts);
+    const parents = parentsOut.trim().split(/\s+/).filter(Boolean);
+
+    const args =
+      parents.length === 0
+        ? ['diff-tree', '--root', '-p', '-M', '--no-color', hash, '--', filePath]
+        : ['diff', '-M', '--no-color', `${hash}^1`, hash, '--', filePath];
+    const raw = await this.git(args, { ...opts, maxBuffer: 64 * 1024 * 1024 });
+    const parsed = parseUnifiedDiff(raw);
+    return parsed[0] ?? null;
+  }
+
   async getRangeDiff(from: string, to: string, opts: GitStreamOptions = {}): Promise<DiffFile[]> {
-    if (!isPlausibleHash(from) || !isPlausibleHash(to)) {
-      throw new Error('Invalid commit hash');
+    if (!isSafeRef(from) || !isSafeRef(to)) {
+      throw new Error('Invalid ref');
     }
     const raw = await this.git(['diff', '-M', '--no-color', from, to], {
       ...opts,
@@ -558,50 +681,53 @@ export class GitService {
     onChunk: (chunk: Buffer) => void,
     opts: GitStreamOptions = {}
   ): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      let settled = false;
-      if (opts.signal?.aborted) {
-        reject(new Error('git stream aborted'));
-        return;
-      }
-      const child = spawn('git', args, {
-        cwd: this.repoPath,
-        env: {
-          ...process.env,
-          GIT_PAGER: 'cat',
-          GIT_TERMINAL_PROMPT: '0',
-          LC_ALL: 'C'
-        }
-      });
-      let stderr = '';
-      const rejectOnce = (err: unknown) => {
-        if (settled) return;
-        settled = true;
-        opts.signal?.removeEventListener('abort', onAbort);
-        child.kill();
-        reject(err instanceof Error ? err : new Error(String(err)));
-      };
-      const onAbort = () => rejectOnce(new Error('git stream aborted'));
-      opts.signal?.addEventListener('abort', onAbort, { once: true });
-      child.stdout.on('data', (chunk: Buffer) => {
-        try {
-          onChunk(chunk);
-        } catch (err) {
-          rejectOnce(err);
-        }
-      });
-      child.stderr.on('data', (chunk: Buffer) => {
-        if (stderr.length < 4096) stderr += chunk.toString('utf8');
-      });
-      child.on('error', rejectOnce);
-      child.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        opts.signal?.removeEventListener('abort', onAbort);
-        if (code === 0) resolve();
-        else reject(new Error(`git ${args[0]} exited ${code}: ${stderr.trim()}`));
-      });
-    });
+    return gitQueue.run(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          let settled = false;
+          if (opts.signal?.aborted) {
+            reject(new Error('git stream aborted'));
+            return;
+          }
+          const child = spawn('git', args, {
+            cwd: this.repoPath,
+            env: {
+              ...process.env,
+              GIT_PAGER: 'cat',
+              GIT_TERMINAL_PROMPT: '0',
+              LC_ALL: 'C'
+            }
+          });
+          let stderr = '';
+          const rejectOnce = (err: unknown) => {
+            if (settled) return;
+            settled = true;
+            opts.signal?.removeEventListener('abort', onAbort);
+            child.kill();
+            reject(err instanceof Error ? err : new Error(String(err)));
+          };
+          const onAbort = () => rejectOnce(new Error('git stream aborted'));
+          opts.signal?.addEventListener('abort', onAbort, { once: true });
+          child.stdout.on('data', (chunk: Buffer) => {
+            try {
+              onChunk(chunk);
+            } catch (err) {
+              rejectOnce(err);
+            }
+          });
+          child.stderr.on('data', (chunk: Buffer) => {
+            if (stderr.length < 4096) stderr += chunk.toString('utf8');
+          });
+          child.on('error', rejectOnce);
+          child.on('close', (code) => {
+            if (settled) return;
+            settled = true;
+            opts.signal?.removeEventListener('abort', onAbort);
+            if (code === 0) resolve();
+            else reject(new Error(`git ${args[0]} exited ${code}: ${stderr.trim()}`));
+          });
+        })
+    );
   }
 
   /**
@@ -662,6 +788,11 @@ export class GitService {
     const refs = await this.getRefIndex();
     const filterArgs = this.buildFilterArgs(options);
     const revision = this.revisionArg(options);
+    const page = Math.max(1, options.page || 1);
+    const pageSize = options.pageSize ? clamp(options.pageSize, 1, 1000) : 0;
+    const pagingArgs = pageSize
+      ? [`--max-count=${pageSize}`, `--skip=${(page - 1) * pageSize}`]
+      : [];
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     opts.signal?.addEventListener('abort', onAbort, { once: true });
@@ -676,7 +807,7 @@ export class GitService {
     };
 
     const streamPromise = this.streamRecords(
-      ['log', `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`, revision, ...filterArgs],
+      ['log', ...pagingArgs, `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`, revision, ...filterArgs],
       (record) => {
         const commits = this.parseLog(`${record}${RECORD_SEP}`, refs);
         queue.push(...commits);
@@ -736,6 +867,70 @@ export class GitService {
     if (pending.trim()) onRecord(pending);
   }
 
+  /** Pickaxe search: find commits where <pattern> was added or removed from file content. */
+  async pickaxeSearch(
+    pattern: string,
+    opts: GitOptions & { mode?: 'S' | 'G' } & GitStreamOptions = {}
+  ): Promise<Commit[]> {
+    if (!pattern || pattern.length > 500) throw new Error('Invalid search pattern');
+    const flag = opts.mode === 'G' ? '-G' : '-S';
+    const filterArgs = this.buildFilterArgs(opts);
+    const revision = this.revisionArg(opts);
+    const refs = await this.getRefIndex();
+    const commits: Commit[] = [];
+    await this.streamRecords(
+      [
+        'log',
+        '--max-count=100',
+        flag,
+        pattern,
+        `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
+        revision,
+        ...filterArgs
+      ],
+      (record) => commits.push(...this.parseLog(`${record}${RECORD_SEP}`, refs)),
+      opts
+    );
+    return commits;
+  }
+
+  /** List stash entries. */
+  async getStashes(
+    opts: GitStreamOptions = {}
+  ): Promise<Array<{ index: number; message: string; date: string; hash: string }>> {
+    const out = await this.git(['stash', 'list', '--pretty=format:%H%x1f%aI%x1f%s'], opts);
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((line, i) => {
+        const [hash, date, message] = line.split('\x1f');
+        return { index: i, hash, date, message };
+      });
+  }
+
+  /** List reflog entries. */
+  async getReflog(
+    limit = 50,
+    opts: GitStreamOptions = {}
+  ): Promise<
+    Array<{ hash: string; shortHash: string; action: string; message: string; date: string }>
+  > {
+    const out = await this.git(
+      ['reflog', `--max-count=${clamp(limit, 1, 200)}`, '--pretty=format:%H%x1f%h%x1f%aI%x1f%gs'],
+      opts
+    );
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [hash, shortHash, date, gs] = line.split('\x1f');
+        const colonIdx = gs.indexOf(': ');
+        const action = colonIdx >= 0 ? gs.slice(0, colonIdx) : gs;
+        const message = colonIdx >= 0 ? gs.slice(colonIdx + 2) : '';
+        return { hash, shortHash, action, message, date };
+      });
+  }
+
   async getBlame(filePath: string): Promise<BlameLine[]> {
     assertSafeRepoPath(filePath);
     const raw = await this.git(['blame', '--porcelain', '--', filePath]);
@@ -764,25 +959,27 @@ export class GitService {
   }
 
   private async git(args: string[], opts: GitExecOptions = {}): Promise<string> {
-    try {
-      const { stdout } = await execFileAsync('git', args, {
-        cwd: this.repoPath,
-        maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
-        signal: opts.signal,
-        env: {
-          ...process.env,
-          GIT_PAGER: 'cat',
-          GIT_TERMINAL_PROMPT: '0',
-          LC_ALL: 'C'
-        },
-        encoding: 'utf8'
-      });
-      return stdout;
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException & { stderr?: string };
-      const msg = e.stderr?.toString().trim() || e.message;
-      throw new Error(`git ${args[0]} failed: ${msg}`);
-    }
+    return gitQueue.run(async () => {
+      try {
+        const { stdout } = await execFileAsync('git', args, {
+          cwd: this.repoPath,
+          maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
+          signal: opts.signal,
+          env: {
+            ...process.env,
+            GIT_PAGER: 'cat',
+            GIT_TERMINAL_PROMPT: '0',
+            LC_ALL: 'C'
+          },
+          encoding: 'utf8'
+        });
+        return stdout;
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException & { stderr?: string };
+        const msg = e.stderr?.toString().trim() || e.message;
+        throw new Error(`git ${args[0]} failed: ${msg}`);
+      }
+    });
   }
 }
 
@@ -793,6 +990,8 @@ function isPlausibleHash(hash: string): boolean {
 export function isSafeRepoPath(filePath: string): boolean {
   if (typeof filePath !== 'string') return false;
   if (!filePath || filePath.includes('\0') || filePath.startsWith('/')) return false;
+  // Block Windows absolute paths (e.g. C:\, D:/)
+  if (/^[a-zA-Z]:/.test(filePath)) return false;
   return !filePath.split(/[\\/]+/).some((part) => part === '..');
 }
 

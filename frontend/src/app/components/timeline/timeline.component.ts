@@ -622,6 +622,10 @@ export class TimelineComponent {
   readonly tickIndex = signal(0);
   private diffSub: { unsubscribe(): void } | null = null;
 
+  ngOnDestroy() {
+    this.diffSub?.unsubscribe();
+  }
+
   readonly timelineCommits = computed(() =>
     this.state
       .commits()
@@ -751,15 +755,9 @@ export class TimelineComponent {
       this.selectedFile.set(null);
       return;
     }
-    const head = this.state.commits()[0]?.hash;
-    if (!head || head === s.ref) {
-      this.diff.set([]);
-      this.selectedFile.set(null);
-      return;
-    }
     this.loadingDiff.set(true);
     this.diffError.set(null);
-    this.diffSub = this.timelineApi.rangeDiff(s.ref, head).subscribe({
+    this.diffSub = this.timelineApi.rangeDiff(s.ref, 'HEAD').subscribe({
       next: (d) => {
         this.diff.set(d);
         this.selectedFile.set(d[0] ?? null);

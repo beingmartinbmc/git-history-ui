@@ -12,6 +12,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { GitService } from '../../services/git.service';
 import { ThemeService } from '../../services/theme.service';
 import { UiStateService } from '../../services/ui-state.service';
 
@@ -37,6 +38,8 @@ import { UiStateService } from '../../services/ui-state.service';
         <a routerLink="/timeline" routerLinkActive="active">Timeline</a>
         <a routerLink="/insights" routerLinkActive="active">Insights</a>
         <a routerLink="/wrapped" routerLinkActive="active">Wrapped</a>
+        <a routerLink="/compare" routerLinkActive="active">Compare</a>
+        <a routerLink="/stash" routerLinkActive="active">Stash</a>
       </nav>
 
       <div class="filters">
@@ -133,6 +136,13 @@ import { UiStateService } from '../../services/ui-state.service';
           [attr.aria-label]="viewModeTooltip()"
         >
           {{ state.viewMode() === 'grouped' ? 'Grouped' : 'Flat' }}
+        </button>
+        <button
+          class="btn btn-ghost view-toggle"
+          (click)="exportCommits()"
+          title="Export commits as CSV"
+        >
+          Export
         </button>
         <button
           class="btn btn-ghost btn-icon"
@@ -492,6 +502,7 @@ import { UiStateService } from '../../services/ui-state.service';
 export class ToolbarComponent {
   state = inject(UiStateService);
   theme = inject(ThemeService);
+  private git = inject(GitService);
 
   @ViewChild('searchInput') searchEl?: ElementRef<HTMLInputElement>;
 
@@ -593,6 +604,10 @@ export class ToolbarComponent {
       search: undefined,
     });
     this.searchValue.set('');
+  }
+
+  exportCommits() {
+    window.open(this.git.getExportUrl('commits', 'csv'), '_blank');
   }
 
   private isTyping(target: EventTarget | null): boolean {

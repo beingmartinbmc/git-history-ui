@@ -92,26 +92,26 @@ describe('Security & edge cases — HTTP server', () => {
 
   it('rejects hash with shell metacharacters', async () => {
     const r = await request({ url: `${url}/api/commit/$(whoami)` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid commit hash/);
   });
 
   it('rejects hash with semicolons', async () => {
     const r = await request({ url: `${url}/api/commit/abc;rm%20-rf%20/` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid commit hash/);
   });
 
   it('rejects hash with backticks', async () => {
     const r = await request({ url: `${url}/api/diff/%60id%60` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid commit hash/);
   });
 
   it('rejects very long hash (overflow attempt)', async () => {
     const longHash = 'a'.repeat(100);
     const r = await request({ url: `${url}/api/commit/${longHash}` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid commit hash/);
   });
 
@@ -121,26 +121,26 @@ describe('Security & edge cases — HTTP server', () => {
     const r = await request({
       url: `${url}/api/commits?branch=$(cat%20/etc/passwd)`
     });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid branch/);
   });
 
   it('rejects branch with pipe character', async () => {
     const r = await request({ url: `${url}/api/commits?branch=main|cat%20/etc/passwd` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid branch/);
   });
 
   it('rejects branch with null bytes', async () => {
     const r = await request({ url: `${url}/api/commits?branch=main%00injected` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid branch/);
   });
 
   it('rejects branch longer than 200 characters', async () => {
     const longBranch = 'a'.repeat(201);
     const r = await request({ url: `${url}/api/commits?branch=${longBranch}` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid branch/);
   });
 
@@ -150,7 +150,7 @@ describe('Security & edge cases — HTTP server', () => {
     const r = await request({
       url: `${url}/api/file-stats?file=../../etc/passwd`
     });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toBe('Invalid path');
     expect(r.body.error).not.toContain(repo.dir);
     expect(r.body.error).not.toContain('root:');
@@ -160,7 +160,7 @@ describe('Security & edge cases — HTTP server', () => {
     const r = await request({
       url: `${url}/api/blame?file=src%2Fapp.ts%00ignored`
     });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid path/);
   });
 
@@ -168,13 +168,13 @@ describe('Security & edge cases — HTTP server', () => {
     const nul = await request({
       url: `${url}/api/breakage?file=src%2Fapp.ts%00evil`
     });
-    expect(nul.status).toBe(500);
+    expect(nul.status).toBe(400);
     expect(nul.body.error).toMatch(/Invalid path/);
 
     const traversal = await request({
       url: `${url}/api/breakage?file=..%2F..%2Fetc%2Fpasswd`
     });
-    expect(traversal.status).toBe(500);
+    expect(traversal.status).toBe(400);
     expect(traversal.body.error).toMatch(/Invalid path/);
     expect(traversal.body.error).not.toContain(repo.dir);
   });
@@ -294,8 +294,8 @@ describe('Security & edge cases — HTTP server', () => {
     const r = await request({
       url: `${url}/api/diff?from=...&to=...`
     });
-    expect(r.status).toBe(500);
-    expect(r.body.error).toMatch(/Invalid commit hash/);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/Invalid ref/);
   });
 
   // === SHARE ENDPOINT ABUSE ===
@@ -409,8 +409,8 @@ describe('Security & edge cases — HTTP server', () => {
 
   it('returns proper JSON error for all error types', async () => {
     const r = await request({ url: `${url}/api/commit/aaaa` });
-    // Short hash that doesn't exist → git error
-    expect(r.status).toBe(500);
+    // Short hash that doesn't exist → 404
+    expect(r.status).toBe(404);
     expect(typeof r.body.error).toBe('string');
     expect(r.body.error.length).toBeGreaterThan(0);
   });

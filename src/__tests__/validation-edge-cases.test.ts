@@ -57,11 +57,11 @@ describe('GitService — input validation', () => {
   });
 
   it('rejects getRangeDiff with invalid from hash', async () => {
-    await expect(svc.getRangeDiff('invalid!', 'aabbccdd')).rejects.toThrow(/Invalid commit hash/);
+    await expect(svc.getRangeDiff('invalid!', 'aabbccdd')).rejects.toThrow(/Invalid ref/);
   });
 
   it('rejects getRangeDiff with invalid to hash', async () => {
-    await expect(svc.getRangeDiff('aabbccdd', 'invalid!')).rejects.toThrow(/Invalid commit hash/);
+    await expect(svc.getRangeDiff('aabbccdd', 'invalid!')).rejects.toThrow(/Invalid ref/);
   });
 
   it('rejects getBlame with null byte in path', async () => {

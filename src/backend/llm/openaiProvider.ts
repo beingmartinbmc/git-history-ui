@@ -90,7 +90,8 @@ export class OpenAiProvider implements LlmService {
         max_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }],
         ...(json ? { response_format: { type: 'json_object' } } : {})
-      })
+      }),
+      signal: AbortSignal.timeout(60_000)
     });
     if (!resp.ok) {
       const err = await resp.text().catch(() => '');

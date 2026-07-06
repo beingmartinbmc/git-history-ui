@@ -3,6 +3,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+const LOCKFILE_STALE_MS = 30_000;
+
 export interface AnnotationComment {
   id: string;
   author: string;
@@ -176,6 +178,59 @@ export class AnnotationsStore {
     this.mu = new Promise<void>((resolve) => {
       release = resolve;
     });
-    return prev.then(fn).finally(() => release());
+    return prev
+      .then(() => this.acquireFileLock())
+      .then(async () => {
+        try {
+          await fn();
+        } finally {
+          await this.releaseFileLock();
+          release();
+        }
+      })
+      .catch((err) => {
+        release();
+        throw err;
+      });
+  }
+
+  private get lockPath(): string {
+    return `${this.journal}.lock`;
+  }
+
+  private async acquireFileLock(retries = 10): Promise<void> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        await fs.promises.mkdir(path.dirname(this.lockPath), { recursive: true });
+        const fd = await fs.promises.open(
+          this.lockPath,
+          fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
+        );
+        await fd.write(`${process.pid}\n${Date.now()}\n`);
+        await fd.close();
+        return;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        // ponytail: break stale locks from crashed processes
+        try {
+          const raw = await fs.promises.readFile(this.lockPath, 'utf8');
+          const ts = parseInt(raw.split('\n')[1] ?? '0', 10);
+          if (Date.now() - ts > LOCKFILE_STALE_MS) {
+            await fs.promises.unlink(this.lockPath).catch(() => {});
+            continue;
+          }
+        } catch (readErr) {
+          // ENOENT = lock was just released by its holder; retry acquire
+          if ((readErr as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          // Other read error: lock file exists but unreadable — wait and retry
+        }
+        await new Promise((r) => setTimeout(r, 20 + Math.random() * 30));
+      }
+    }
+    throw new Error('annotations: could not acquire file lock');
+  }
+
+  private async releaseFileLock(): Promise<void> {
+    await fs.promises.unlink(this.lockPath).catch(() => {});
   }
 }

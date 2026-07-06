@@ -48,6 +48,42 @@ function request(opts: {
   });
 }
 
+function requestRaw(opts: {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}): Promise<Json> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(opts.url);
+    const req = http.request(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        method: opts.method ?? 'GET',
+        headers: opts.headers
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          let parsed: unknown = data;
+          try {
+            parsed = data ? JSON.parse(data) : null;
+          } catch {
+            /* leave as string */
+          }
+          resolve({ status: res.statusCode || 0, body: parsed, headers: res.headers });
+        });
+      }
+    );
+    req.on('error', reject);
+    if (opts.body !== undefined) req.write(opts.body);
+    req.end();
+  });
+}
+
 function fetchRaw(
   url: string,
   headers: Record<string, string> = {}
@@ -279,6 +315,15 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(raw.data).toContain('"pageSize":500');
   });
 
+  it('GET /api/commits/stream returns exact totals for pages past the end', async () => {
+    const raw = await fetchRaw(`${url}/api/commits/stream?page=999&pageSize=1`);
+    const commitEvents = raw.data.match(/event: commit/g) ?? [];
+    expect(commitEvents).toHaveLength(0);
+    expect(raw.data).toContain('"total":2');
+    expect(raw.data).toContain('"totalPages":2');
+    expect(raw.data).toContain('"hasNext":false');
+  });
+
   it('annotations CRUD: POST → GET → DELETE', async () => {
     const created = await request({
       url: `${url}/api/annotations/${secondHash}`,
@@ -369,6 +414,18 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(r.body.mode).toBe('local');
   });
 
+  it('POST /api/share uses the server URL instead of reflecting Host headers', async () => {
+    const r = await request({
+      url: `${url}/api/share`,
+      method: 'POST',
+      headers: { Host: 'evil.example' },
+      body: { viewState: { hash: 'abc' } }
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.url).toContain(url);
+    expect(r.body.url).not.toContain('evil.example');
+  });
+
   it('POST /api/share rejects missing or non-flat viewState', async () => {
     const missing = await request({ url: `${url}/api/share`, method: 'POST', body: {} });
     expect(missing.status).toBe(400);
@@ -388,12 +445,20 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(nested.status).toBe(400);
   });
 
-  it('500 errors are logged and surfaced as JSON', async () => {
-    // Pass an invalid hash to force getCommit to throw a generic Error
-    // (not NotARepositoryError → goes through the 500 branch).
+  it('invalid hash errors are surfaced as 400 JSON', async () => {
     const r = await request({ url: `${url}/api/commit/zzzz` });
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Invalid commit hash/);
+  });
+
+  it('malformed JSON is surfaced as a 400 instead of a 500', async () => {
+    const r = await requestRaw({
+      url: `${url}/api/share`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"viewState":'
+    });
+    expect(r.status).toBe(400);
   });
 });
 

@@ -396,6 +396,10 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     this.file = value;
     this.highlightCache.clear();
     this.cancelStreamingParse();
+    this.inHunk = false;
+    this.summary.set(null);
+    this.summaryError.set(null);
+    this.summarizing.set(false);
     if (!value) {
       this.parsed.set([]);
       return;
@@ -416,6 +420,7 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
   @ViewChildren(CdkVirtualScrollViewport) viewports?: QueryList<CdkVirtualScrollViewport>;
   private syncing = false;
   private syncListeners: Array<() => void> = [];
+  private splitPanesSub?: { unsubscribe(): void };
 
   private insightsApi = inject(InsightsService);
   private highlightCache = new Map<string, string>();
@@ -538,11 +543,12 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit() {
-    this.splitPanes?.changes.subscribe(() => this.attachScrollSync());
+    this.splitPanesSub = this.splitPanes?.changes.subscribe(() => this.attachScrollSync());
     this.attachScrollSync();
   }
 
   ngOnDestroy() {
+    this.splitPanesSub?.unsubscribe();
     this.detachScrollSync();
     this.cancelStreamingParse();
   }
@@ -731,12 +737,18 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     return out;
   }
 
+  private inHunk = false;
+
   private parseLineInto(
     line: string,
     out: DiffLine[],
     state: { oldNo: number; newNo: number },
   ): void {
-    if (line.startsWith('@@')) {
+    if (line.startsWith('diff --git')) {
+      this.inHunk = false;
+      out.push({ type: 'meta', text: line });
+    } else if (line.startsWith('@@')) {
+      this.inHunk = true;
       out.push({ type: 'hunk', text: line });
       const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
       if (m) {
@@ -744,16 +756,16 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
         state.newNo = parseInt(m[2], 10);
       }
     } else if (
-      line.startsWith('diff --git') ||
-      line.startsWith('index ') ||
-      line.startsWith('--- ') ||
-      line.startsWith('+++ ') ||
-      line.startsWith('new file') ||
-      line.startsWith('deleted file') ||
-      line.startsWith('rename ') ||
-      line.startsWith('copy ') ||
-      line.startsWith('similarity ') ||
-      line.startsWith('Binary files')
+      !this.inHunk &&
+      (line.startsWith('index ') ||
+        line.startsWith('--- ') ||
+        line.startsWith('+++ ') ||
+        line.startsWith('new file') ||
+        line.startsWith('deleted file') ||
+        line.startsWith('rename ') ||
+        line.startsWith('copy ') ||
+        line.startsWith('similarity ') ||
+        line.startsWith('Binary files'))
     ) {
       out.push({ type: 'meta', text: line });
     } else if (line.startsWith('+')) {

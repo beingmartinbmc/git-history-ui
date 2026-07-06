@@ -16,11 +16,12 @@
 
 Turn your git history into something you can actually understand:
 
-- 🔎 Ask questions in plain English
+- 🔎 Ask questions in plain English, or pickaxe-search code content itself
 - ⚡ Search big histories through a local Git intelligence index
 - 📦 See commits grouped by feature or PR
 - 🕰️ Travel through time and diff any state
 - 🎯 Understand impact, not just changes
+- 🔴 Get notified live when new commits land, no refresh needed
 
 Zero setup. Runs locally. Your code never leaves your machine unless you opt in.
 
@@ -130,8 +131,21 @@ directory — no installs, no config, no account.
 - **Canvas commit graph** with branch lanes, ref pills, hover/selected
   states; viewport-virtualized so 50k-commit histories stay smooth.
 - **Real-time filtering** by author, date, text, file path.
+- **Load more / infinite scroll** for large repositories — the selected
+  commit stays pinned in view while more history loads.
 - **Unified & split diffs** with `highlight.js`, collapse-unchanged
   blocks, side-by-side scroll-sync, and intra-line word highlighting.
+- **Lazy diff loading.** Commit detail fetches file metadata first
+  (`git diff-tree --numstat`), then the full patch only for the file
+  you have open — large commits stay responsive.
+- **Code-content search (pickaxe).** Find every commit that added or
+  removed a specific string or regex (`git log -S` / `-G`), scoped by
+  author, date, branch, or file.
+- **Stash & reflog explorer.** Browse `git stash list` and `git reflog`
+  from the UI without dropping to a terminal.
+- **Branch / tag compare view.** Diff any two refs side by side.
+- **Live updates.** A toast appears when new commits land on the
+  watched branch (via SSE), so you always know when to refresh.
 - **Dark / light / system theme** with single-click toggle.
 
 ### Code understanding
@@ -148,10 +162,16 @@ directory — no installs, no config, no account.
 ### Collaboration
 
 - **Local-first annotations.** Per-commit comment threads stored in
-  `~/.git-history-ui/<repo>/annotations.json`.
+  `~/.git-history-ui/<repo>/annotations.json`, with cross-process file
+  locking so concurrent writes stay safe.
 - **Shareable URLs.** `POST /api/share` returns a deep link with the
   current view-state encoded in the query string — no relay server
   required for the common case.
+- **Deep linking.** `git-history-ui://open?repo=...&at=...&pr=...`
+  protocol URLs (and `?commit=`, `?pr=`, `?author=`, `?file=` query
+  params on the web UI) jump straight to a commit, PR group, or filter.
+- **Export.** Download commits (CSV/JSON), insights, or Wrapped as
+  files via `/api/export/*` or the toolbar's Export button.
 - **"Explain this change"** AI card on the commit detail panel (opt-in).
 
 ### Performance & scale
@@ -169,6 +189,11 @@ directory — no installs, no config, no account.
   as `git log` produces them.
 - **Virtualized commit graph.** Only the visible viewport is painted;
   scrolling is `requestAnimationFrame`-throttled.
+- **Bounded git concurrency.** All `git` subprocesses go through a
+  shared queue (default: 4 concurrent) so fanned-out UI requests (diffs,
+  blame, impact) can't exhaust file descriptors or spike CPU.
+- **Short-TTL server caches** for insights, PR groups, and Wrapped —
+  invalidated automatically the moment new commits are detected.
 
 ### CLI
 
@@ -224,6 +249,9 @@ Options:
                            non-local clients
   --preset <name>          load filters from a saved preset
   --save-preset <name>     save the current flags as a preset for next time
+  --repo-from-url <url>    open a repo from a git-history-ui:// protocol URL
+  --at <ref>               select a commit or ref on startup
+  --pr <number>            focus a pull request number on startup
   -h, --help               display help for command
 
 Commands:
@@ -298,6 +326,22 @@ export GITHUB_TOKEN=ghp_...   # fine-grained PAT, read-only on the repo
 ```
 
 This hydrates the *Grouped* view with PR titles, authors, and labels.
+
+### Deep linking
+
+Jump straight to a commit or PR from the CLI, a saved link, or the Chrome
+extension:
+
+```bash
+npx git-history-ui@latest --at HEAD~3         # open at a specific commit/ref
+npx git-history-ui@latest --pr 128            # open focused on a PR group
+npx git-history-ui@latest --repo-from-url "git-history-ui://open?repo=https://github.com/owner/repo&at=abc123"
+```
+
+The web UI recognizes the same intent via query params —
+`?commit=`, `?pr=`, `?author=`, `?since=`, `?until=`, `?branch=`, `?file=`,
+`?mode=grouped` — so shared links and the `POST /api/share` output restore
+the exact view.
 
 ## 📚 Docs
 

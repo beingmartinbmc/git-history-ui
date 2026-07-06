@@ -589,16 +589,28 @@ export class FileHistoryComponent {
   });
 
   constructor() {
-    effect(() => {
-      const raw = this.route.snapshot.paramMap.get('path') ?? '';
+    // Use paramMap observable (not snapshot) so the component reloads when
+    // navigating between file-history routes without being destroyed/recreated.
+    this.route.paramMap.subscribe((params) => {
+      const raw = params.get('path') ?? '';
       const decoded = decodeURIComponent(raw);
-      const requestedTab = this.route.snapshot.queryParamMap.get('tab');
+      this.filePath.set(decoded);
+      if (decoded) this.load(decoded);
+    });
+    this.route.queryParamMap.subscribe((qp) => {
+      const requestedTab = qp.get('tab');
       if (requestedTab === 'breakage' || requestedTab === 'blame' || requestedTab === 'history') {
         this.tab.set(requestedTab);
-      }
-      this.filePath.set(decoded);
-      if (decoded) {
-        this.load(decoded);
+        // If breakage tab was requested via deep link, ensure analysis loads
+        // (paramMap may have already fired load() before tab was set)
+        if (
+          requestedTab === 'breakage' &&
+          this.filePath() &&
+          !this.breakage() &&
+          !this.breakageLoading()
+        ) {
+          this.loadBreakage(this.filePath());
+        }
       }
     });
   }

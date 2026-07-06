@@ -2,10 +2,12 @@ import { CommonModule, DatePipe } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
   signal,
+  untracked,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -698,6 +700,7 @@ export class CommitDetailComponent {
   private insightsApi = inject(InsightsService);
   private annotationsApi = inject(AnnotationsService);
   private router = inject(Router);
+  private destroyRef = inject(DestroyRef);
 
   commit = this.state.selected;
 
@@ -712,50 +715,131 @@ export class CommitDetailComponent {
 
   commentDraft = '';
   commentAuthor = 'me';
+  private sidebarSub?: { unsubscribe(): void };
+  private impactSub?: { unsubscribe(): void };
+  private explainSub?: { unsubscribe(): void };
+  private diffSub?: { unsubscribe(): void };
 
   loading = signal(false);
 
-  files = toSignal(
+  /** Lightweight file metadata (no patch bodies). */
+  fileMetas = toSignal(
     toObservable(this.commit).pipe(
       switchMap((c) => {
         if (!c) {
           this.loading.set(false);
-          return of([] as DiffFile[]);
+          return of({
+            files: [] as Array<{
+              file: string;
+              oldFile?: string;
+              status: string;
+              additions: number;
+              deletions: number;
+            }>,
+            totalLines: 0,
+            isLarge: false,
+          });
         }
         this.loading.set(true);
-        return this.git.getDiff(c.hash).pipe(catchError(() => of([] as DiffFile[])));
+        return this.git.getDiffFiles(c.hash).pipe(
+          catchError(() =>
+            of({
+              files: [] as Array<{
+                file: string;
+                oldFile?: string;
+                status: string;
+                additions: number;
+                deletions: number;
+              }>,
+              totalLines: 0,
+              isLarge: false,
+            }),
+          ),
+        );
       }),
     ),
-    { initialValue: [] as DiffFile[] },
+    {
+      initialValue: {
+        files: [] as Array<{
+          file: string;
+          oldFile?: string;
+          status: string;
+          additions: number;
+          deletions: number;
+        }>,
+        totalLines: 0,
+        isLarge: false,
+      },
+    },
   );
 
+  files = computed(() => this.fileMetas().files as unknown as DiffFile[]);
+
   activeFileIndex = signal(0);
-  activeFile = computed(() => {
-    const list = this.files();
-    if (!list.length) return null;
-    const idx = Math.min(this.activeFileIndex(), list.length - 1);
-    return list[idx];
-  });
+  /** Full diff (with patch body) for the currently selected file, loaded lazily. */
+  activeFile = signal<DiffFile | null>(null);
+  private activeFileLoading = signal(false);
 
   constructor() {
     effect(() => {
-      void this.files();
-      this.activeFileIndex.set(0);
+      const metas = this.fileMetas();
+      const sharedFile = untracked(() => this.state.activeFilePath());
+      const sharedIdx = sharedFile ? metas.files.findIndex((f) => f.file === sharedFile) : -1;
+      this.activeFileIndex.set(sharedIdx >= 0 ? sharedIdx : 0);
+      if (sharedIdx >= 0) this.state.activeFilePath.set(null);
+      this.activeFile.set(null);
       this.loading.set(false);
     });
 
+    // Lazy-load the full diff when active file index changes
+    effect(() => {
+      const metas = this.fileMetas();
+      const idx = Math.min(this.activeFileIndex(), metas.files.length - 1);
+      const meta = metas.files[idx];
+      const c = this.commit();
+      this.diffSub?.unsubscribe();
+      if (!c || !meta) {
+        this.activeFile.set(null);
+        return;
+      }
+      this.activeFileLoading.set(true);
+      this.diffSub = this.git.getDiffFile(c.hash, meta.file).subscribe({
+        next: (f) => {
+          this.activeFile.set(f);
+          this.activeFileLoading.set(false);
+        },
+        error: () => {
+          this.activeFile.set(meta as unknown as DiffFile);
+          this.activeFileLoading.set(false);
+        },
+      });
+    });
+
+    this.destroyRef.onDestroy(() => {
+      this.sidebarSub?.unsubscribe();
+      this.impactSub?.unsubscribe();
+      this.explainSub?.unsubscribe();
+      this.diffSub?.unsubscribe();
+    });
+
     // Whenever the selected commit changes, reset side-panel state and load annotations.
+    // Cancel any in-flight request from a previous selection.
     effect(() => {
       const c = this.commit();
+      this.sidebarSub?.unsubscribe();
+      this.impactSub?.unsubscribe();
+      this.explainSub?.unsubscribe();
       this.impact.set(null);
       this.explanation.set(null);
       this.explainError.set(null);
+      this.explaining.set(false);
+      this.loadingImpact.set(false);
       this.shareCopied.set(false);
       if (!c) {
         this.comments.set([]);
         return;
       }
-      this.annotationsApi.list(c.hash).subscribe({
+      this.sidebarSub = this.annotationsApi.list(c.hash).subscribe({
         next: (list) => this.comments.set(list),
         error: () => this.comments.set([]),
       });
@@ -767,7 +851,7 @@ export class CommitDetailComponent {
   }
 
   selectFile(f: DiffFile) {
-    const idx = this.files().findIndex((x) => x.file === f.file);
+    const idx = this.fileMetas().files.findIndex((x) => x.file === f.file);
     if (idx >= 0) this.activeFileIndex.set(idx);
   }
 
@@ -791,8 +875,11 @@ export class CommitDetailComponent {
   onLoadImpact() {
     const c = this.commit();
     if (!c) return;
+    // Cancel a previous in-flight impact request so a stale response can't
+    // clobber a newer one (e.g. rapid "Refresh impact" clicks).
+    this.impactSub?.unsubscribe();
     this.loadingImpact.set(true);
-    this.insightsApi.impact(c.hash).subscribe({
+    this.impactSub = this.insightsApi.impact(c.hash).subscribe({
       next: (i) => {
         this.impact.set(i);
         this.loadingImpact.set(false);
@@ -804,9 +891,10 @@ export class CommitDetailComponent {
   onExplain() {
     const c = this.commit();
     if (!c || this.explaining()) return;
+    this.explainSub?.unsubscribe();
     this.explaining.set(true);
     this.explainError.set(null);
-    this.insightsApi.explainCommit(c.hash).subscribe({
+    this.explainSub = this.insightsApi.explainCommit(c.hash).subscribe({
       next: (r) => {
         this.explanation.set(r.summary);
         this.explaining.set(false);
@@ -824,7 +912,19 @@ export class CommitDetailComponent {
   copyShareLink() {
     const c = this.commit();
     if (!c) return;
-    const url = `${window.location.origin}/?commit=${c.hash}`;
+    const params = new URLSearchParams();
+    params.set('commit', c.hash);
+    const filters = this.state.filters();
+    if (filters.author) params.set('author', filters.author);
+    if (filters.since) params.set('since', filters.since);
+    if (filters.until) params.set('until', filters.until);
+    if (filters.branch) params.set('branch', filters.branch);
+    if (filters.file) params.set('file', filters.file);
+    const mode = this.state.viewMode();
+    if (mode !== 'flat') params.set('mode', mode);
+    const active = this.activeFile();
+    if (active) params.set('activeFile', active.file);
+    const url = window.location.origin + '/?' + params.toString();
     navigator.clipboard
       ?.writeText(url)
       .then(() => {

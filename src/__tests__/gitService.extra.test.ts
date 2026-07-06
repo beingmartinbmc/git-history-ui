@@ -60,9 +60,15 @@ describe('GitService — extra coverage', () => {
     expect(diff.some((d) => d.status === 'binary')).toBe(true);
   });
 
+  it('marks binary files in lazy diff metadata', async () => {
+    const meta = await svc.getDiffMeta(h4);
+    expect(meta.files.some((d) => d.file === 'logo.bin' && d.status === 'binary')).toBe(true);
+    expect(meta.totalLines).toBeGreaterThan(0);
+  });
+
   it('rejects malformed inputs everywhere', async () => {
     await expect(svc.getDiff('not-hex')).rejects.toThrow(/Invalid commit hash/);
-    await expect(svc.getRangeDiff('zz', 'aa')).rejects.toThrow(/Invalid commit hash/);
+    await expect(svc.getRangeDiff('refs;rm', 'main')).rejects.toThrow(/Invalid ref/);
     await expect(svc.revAt('refs;rm', '2026-01-01')).rejects.toThrow(/Invalid ref/);
     await expect(svc.revAt('HEAD', 'not-a-date')).rejects.toThrow(/Invalid date/);
     await expect(svc.getFileAtCommit('nope', 'x')).rejects.toThrow(/Invalid commit hash/);
@@ -76,6 +82,11 @@ describe('GitService — extra coverage', () => {
 
   it('range-diffs two commits', async () => {
     const diff = await svc.getRangeDiff(h1, h3);
+    expect(diff.length).toBeGreaterThan(0);
+  });
+
+  it('range-diffs safe branch and tag refs', async () => {
+    const diff = await svc.getRangeDiff('v0.1.0', 'main');
     expect(diff.length).toBeGreaterThan(0);
   });
 

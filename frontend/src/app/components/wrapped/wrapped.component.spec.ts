@@ -123,6 +123,35 @@ describe('WrappedComponent', () => {
     expect(blobArgs[2]).toEqual({ template: 'bold', paletteId: 'forest' });
   });
 
+  it('ignores the previous request when the year changes again before it resolves', () => {
+    fixture.detectChanges();
+    const year = new Date().getFullYear();
+    const firstReq = http.expectOne(`/api/wrapped?year=${year}`);
+
+    component.setYear(year - 1);
+    const secondReq = http.expectOne(`/api/wrapped?year=${year - 1}`);
+
+    firstReq.flush(statsFixture({ totalCommits: 111 }));
+    fixture.detectChanges();
+    expect(component.stats()).toBeNull();
+
+    secondReq.flush(statsFixture({ totalCommits: 999 }));
+    fixture.detectChanges();
+
+    expect(component.stats()?.totalCommits).toBe(999);
+  });
+
+  it('unsubscribes the pending request when destroyed', () => {
+    fixture.detectChanges();
+    const year = new Date().getFullYear();
+    const req = http.expectOne(`/api/wrapped?year=${year}`);
+
+    fixture.destroy();
+    req.flush(statsFixture({ totalCommits: 111 }));
+
+    expect(component.stats()).toBeNull();
+  });
+
   it('surfaces a friendly error when the request fails', () => {
     fixture.detectChanges();
     const year = new Date().getFullYear();

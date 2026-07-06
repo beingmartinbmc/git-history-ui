@@ -1,6 +1,13 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { ScrollingModule } from '@angular/cdk/scrolling';
-import { ChangeDetectionStrategy, Component, HostListener, computed, inject } from '@angular/core';
+import { ScrollingModule, CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  HostListener,
+  ViewChild,
+  computed,
+  inject,
+} from '@angular/core';
 import { Commit } from '../../models/git.models';
 import { UiStateService } from '../../services/ui-state.service';
 
@@ -65,6 +72,17 @@ import { UiStateService } from '../../services/ui-state.service';
         <p>No commits match your filters.</p>
       </div>
     </cdk-virtual-scroll-viewport>
+
+    <button
+      class="load-more"
+      *ngIf="state.hasNext() && !state.loadingMore()"
+      (click)="onLoadMore()"
+    >
+      Load more commits…
+    </button>
+    <div class="load-more loading-more" *ngIf="state.loadingMore()">
+      <span class="spinner"></span> Loading…
+    </div>
   `,
   styles: [
     `
@@ -304,11 +322,46 @@ import { UiStateService } from '../../services/ui-state.service';
         text-align: center;
         color: var(--fg-muted);
       }
+      .load-more {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem;
+        border: 0;
+        background: color-mix(in oklab, var(--accent) 10%, transparent);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        width: 100%;
+      }
+      .load-more:hover {
+        background: color-mix(in oklab, var(--accent) 18%, transparent);
+      }
+      .loading-more {
+        cursor: default;
+        color: var(--fg-muted);
+      }
+      .loading-more .spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid var(--border-strong);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
     `,
   ],
 })
 export class CommitListComponent {
   state = inject(UiStateService);
+  @ViewChild(CdkVirtualScrollViewport) viewport?: CdkVirtualScrollViewport;
 
   commits = this.state.commits;
   selectedHash = this.state.selectedHash;
@@ -342,6 +395,10 @@ export class CommitListComponent {
     const color = this.laneColors[h % this.laneColors.length];
     this.laneColorCache.set(c.hash, color);
     return color;
+  }
+
+  onLoadMore() {
+    this.state.onLoadMore?.();
   }
 
   @HostListener('window:keydown', ['$event'])

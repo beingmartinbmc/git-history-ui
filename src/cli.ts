@@ -3,8 +3,10 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import open from 'open';
-import { readFileSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import { startServer } from './backend/server';
 import { PresetsStore, type PresetFilters } from './backend/presets';
 
@@ -29,9 +31,9 @@ program
   .option('--token <token>', 'protect API routes with a bearer/header token for non-local clients')
   .option('--preset <name>', 'load filters from a saved preset')
   .option('--save-preset <name>', 'save the current flags as a preset for next time')
-  // Default action: when the user runs `git-history-ui` with no subcommand,
-  // start the server. Without this, commander v12 prints help and exits as
-  // soon as any subcommand (e.g. `presets`) is registered.
+  .option('--repo-from-url <url>', 'open a repo from a git-history-ui:// protocol URL')
+  .option('--at <ref>', 'select a commit or ref on startup')
+  .option('--pr <number>', 'focus a pull request number on startup')
   .action(() => {
     void main();
   });
@@ -107,7 +109,9 @@ program
 // `main()` runs from the root `.action()` when no subcommand is given,
 // or the `presets` handler runs for that subcommand. Either way, parseAsync
 // drives the right path.
-void program.parseAsync();
+if (require.main === module) {
+  void program.parseAsync();
+}
 
 interface MainOptions {
   port: string;
@@ -121,11 +125,127 @@ interface MainOptions {
   token?: string;
   preset?: string;
   savePreset?: string;
+  repoFromUrl?: string;
+  at?: string;
+  pr?: string;
+}
+
+export function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: string } {
+  try {
+    const url = new URL(raw);
+    return {
+      repo: url.searchParams.get('repo') ?? undefined,
+      at: url.searchParams.get('at') ?? undefined,
+      pr: url.searchParams.get('pr') ?? undefined
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Best-effort: given a GitHub/GitLab HTTPS URL, guess the local checkout path.
+ * Checks ~/repo-name, ~/Development/repo-name, and common parent dirs.
+ * Verifies the candidate's git remote actually matches the requested URL.
+ */
+export function resolveRepoToLocal(repoUrl: string): string | undefined {
+  let repoName: string;
+  let urlPath: string; // e.g. "owner/repo" from https://github.com/owner/repo
+  try {
+    const u = new URL(repoUrl);
+    urlPath = u.pathname.replace(/\.git$/, '').replace(/^\/+|\/+$/g, '');
+    repoName =
+      u.pathname
+        .split('/')
+        .filter(Boolean)
+        .pop()
+        ?.replace(/\.git$/, '') ?? '';
+  } catch {
+    urlPath = repoUrl.replace(/\.git$/, '');
+    repoName =
+      repoUrl
+        .split('/')
+        .filter(Boolean)
+        .pop()
+        ?.replace(/\.git$/, '') ?? '';
+  }
+  if (!repoName) return undefined;
+  const home = homedir();
+  const candidates = [
+    join(home, repoName),
+    join(home, 'Development', repoName),
+    join(home, 'dev', repoName),
+    join(home, 'repos', repoName),
+    join(home, 'projects', repoName),
+    join(home, 'src', repoName),
+    join(home, 'repositories', repoName),
+    join(home, 'repositories', 'personal', repoName),
+    join(home, 'repositories', 'work', repoName),
+    join(home, 'code', repoName)
+  ];
+  for (const dir of candidates) {
+    try {
+      if (!existsSync(join(dir, '.git'))) continue;
+      if (urlPath && !repoRemoteMatches(dir, urlPath)) continue;
+      return dir;
+    } catch {
+      /* skip */
+    }
+  }
+  return undefined;
+}
+
+/** Check that at least one git remote contains the owner/repo path. */
+function repoRemoteMatches(dir: string, urlPath: string): boolean {
+  try {
+    const remotes = execFileSync('git', ['remote', '-v'], {
+      cwd: dir,
+      encoding: 'utf8',
+      timeout: 3000
+    });
+    const normalized = normalizeRepoPath(urlPath);
+    return remotes.split('\n').some((line: string) => normalizeRepoPath(line).endsWith(normalized));
+  } catch {
+    return false;
+  }
+}
+
+function normalizeRepoPath(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+\((fetch|push)\)$/i, '')
+    .replace(/^git@[^:]+:/, '')
+    .replace(/^https?:\/\/[^/]+\//, '')
+    .replace(/^ssh:\/\/git@[^/]+\//, '')
+    .replace(/\.git$/, '')
+    .replace(/^\/+|\/+$/g, '');
 }
 
 async function main(): Promise<void> {
   const options = program.opts<MainOptions>();
   const presetsStore = new PresetsStore();
+
+  // Handle git-history-ui://open?repo=...&at=...&pr=... protocol URLs
+  if (options.repoFromUrl) {
+    const parsed = parseProtocolUrl(options.repoFromUrl);
+    if (parsed.at && !options.at) options.at = parsed.at;
+    if (parsed.pr && !options.pr) options.pr = parsed.pr;
+    if (parsed.repo && !options.cwd) {
+      const localPath = resolveRepoToLocal(parsed.repo);
+      if (localPath) {
+        options.cwd = localPath;
+        console.log(chalk.gray(`Protocol URL: resolved repo to ${localPath}`));
+      } else {
+        console.warn(
+          chalk.yellow(
+            `Could not find local clone for ${parsed.repo}.\n` +
+              `Clone it and re-run, or use --cwd to point at the checkout.`
+          )
+        );
+      }
+    }
+  }
 
   // Hydrate from saved preset (CLI flags still override).
   if (options.preset) {
@@ -186,10 +306,15 @@ async function main(): Promise<void> {
     console.log(chalk.green(`Listening on ${result.url}`));
 
     if (options.open) {
+      const deepLinkParams = new URLSearchParams();
+      if (options.at) deepLinkParams.set('commit', options.at);
+      if (options.pr) deepLinkParams.set('pr', options.pr);
+      const suffix = deepLinkParams.toString();
+      const openUrl = suffix ? `${result.url}/?${suffix}` : result.url;
       try {
-        await open(result.url);
+        await open(openUrl);
       } catch {
-        console.log(chalk.yellow(`(Could not open browser automatically — visit ${result.url})`));
+        console.log(chalk.yellow(`(Could not open browser automatically — visit ${openUrl})`));
       }
     }
 

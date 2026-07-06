@@ -6,30 +6,39 @@
  *   - github.com/<owner>/<repo>/commit/<sha>
  *   - github.com/<owner>/<repo>/commits/...
  *
- * The button:
- *   1. Tries the custom protocol git-history-ui://<repo-url>?at=<sha-or-pr>
- *      (registered by the CLI's post-install step on supporting platforms).
- *   2. Falls back to a configurable hosted instance URL stored in chrome.storage.
+ * Handles GitHub SPA navigation via MutationObserver + URL polling
+ * so the button re-injects when navigating between pages without
+ * a full page load.
  */
 
 (function () {
-  const m = location.pathname.match(/^\/([^/]+)\/([^/]+)(?:\/(pull|commit|commits)\/(.+))?/);
-  if (!m) return;
-  const [, owner, repo, type, ref] = m;
-  if (!owner || !repo) return;
+  let lastUrl = '';
 
-  const repoUrl = `https://github.com/${owner}/${repo}.git`;
-  const target =
-    type === 'commit'
-      ? { kind: 'commit', sha: (ref || '').split('/')[0] }
-      : type === 'pull'
-      ? { kind: 'pr', number: parseInt(ref || '0', 10) }
-      : { kind: 'commits' };
+  function tryInject() {
+    if (location.href === lastUrl && document.querySelector('#ghui-open-btn')) return;
+    lastUrl = location.href;
 
-  injectButton(repoUrl, target);
+    // Remove stale button from previous SPA navigation
+    const old = document.querySelector('#ghui-open-btn');
+    if (old) old.remove();
+
+    const m = location.pathname.match(/^\/([^/]+)\/([^/]+)(?:\/(pull|commit|commits)\/(.+))?/);
+    if (!m) return;
+    const [, owner, repo, type, ref] = m;
+    if (!owner || !repo) return;
+
+    const repoUrl = 'https://github.com/' + owner + '/' + repo + '.git';
+    const target =
+      type === 'commit'
+        ? { kind: 'commit', sha: (ref || '').split('/')[0] }
+        : type === 'pull'
+          ? { kind: 'pr', number: parseInt(ref || '0', 10) }
+          : { kind: 'commits' };
+
+    injectButton(repoUrl, target);
+  }
 
   function injectButton(repoUrl, target) {
-    if (document.querySelector('#ghui-open-btn')) return;
     const host = findInjectionPoint();
     if (!host) return;
 
@@ -48,28 +57,40 @@
     return (
       document.querySelector('.gh-header-actions') ||
       document.querySelector('.pagehead-actions') ||
-      document.querySelector('header')
+      document.querySelector('[data-testid="issue-header-actions"]') ||
+      null
     );
   }
 
-  async function openInGhui(repoUrl, target) {
-    chrome.storage.sync.get(['hostedUrl'], (cfg) => {
-      const hosted = (cfg && cfg.hostedUrl) || '';
-      const protoUrl = `git-history-ui://open?repo=${encodeURIComponent(repoUrl)}${
-        target.sha ? `&at=${target.sha}` : ''
-      }${target.number ? `&pr=${target.number}` : ''}`;
-      // Try custom protocol; if nothing happens within 800ms, fall back.
-      const fallback = hosted
-        ? `${hosted.replace(/\/$/, '')}/?repo=${encodeURIComponent(repoUrl)}${
-            target.sha ? `&commit=${target.sha}` : ''
-          }`
-        : `https://github.com/beingmartinbmc/git-history-ui#open-in-git-history-ui`;
-      let opened = false;
-      window.addEventListener('blur', () => (opened = true), { once: true });
+  function openInGhui(repoUrl, target) {
+    chrome.storage.sync.get(['hostedUrl'], function (cfg) {
+      var hosted = (cfg && cfg.hostedUrl) || '';
+      var protoUrl =
+        'git-history-ui://open?repo=' +
+        encodeURIComponent(repoUrl) +
+        (target.sha ? '&at=' + target.sha : '') +
+        (target.number ? '&pr=' + target.number : '');
+      var fallback = hosted
+        ? hosted.replace(/\/$/, '') +
+          '/?repo=' +
+          encodeURIComponent(repoUrl) +
+          (target.sha ? '&commit=' + target.sha : '') +
+          (target.number ? '&pr=' + target.number : '')
+        : 'https://github.com/beingmartinbmc/git-history-ui#open-in-git-history-ui';
+      var opened = false;
+      window.addEventListener('blur', function () { opened = true; }, { once: true });
       window.location.href = protoUrl;
-      setTimeout(() => {
+      setTimeout(function () {
         if (!opened) window.open(fallback, '_blank');
       }, 800);
     });
   }
+
+  // Initial injection
+  tryInject();
+
+  // Re-inject on GitHub SPA navigation (turbo drive / pjax / React transitions)
+  new MutationObserver(function () {
+    if (location.href !== lastUrl) tryInject();
+  }).observe(document.body, { childList: true, subtree: true });
 })();

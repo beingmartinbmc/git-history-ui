@@ -83,3 +83,21 @@ export GITHUB_TOKEN=ghp_...
 ```
 
 The token is used only from your local machine to call the GitHub API.
+Responses are cached to disk per-repository under `~/.git-history-ui/`; if
+data looks stale after renaming a remote, delete that repo's `pr-cache.json`.
+
+## A deep link opens the wrong repository, or nothing at all
+
+`--repo-from-url` / `git-history-ui://open?repo=...` only matches a local
+checkout whose `git remote -v` output contains the requested owner/repo
+path. If you have the same repo cloned in multiple places, make sure the
+one you want open has a matching `origin` (or any) remote configured.
+
+## The "new commits available" toast never appears
+
+The toast relies on an SSE connection to `/api/events`, which watches
+`.git/HEAD` and `.git/refs` for changes. This only fires for commits made
+*after* the app is running — it won't retroactively detect history that
+changed while the server was down. Corporate proxies that buffer
+`text/event-stream` responses can also prevent SSE from working; try
+`--host 0.0.0.0` behind a proxy that passes SSE through unbuffered.

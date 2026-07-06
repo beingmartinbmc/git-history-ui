@@ -11,11 +11,7 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://github.com/*/pull/*",
-        "https://github.com/*/commit/*",
-        "https://github.com/*/commits/*"
-      ],
+      "matches": ["https://github.com/*/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

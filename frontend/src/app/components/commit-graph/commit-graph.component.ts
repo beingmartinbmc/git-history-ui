@@ -282,7 +282,13 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
 
   private nodes: Node[] = [];
   private rowByHash = new Map<string, Node>();
-  private laneCount = 1;
+  private laneCount_ = signal(1);
+  private get laneCount(): number {
+    return this.laneCount_();
+  }
+  private set laneCount(v: number) {
+    this.laneCount_.set(v);
+  }
   private hoverRow = -1;
   readonly hoverTip = signal<HoverTip | null>(null);
   private layoutToken = 0;

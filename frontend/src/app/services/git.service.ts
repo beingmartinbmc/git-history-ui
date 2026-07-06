@@ -184,6 +184,107 @@ export class GitService {
   cancelIndexBuild(): Observable<IndexStatus> {
     return this.http.post<IndexStatus>(`${this.base}/index/cancel`, {});
   }
+
+  // Pickaxe: code content search
+  pickaxeSearch(
+    pattern: string,
+    opts: {
+      mode?: 'S' | 'G';
+      author?: string;
+      since?: string;
+      until?: string;
+      file?: string;
+      branch?: string;
+    } = {},
+  ): Observable<{ commits: Commit[]; total: number }> {
+    let params = new HttpParams().set('pattern', pattern);
+    if (opts.mode) params = params.set('mode', opts.mode);
+    if (opts.author) params = params.set('author', opts.author);
+    if (opts.since) params = params.set('since', opts.since);
+    if (opts.until) params = params.set('until', opts.until);
+    if (opts.file) params = params.set('file', opts.file);
+    if (opts.branch) params = params.set('branch', opts.branch);
+    return this.http.get<{ commits: Commit[]; total: number }>(`${this.base}/pickaxe`, { params });
+  }
+
+  // Stash explorer
+  getStashes(): Observable<Array<{ index: number; message: string; date: string; hash: string }>> {
+    return this.http.get<Array<{ index: number; message: string; date: string; hash: string }>>(
+      `${this.base}/stashes`,
+    );
+  }
+
+  // Reflog explorer
+  getReflog(
+    limit = 50,
+  ): Observable<
+    Array<{ hash: string; shortHash: string; action: string; message: string; date: string }>
+  > {
+    const params = new HttpParams().set('limit', String(limit));
+    return this.http.get<
+      Array<{ hash: string; shortHash: string; action: string; message: string; date: string }>
+    >(`${this.base}/reflog`, { params });
+  }
+
+  // Range diff (for branch compare)
+  getRangeDiff(from: string, to: string): Observable<import('../models/git.models').DiffFile[]> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    return this.http.get<import('../models/git.models').DiffFile[]>(`${this.base}/diff`, {
+      params,
+    });
+  }
+
+  // Lazy diff: file list only (no change bodies)
+  getDiffFiles(hash: string): Observable<{
+    files: Array<{
+      file: string;
+      oldFile?: string;
+      status: string;
+      additions: number;
+      deletions: number;
+    }>;
+    totalLines: number;
+    isLarge: boolean;
+  }> {
+    return this.http.get<{
+      files: Array<{
+        file: string;
+        oldFile?: string;
+        status: string;
+        additions: number;
+        deletions: number;
+      }>;
+      totalLines: number;
+      isLarge: boolean;
+    }>(`${this.base}/diff/${hash}/files`);
+  }
+
+  // Lazy diff: single file
+  getDiffFile(hash: string, filePath: string): Observable<import('../models/git.models').DiffFile> {
+    const params = new HttpParams().set('path', filePath);
+    return this.http.get<import('../models/git.models').DiffFile>(
+      `${this.base}/diff/${hash}/file`,
+      { params },
+    );
+  }
+
+  // Presets API
+  getPresets(): Observable<Record<string, unknown>> {
+    return this.http.get<Record<string, unknown>>(`${this.base}/presets`);
+  }
+
+  savePreset(name: string, filters: Record<string, unknown>): Observable<{ name: string }> {
+    return this.http.post<{ name: string }>(`${this.base}/presets/${name}`, filters);
+  }
+
+  deletePreset(name: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/presets/${name}`);
+  }
+
+  // Export
+  getExportUrl(type: 'commits' | 'insights' | 'wrapped', format = 'json'): string {
+    return `${this.base}/export/${type}?format=${format}`;
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {

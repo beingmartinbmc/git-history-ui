@@ -74,7 +74,7 @@ describe('TimelineComponent', () => {
     fixture.detectChanges();
 
     expect(timelineApi.snapshot).toHaveBeenCalled();
-    expect(timelineApi.rangeDiff).toHaveBeenCalledWith('old-ref', 'head-ref');
+    expect(timelineApi.rangeDiff).toHaveBeenCalledWith('old-ref', 'HEAD');
     expect(component.selectedFile()?.file).toBe('src/app.ts');
   }));
 
