@@ -44,6 +44,8 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
+    "test:frontend": "npm run --prefix frontend test -- --watch=false --browsers=ChromeHeadless",
+    "test:all": "npm test && npm run test:frontend",
     "lint": "eslint \"src/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.{ts,js}\" \"frontend/src/**/*.{ts,html,css}\"",

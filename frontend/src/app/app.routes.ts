@@ -29,5 +29,19 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./components/wrapped/wrapped.component').then((m) => m.WrappedComponent),
   },
+  {
+    path: 'compare',
+    loadComponent: () =>
+      import('./components/branch-compare/branch-compare.component').then(
+        (m) => m.BranchCompareComponent,
+      ),
+  },
+  {
+    path: 'stash',
+    loadComponent: () =>
+      import('./components/stash-reflog/stash-reflog.component').then(
+        (m) => m.StashReflogComponent,
+      ),
+  },
   { path: '**', redirectTo: '' },
 ];

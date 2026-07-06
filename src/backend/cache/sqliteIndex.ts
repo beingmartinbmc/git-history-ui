@@ -321,11 +321,18 @@ export class SqliteIndex {
     }
   }
 
-  /** Quick FTS5 / LIKE search returning hashes + subjects. */
-  async search(query: string, limit = 50): Promise<Commit[]> {
+  /**
+   * FTS5 / LIKE search with optional author/date filters.
+   * Filters are parameterized — no string interpolation.
+   */
+  async search(
+    query: string,
+    limit = 50,
+    filters?: { author?: string; since?: string; until?: string }
+  ): Promise<Commit[]> {
     if (!this.open()) return [];
     const db = this.db!;
-    let rows: Array<{
+    type Row = {
       hash: string;
       short: string;
       subject: string;
@@ -334,35 +341,58 @@ export class SqliteIndex {
       author: string;
       email: string;
       parents: string;
-    }> = [];
+    };
+    const { clause, params } = buildFilterClause(filters);
+    let rows: Row[];
     try {
       rows = db
         .prepare(
-          'SELECT c.hash, c.short, c.subject, c.body, c.date, c.author, c.email, c.parents FROM commits_fts f JOIN commits c ON c.rowid = f.rowid WHERE commits_fts MATCH ? LIMIT ?'
+          `SELECT c.hash, c.short, c.subject, c.body, c.date, c.author, c.email, c.parents
+           FROM commits_fts f JOIN commits c ON c.rowid = f.rowid
+           WHERE commits_fts MATCH ?${clause}
+           ORDER BY rank, c.date DESC LIMIT ?`
         )
-        .all(query, limit) as typeof rows;
+        .all(query, ...params, limit) as Row[];
     } catch {
-      const like = `%${query}%`;
+      const like = '%' + query + '%';
       rows = db
         .prepare(
-          'SELECT hash, short, subject, body, date, author, email, parents FROM commits WHERE subject LIKE ? OR body LIKE ? ORDER BY date DESC LIMIT ?'
+          `SELECT hash, short, subject, body, date, author, email, parents
+           FROM commits WHERE (subject LIKE ? OR body LIKE ?)${clause}
+           ORDER BY date DESC LIMIT ?`
         )
-        .all(like, like, limit) as typeof rows;
+        .all(like, like, ...params, limit) as Row[];
     }
-    return rows.map((r) => ({
-      hash: r.hash,
-      shortHash: r.short,
-      authorEmail: r.email,
-      subject: r.subject,
-      body: r.body,
-      message: r.body ? `${r.subject}\n\n${r.body}` : r.subject,
-      date: r.date,
-      author: r.author,
-      parents: r.parents ? r.parents.split(' ').filter(Boolean) : [],
-      branches: [],
-      tags: [],
-      isMerge: !!r.parents && r.parents.split(' ').filter(Boolean).length > 1
-    }));
+    return rows.map(rowToCommit);
+  }
+
+  /** Accurate total count for a search query with optional filters. */
+  async searchCount(
+    query: string,
+    filters?: { author?: string; since?: string; until?: string }
+  ): Promise<number> {
+    if (!this.open()) return 0;
+    const db = this.db!;
+    const { clause, params } = buildFilterClause(filters);
+    try {
+      return (
+        db
+          .prepare(
+            `SELECT COUNT(*) as n FROM commits_fts f JOIN commits c ON c.rowid = f.rowid
+             WHERE commits_fts MATCH ?${clause}`
+          )
+          .get(query, ...params) as { n: number }
+      ).n;
+    } catch {
+      const like = '%' + query + '%';
+      return (
+        db
+          .prepare(
+            `SELECT COUNT(*) as n FROM commits c WHERE (subject LIKE ? OR body LIKE ?)${clause}`
+          )
+          .get(like, like, ...params) as { n: number }
+      ).n;
+    }
   }
 
   invalidate() {
@@ -430,4 +460,55 @@ export class SqliteIndex {
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === 'AbortError' || /aborted|abort/i.test(err.message));
+}
+
+function buildFilterClause(filters?: { author?: string; since?: string; until?: string }): {
+  clause: string;
+  params: unknown[];
+} {
+  const parts: string[] = [];
+  const params: unknown[] = [];
+  if (filters?.author) {
+    parts.push('(c.author LIKE ? OR c.email LIKE ?)');
+    params.push('%' + filters.author + '%', '%' + filters.author + '%');
+  }
+  if (filters?.since) {
+    parts.push('c.date >= ?');
+    params.push(filters.since);
+  }
+  if (filters?.until) {
+    parts.push('c.date <= ?');
+    params.push(filters.until);
+  }
+  return {
+    clause: parts.length ? ' AND ' + parts.join(' AND ') : '',
+    params
+  };
+}
+
+function rowToCommit(r: {
+  hash: string;
+  short: string;
+  subject: string;
+  body: string;
+  date: string;
+  author: string;
+  email: string;
+  parents: string;
+}): Commit {
+  const parentList = r.parents ? r.parents.split(' ').filter(Boolean) : [];
+  return {
+    hash: r.hash,
+    shortHash: r.short,
+    authorEmail: r.email,
+    subject: r.subject,
+    body: r.body,
+    message: r.body ? r.subject + '\n\n' + r.body : r.subject,
+    date: r.date,
+    author: r.author,
+    parents: parentList,
+    branches: [],
+    tags: [],
+    isMerge: parentList.length > 1
+  };
 }

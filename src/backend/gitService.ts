@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process';
 import { StringDecoder } from 'string_decoder';
 import { promisify } from 'util';
+import { gitQueue } from './gitProcessQueue';
 
 const execFileAsync = promisify(execFile);
 
@@ -736,6 +737,70 @@ export class GitService {
     if (pending.trim()) onRecord(pending);
   }
 
+  /** Pickaxe search: find commits where <pattern> was added or removed from file content. */
+  async pickaxeSearch(
+    pattern: string,
+    opts: GitOptions & { mode?: 'S' | 'G' } & GitStreamOptions = {}
+  ): Promise<Commit[]> {
+    if (!pattern || pattern.length > 500) throw new Error('Invalid search pattern');
+    const flag = opts.mode === 'G' ? '-G' : '-S';
+    const filterArgs = this.buildFilterArgs(opts);
+    const revision = this.revisionArg(opts);
+    const refs = await this.getRefIndex();
+    const commits: Commit[] = [];
+    await this.streamRecords(
+      [
+        'log',
+        '--max-count=100',
+        flag,
+        pattern,
+        `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
+        revision,
+        ...filterArgs
+      ],
+      (record) => commits.push(...this.parseLog(`${record}${RECORD_SEP}`, refs)),
+      opts
+    );
+    return commits;
+  }
+
+  /** List stash entries. */
+  async getStashes(
+    opts: GitStreamOptions = {}
+  ): Promise<Array<{ index: number; message: string; date: string; hash: string }>> {
+    const out = await this.git(['stash', 'list', '--pretty=format:%H%x1f%aI%x1f%s'], opts);
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((line, i) => {
+        const [hash, date, message] = line.split('\x1f');
+        return { index: i, hash, date, message };
+      });
+  }
+
+  /** List reflog entries. */
+  async getReflog(
+    limit = 50,
+    opts: GitStreamOptions = {}
+  ): Promise<
+    Array<{ hash: string; shortHash: string; action: string; message: string; date: string }>
+  > {
+    const out = await this.git(
+      ['reflog', `--max-count=${clamp(limit, 1, 200)}`, '--pretty=format:%H%x1f%h%x1f%aI%x1f%gs'],
+      opts
+    );
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [hash, shortHash, date, gs] = line.split('\x1f');
+        const colonIdx = gs.indexOf(': ');
+        const action = colonIdx >= 0 ? gs.slice(0, colonIdx) : gs;
+        const message = colonIdx >= 0 ? gs.slice(colonIdx + 2) : '';
+        return { hash, shortHash, action, message, date };
+      });
+  }
+
   async getBlame(filePath: string): Promise<BlameLine[]> {
     assertSafeRepoPath(filePath);
     const raw = await this.git(['blame', '--porcelain', '--', filePath]);
@@ -764,25 +829,27 @@ export class GitService {
   }
 
   private async git(args: string[], opts: GitExecOptions = {}): Promise<string> {
-    try {
-      const { stdout } = await execFileAsync('git', args, {
-        cwd: this.repoPath,
-        maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
-        signal: opts.signal,
-        env: {
-          ...process.env,
-          GIT_PAGER: 'cat',
-          GIT_TERMINAL_PROMPT: '0',
-          LC_ALL: 'C'
-        },
-        encoding: 'utf8'
-      });
-      return stdout;
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException & { stderr?: string };
-      const msg = e.stderr?.toString().trim() || e.message;
-      throw new Error(`git ${args[0]} failed: ${msg}`);
-    }
+    return gitQueue.run(async () => {
+      try {
+        const { stdout } = await execFileAsync('git', args, {
+          cwd: this.repoPath,
+          maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
+          signal: opts.signal,
+          env: {
+            ...process.env,
+            GIT_PAGER: 'cat',
+            GIT_TERMINAL_PROMPT: '0',
+            LC_ALL: 'C'
+          },
+          encoding: 'utf8'
+        });
+        return stdout;
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException & { stderr?: string };
+        const msg = e.stderr?.toString().trim() || e.message;
+        throw new Error(`git ${args[0]} failed: ${msg}`);
+      }
+    });
   }
 }
 

@@ -18,6 +18,11 @@ import { computeInsights } from './insights';
 import { computeWrapped } from './wrapped';
 import { AnnotationsStore } from './annotations';
 import { SqliteIndex, type IndexProgress, type IndexStats } from './cache/sqliteIndex';
+import { ResultCache } from './cache/resultCache';
+import { RefWatcher } from './refWatcher';
+import type { InsightsBundle } from './aggregations';
+import type { CommitGroup } from './grouping/prGrouping';
+import type { WrappedStats } from './wrapped';
 
 export interface ServerOptions {
   port?: number;
@@ -123,6 +128,9 @@ export async function startServer(
     (args, onChunk, streamOpts) => gitService.streamRaw(args, onChunk, streamOpts)
   );
   const indexBuild = createIndexBuildController(sqliteIndex);
+  const insightsCache = new ResultCache<InsightsBundle>(15_000);
+  const groupsCache = new ResultCache<CommitGroup[]>(15_000);
+  const wrappedCache = new ResultCache<WrappedStats>(30_000);
 
   const angularBuildPath = path.join(__dirname, '../../build/frontend');
   const publicPath = path.join(__dirname, '../../public');
@@ -251,6 +259,31 @@ export async function startServer(
     })();
   });
 
+  // Live ref watcher: pushes SSE events when .git/refs change
+  const refWatcher = new RefWatcher(cwd);
+  const sseClients = new Set<import('http').ServerResponse>();
+  refWatcher.on('change', () => {
+    const payload = `event: new-commits\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
+    for (const client of sseClients) {
+      client.write(payload);
+    }
+  });
+  refWatcher.start();
+
+  app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    sseClients.add(res);
+    const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 30_000);
+    req.on('close', () => {
+      sseClients.delete(res);
+      clearInterval(heartbeat);
+    });
+  });
+
   app.get(
     '/api/commits',
     wrap(async (req, res) => {
@@ -290,6 +323,42 @@ export async function startServer(
     })
   );
 
+  // Lazy diff: returns only file metadata (no change bodies) for large commits
+  app.get(
+    '/api/diff/:hash/files',
+    wrap(async (req, res) => {
+      const diff = await gitService.getDiff(req.params.hash, { signal: requestAbortSignal(req) });
+      const files = diff.map((f) => ({
+        file: f.file,
+        oldFile: f.oldFile,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions
+      }));
+      const totalLines = diff.reduce((s, f) => s + f.additions + f.deletions, 0);
+      res.json({ files, totalLines, isLarge: totalLines > 5000 || files.length > 50 });
+    })
+  );
+
+  // Lazy diff: returns diff body for a single file within a commit
+  app.get(
+    '/api/diff/:hash/file',
+    wrap(async (req, res) => {
+      const filePath = stringParam(req.query.path);
+      if (!filePath) {
+        res.status(400).json({ error: 'path query param is required' });
+        return;
+      }
+      const diff = await gitService.getDiff(req.params.hash, { signal: requestAbortSignal(req) });
+      const match = diff.find((f) => f.file === filePath);
+      if (!match) {
+        res.status(404).json({ error: 'file not found in diff' });
+        return;
+      }
+      res.json(match);
+    })
+  );
+
   app.get(
     '/api/search',
     wrap(async (req, res) => {
@@ -300,27 +369,31 @@ export async function startServer(
       }
       const page = numberParam(req.query.page, 1);
       const pageSize = clampNumber(numberParam(req.query.pageSize, 25), 1, 500);
-      const hasFilters = !!(
-        stringParam(req.query.branch) ||
-        stringParam(req.query.file) ||
-        stringParam(req.query.author) ||
-        stringParam(req.query.since) ||
-        stringParam(req.query.until)
-      );
+      const author = stringParam(req.query.author);
+      const since = stringParam(req.query.since);
+      const until = stringParam(req.query.until);
+      const branch = stringParam(req.query.branch);
+      const file = stringParam(req.query.file);
+      // SQLite can handle author + date filters; only branch and file need git log
+      const needsGitFallback = !!(branch || file);
       const stats = await sqliteIndex.stats().catch(() => ({ available: false, total: 0 }));
-      if (!hasFilters && stats.available && stats.total > 0) {
-        const end = page * pageSize + 1;
-        const rows = await sqliteIndex.search(q, end);
+      if (!needsGitFallback && stats.available && stats.total > 0) {
+        const filters = { author, since, until };
+        const total = await sqliteIndex.searchCount(q, filters);
         const start = (page - 1) * pageSize;
-        const commits = rows.slice(start, start + pageSize);
-        const total = rows.length;
+        const commits = await sqliteIndex.search(q, pageSize, filters);
+        // ponytail: offset via SQL LIMIT; fetch only what we need
+        const offsetRows =
+          start > 0
+            ? await sqliteIndex.search(q, start + pageSize, filters).then((r) => r.slice(start))
+            : commits;
         res.json({
-          commits,
+          commits: start > 0 ? offsetRows : commits,
           total,
           page,
           pageSize,
           totalPages: Math.max(1, Math.ceil(total / pageSize)),
-          hasNext: rows.length > start + pageSize,
+          hasNext: start + pageSize < total,
           hasPrevious: page > 1,
           parsedQuery: parseNlQuery(q),
           usedLlm: false,
@@ -330,11 +403,11 @@ export async function startServer(
       }
       const result = await runNlSearch(gitService, getLlm(), {
         query: q,
-        branch: stringParam(req.query.branch),
-        file: stringParam(req.query.file),
-        author: stringParam(req.query.author),
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
+        branch,
+        file,
+        author,
+        since,
+        until,
         page,
         pageSize
       });
@@ -345,14 +418,26 @@ export async function startServer(
   app.get(
     '/api/groups',
     wrap(async (req, res) => {
+      const since = stringParam(req.query.since);
+      const until = stringParam(req.query.until);
+      const author = stringParam(req.query.author);
+      const branch = stringParam(req.query.branch);
+      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 1000), 1, 5000);
+      const cacheKey = ResultCache.key({ since, until, author, branch, maxCommits });
+      const cached = groupsCache.get(cacheKey);
+      if (cached) {
+        res.json(cached);
+        return;
+      }
       const groups = await buildCommitGroups(gitService, {
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
-        author: stringParam(req.query.author),
-        branch: stringParam(req.query.branch),
+        since,
+        until,
+        author,
+        branch,
         githubToken,
-        maxCommits: clampNumber(numberParam(req.query.maxCommits, 1000), 1, 5000)
+        maxCommits
       });
+      groupsCache.set(cacheKey, groups);
       res.json(groups);
     })
   );
@@ -413,14 +498,25 @@ export async function startServer(
   app.get(
     '/api/insights',
     wrap(async (req, res) => {
+      const since = stringParam(req.query.since);
+      const until = stringParam(req.query.until);
+      const branch = stringParam(req.query.branch);
+      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 500), 1, 5000);
+      const cacheKey = ResultCache.key({ since, until, branch, maxCommits });
+      const cached = insightsCache.get(cacheKey);
+      if (cached) {
+        res.json(cached);
+        return;
+      }
       const signal = requestAbortSignal(req);
       const bundle = await computeInsights(gitService, {
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
-        branch: stringParam(req.query.branch),
-        maxCommits: clampNumber(numberParam(req.query.maxCommits, 500), 1, 5000),
+        since,
+        until,
+        branch,
+        maxCommits,
         signal
       });
+      insightsCache.set(cacheKey, bundle);
       res.json(bundle);
     })
   );
@@ -430,15 +526,28 @@ export async function startServer(
     wrap(async (req, res) => {
       const signal = requestAbortSignal(req);
       const yearParam = numberParam(req.query.year, 0);
+      const year = yearParam > 0 ? yearParam : undefined;
+      const since = stringParam(req.query.since);
+      const until = stringParam(req.query.until);
+      const branch = stringParam(req.query.branch);
+      const author = stringParam(req.query.author);
+      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 5000), 1, 20_000);
+      const cacheKey = ResultCache.key({ year, since, until, branch, author, maxCommits });
+      const cached = wrappedCache.get(cacheKey);
+      if (cached) {
+        res.json(cached);
+        return;
+      }
       const wrapped = await computeWrapped(gitService, {
-        year: yearParam > 0 ? yearParam : undefined,
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
-        branch: stringParam(req.query.branch),
-        author: stringParam(req.query.author),
-        maxCommits: clampNumber(numberParam(req.query.maxCommits, 5000), 1, 20_000),
+        year,
+        since,
+        until,
+        branch,
+        author,
+        maxCommits,
         signal
       });
+      wrappedCache.set(cacheKey, wrapped);
       res.json(wrapped);
     })
   );
@@ -576,6 +685,136 @@ export async function startServer(
     })
   );
 
+  // Pickaxe: search for code content changes (git log -S/-G)
+  app.get(
+    '/api/pickaxe',
+    wrap(async (req, res) => {
+      const pattern = stringParam(req.query.pattern);
+      if (!pattern) {
+        res.status(400).json({ error: 'pattern query param is required' });
+        return;
+      }
+      const mode = stringParam(req.query.mode) === 'G' ? 'G' : 'S';
+      const commits = await gitService.pickaxeSearch(pattern, {
+        mode: mode as 'S' | 'G',
+        author: stringParam(req.query.author),
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
+        file: stringParam(req.query.file),
+        branch: stringParam(req.query.branch),
+        signal: requestAbortSignal(req)
+      });
+      res.json({ commits, total: commits.length });
+    })
+  );
+
+  // Stash explorer
+  app.get(
+    '/api/stashes',
+    wrap(async (req, res) => {
+      const stashes = await gitService.getStashes({ signal: requestAbortSignal(req) });
+      res.json(stashes);
+    })
+  );
+
+  // Reflog explorer
+  app.get(
+    '/api/reflog',
+    wrap(async (req, res) => {
+      const limit = clampNumber(numberParam(req.query.limit, 50), 1, 200);
+      const entries = await gitService.getReflog(limit, { signal: requestAbortSignal(req) });
+      res.json(entries);
+    })
+  );
+
+  // Export endpoints
+  app.get(
+    '/api/export/commits',
+    wrap(async (req, res) => {
+      const format = stringParam(req.query.format) === 'csv' ? 'csv' : 'json';
+      const result = await gitService.getCommits(commitOptionsFromQuery(req.query, 500), {
+        signal: requestAbortSignal(req)
+      });
+      if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename=commits.csv');
+        const header = 'hash,shortHash,author,authorEmail,date,subject\n';
+        const rows = result.commits.map(
+          (c) =>
+            `${c.hash},${c.shortHash},${csvEscape(c.author)},${csvEscape(c.authorEmail)},${c.date},${csvEscape(c.subject)}`
+        );
+        res.send(header + rows.join('\n'));
+      } else {
+        res.setHeader('Content-Disposition', 'attachment; filename=commits.json');
+        res.json(result.commits);
+      }
+    })
+  );
+
+  app.get(
+    '/api/export/insights',
+    wrap(async (req, res) => {
+      const signal = requestAbortSignal(req);
+      const bundle = await computeInsights(gitService, {
+        since: stringParam(req.query.since),
+        until: stringParam(req.query.until),
+        branch: stringParam(req.query.branch),
+        signal
+      });
+      res.setHeader('Content-Disposition', 'attachment; filename=insights.json');
+      res.json(bundle);
+    })
+  );
+
+  app.get(
+    '/api/export/wrapped',
+    wrap(async (req, res) => {
+      const signal = requestAbortSignal(req);
+      const yearParam = numberParam(req.query.year, 0);
+      const wrapped = await computeWrapped(gitService, {
+        year: yearParam > 0 ? yearParam : undefined,
+        signal
+      });
+      res.setHeader('Content-Disposition', 'attachment; filename=wrapped.json');
+      res.json(wrapped);
+    })
+  );
+
+  // Presets API (expose CLI presets to the UI)
+  app.get(
+    '/api/presets',
+    wrap(async (_req, res) => {
+      const { PresetsStore } = await import('./presets');
+      const store = new PresetsStore();
+      res.json(await store.list());
+    })
+  );
+
+  app.post(
+    '/api/presets/:name',
+    wrap(async (req, res) => {
+      const name = req.params.name;
+      if (!name || name.length > 50) {
+        res.status(400).json({ error: 'invalid preset name' });
+        return;
+      }
+      const { PresetsStore } = await import('./presets');
+      const store = new PresetsStore();
+      await store.save(name, req.body ?? {});
+      res.status(201).json({ name });
+    })
+  );
+
+  app.delete(
+    '/api/presets/:name',
+    wrap(async (req, res) => {
+      const { PresetsStore } = await import('./presets');
+      const store = new PresetsStore();
+      const ok = await store.delete(req.params.name);
+      res.status(ok ? 204 : 404).end();
+    })
+  );
+
   app.get(
     '/api/tags',
     wrap(async (_req, res) => res.json(await gitService.getTags()))
@@ -626,6 +865,7 @@ export async function startServer(
 
   const close = (): Promise<void> =>
     new Promise<void>((resolve) => {
+      refWatcher.stop();
       httpServer.close(() => resolve());
       setTimeout(() => resolve(), 5_000).unref();
     });
@@ -783,6 +1023,11 @@ function requestAbortSignal(req: Request): AbortSignal {
   const controller = new AbortController();
   req.on('close', () => controller.abort());
   return controller.signal;
+}
+
+function csvEscape(value: string): string {
+  if (/[,"\n\r]/.test(value)) return '"' + value.replace(/"/g, '""') + '"';
+  return value;
 }
 
 function pkgVersion(): string {

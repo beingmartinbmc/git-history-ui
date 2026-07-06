@@ -29,9 +29,9 @@ program
   .option('--token <token>', 'protect API routes with a bearer/header token for non-local clients')
   .option('--preset <name>', 'load filters from a saved preset')
   .option('--save-preset <name>', 'save the current flags as a preset for next time')
-  // Default action: when the user runs `git-history-ui` with no subcommand,
-  // start the server. Without this, commander v12 prints help and exits as
-  // soon as any subcommand (e.g. `presets`) is registered.
+  .option('--repo-from-url <url>', 'open a repo from a git-history-ui:// protocol URL')
+  .option('--at <ref>', 'select a commit or ref on startup')
+  .option('--pr <number>', 'focus a pull request number on startup')
   .action(() => {
     void main();
   });
@@ -121,11 +121,38 @@ interface MainOptions {
   token?: string;
   preset?: string;
   savePreset?: string;
+  repoFromUrl?: string;
+  at?: string;
+  pr?: string;
+}
+
+function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: string } {
+  try {
+    const url = new URL(raw);
+    return {
+      repo: url.searchParams.get('repo') ?? undefined,
+      at: url.searchParams.get('at') ?? undefined,
+      pr: url.searchParams.get('pr') ?? undefined
+    };
+  } catch {
+    return {};
+  }
 }
 
 async function main(): Promise<void> {
   const options = program.opts<MainOptions>();
   const presetsStore = new PresetsStore();
+
+  // Handle git-history-ui://open?repo=...&at=...&pr=... protocol URLs
+  if (options.repoFromUrl) {
+    const parsed = parseProtocolUrl(options.repoFromUrl);
+    if (parsed.at && !options.at) options.at = parsed.at;
+    if (parsed.pr && !options.pr) options.pr = parsed.pr;
+    // If repo URL matches cwd, proceed; otherwise print guidance
+    if (parsed.repo) {
+      console.log(chalk.gray(`Protocol URL: repo=${parsed.repo}`));
+    }
+  }
 
   // Hydrate from saved preset (CLI flags still override).
   if (options.preset) {
@@ -186,10 +213,15 @@ async function main(): Promise<void> {
     console.log(chalk.green(`Listening on ${result.url}`));
 
     if (options.open) {
+      const deepLinkParams = new URLSearchParams();
+      if (options.at) deepLinkParams.set('commit', options.at);
+      if (options.pr) deepLinkParams.set('pr', options.pr);
+      const suffix = deepLinkParams.toString();
+      const openUrl = suffix ? `${result.url}/?${suffix}` : result.url;
       try {
-        await open(result.url);
+        await open(openUrl);
       } catch {
-        console.log(chalk.yellow(`(Could not open browser automatically — visit ${result.url})`));
+        console.log(chalk.yellow(`(Could not open browser automatically — visit ${openUrl})`));
       }
     }
 

@@ -44,6 +44,15 @@ import { UiStateService } from './services/ui-state.service';
       <span class="spinner"></span> Loading commits…
     </div>
 
+    <button
+      class="new-commits-toast"
+      *ngIf="newCommitsAvailable()"
+      (click)="refreshCommits()"
+      aria-live="polite"
+    >
+      New commits available — click to refresh
+    </button>
+
     <app-index-status />
     <app-command-palette />
     <app-shortcuts-modal />
@@ -95,6 +104,36 @@ import { UiStateService } from './services/ui-state.service';
           transform: rotate(360deg);
         }
       }
+      .new-commits-toast {
+        position: fixed;
+        top: 3.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 0.5rem 1.2rem;
+        background: var(--accent);
+        color: var(--accent-fg, #fff);
+        border: none;
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-lg);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        z-index: 100;
+        animation: slideDown 200ms ease;
+      }
+      .new-commits-toast:hover {
+        filter: brightness(1.1);
+      }
+      @keyframes slideDown {
+        from {
+          transform: translateX(-50%) translateY(-100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(-50%) translateY(0);
+          opacity: 1;
+        }
+      }
     `,
   ],
 })
@@ -134,13 +173,41 @@ export class AppComponent {
   private pendingSharedCommit = signal<string | null>(null);
   private loadingSharedCommit = signal<string | null>(null);
 
+  readonly newCommitsAvailable = signal(false);
+  private eventSource: EventSource | null = null;
+
   constructor() {
+    // Handle deep-link query params: commit, at, pr, filters, mode
     this.route.queryParamMap.subscribe((params) => {
-      const hash = normalizeCommitParam(params.get('commit'));
-      if (!hash) return;
-      this.pendingSharedCommit.set(hash);
-      this.state.selectHash(hash);
+      const hash = normalizeCommitParam(params.get('commit') || params.get('at'));
+      if (hash) {
+        this.pendingSharedCommit.set(hash);
+        this.state.selectHash(hash);
+      }
+      // Restore shared filters
+      const author = params.get('author');
+      const since = params.get('since');
+      const until = params.get('until');
+      const branch = params.get('branch');
+      const file = params.get('file');
+      const mode = params.get('mode');
+      if (author || since || until || branch || file) {
+        this.state.patchFilters({
+          ...(author ? { author } : {}),
+          ...(since ? { since } : {}),
+          ...(until ? { until } : {}),
+          ...(branch ? { branch } : {}),
+          ...(file ? { file } : {}),
+        });
+      }
+      if (mode === 'grouped') this.state.viewMode.set('grouped');
     });
+
+    // Wire load-more into UiStateService so child components can trigger it
+    this.state.onLoadMore = () => this.loadMore();
+
+    // SSE: listen for new-commits events from the ref watcher
+    this.connectEventSource();
 
     effect(() => {
       const resp = this.commitsResp();
@@ -155,6 +222,7 @@ export class AppComponent {
       this.state.total.set(resp.total);
       this.state.page.set(resp.page);
       this.state.pageSize.set(resp.pageSize);
+      this.state.hasNext.set(resp.hasNext);
       this.state.loading.set(false);
       const nl = (resp as Partial<{ parsedQuery: import('./models/git.models').NlInterpretation }>)
         .parsedQuery;
@@ -201,6 +269,45 @@ export class AppComponent {
     }
     if (err instanceof Error) return err.message;
     return 'Failed to load commits.';
+  }
+
+  loadMore() {
+    if (this.state.loadingMore() || !this.state.hasNext()) return;
+    this.state.loadingMore.set(true);
+    const nextPage = this.state.page() + 1;
+    const filters = this.state.filters();
+    this.git.getCommits({ ...filters, page: nextPage }).subscribe({
+      next: (resp) => {
+        const existing = new Set(this.state.commits().map((c) => c.hash));
+        const fresh = resp.commits.filter((c) => !existing.has(c.hash));
+        this.state.commits.update((prev) => [...prev, ...fresh]);
+        this.state.page.set(resp.page);
+        this.state.total.set(resp.total);
+        this.state.hasNext.set(resp.hasNext);
+        this.state.loadingMore.set(false);
+      },
+      error: () => this.state.loadingMore.set(false),
+    });
+  }
+
+  refreshCommits() {
+    this.newCommitsAvailable.set(false);
+    this.git.invalidate();
+    this.state.patchFilters({ page: 1 });
+  }
+
+  private connectEventSource() {
+    try {
+      this.eventSource = new EventSource('/api/events');
+      this.eventSource.addEventListener('new-commits', () => {
+        this.newCommitsAvailable.set(true);
+      });
+      this.eventSource.onerror = () => {
+        // Silently reconnect on error; EventSource auto-reconnects
+      };
+    } catch {
+      // SSE not available
+    }
   }
 
   private loadSharedCommit(hash: string) {

@@ -12,6 +12,8 @@ export class UiStateService {
   readonly page = signal(1);
   readonly pageSize = signal(100);
   readonly loading = signal(false);
+  readonly loadingMore = signal(false);
+  readonly hasNext = signal(false);
   readonly error = signal<string | null>(null);
 
   readonly authors = signal<string[]>([]);
@@ -43,6 +45,9 @@ export class UiStateService {
   // search mode: 'classic' (literal grep) or 'nl' (natural language)
   readonly searchMode = signal<'classic' | 'nl'>('classic');
   readonly nlInterpretation = signal<NlInterpretation | null>(null);
+
+  /** Set by AppComponent; called by CommitListComponent when user scrolls to end or clicks Load More. */
+  onLoadMore: (() => void) | null = null;
 
   patchFilters(patch: Partial<GitOptions>) {
     this.filters.update((f) => ({ ...f, ...patch, page: patch.page ?? 1 }));

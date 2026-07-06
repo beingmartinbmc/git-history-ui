@@ -824,7 +824,19 @@ export class CommitDetailComponent {
   copyShareLink() {
     const c = this.commit();
     if (!c) return;
-    const url = `${window.location.origin}/?commit=${c.hash}`;
+    const params = new URLSearchParams();
+    params.set('commit', c.hash);
+    const filters = this.state.filters();
+    if (filters.author) params.set('author', filters.author);
+    if (filters.since) params.set('since', filters.since);
+    if (filters.until) params.set('until', filters.until);
+    if (filters.branch) params.set('branch', filters.branch);
+    if (filters.file) params.set('file', filters.file);
+    const mode = this.state.viewMode();
+    if (mode !== 'flat') params.set('mode', mode);
+    const active = this.activeFile();
+    if (active) params.set('activeFile', active.file);
+    const url = window.location.origin + '/?' + params.toString();
     navigator.clipboard
       ?.writeText(url)
       .then(() => {

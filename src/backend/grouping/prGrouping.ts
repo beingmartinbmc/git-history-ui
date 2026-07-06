@@ -1,3 +1,7 @@
+import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import type { Commit, GitService } from '../gitService';
 
 export interface CommitGroup {
@@ -50,6 +54,41 @@ interface PrCacheEntry {
 }
 
 const prCache = new Map<string, PrCacheEntry>();
+let prCacheDiskLoaded = false;
+
+function prCacheDiskPath(repoCwd?: string): string {
+  const dir = path.join(os.homedir(), '.git-history-ui');
+  if (!repoCwd) return path.join(dir, 'pr-cache.json');
+  const id = crypto.createHash('sha256').update(path.resolve(repoCwd)).digest('hex').slice(0, 16);
+  return path.join(dir, id, 'pr-cache.json');
+}
+
+function loadPrCacheFromDisk(repoCwd?: string): void {
+  if (prCacheDiskLoaded) return;
+  prCacheDiskLoaded = true;
+  try {
+    const raw = fs.readFileSync(prCacheDiskPath(repoCwd), 'utf8');
+    const entries = JSON.parse(raw) as Array<[string, PrCacheEntry]>;
+    const now = Date.now();
+    for (const [key, entry] of entries) {
+      // Extend TTL for disk-loaded entries
+      prCache.set(key, { ...entry, expiresAt: now + PR_CACHE_TTL_MS });
+    }
+  } catch {
+    // No persisted cache; proceed with empty
+  }
+}
+
+function savePrCacheToDisk(repoCwd?: string): void {
+  try {
+    const filePath = prCacheDiskPath(repoCwd);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const entries = Array.from(prCache.entries()).filter(([, e]) => e.pr != null);
+    fs.writeFileSync(filePath, JSON.stringify(entries), 'utf8');
+  } catch {
+    // Non-critical; skip
+  }
+}
 
 /**
  * Group commits by PR or feature using pure heuristics. Optionally enrich
@@ -165,10 +204,12 @@ export async function buildCommitGroups(
 
   // Optional PR enrichment.
   if (opts.githubToken) {
+    loadPrCacheFromDisk();
     const remote = await gitService.getRemoteUrl().catch(() => null);
     const slug = remote ? parseGithubSlug(remote) : null;
     if (slug) {
       await enrichWithPrInfo(groups, slug, opts.githubToken);
+      savePrCacheToDisk();
     }
   }
 
