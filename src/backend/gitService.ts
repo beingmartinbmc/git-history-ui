@@ -29,6 +29,19 @@ export interface DiffFile {
   changes: string;
 }
 
+export interface DiffFileMeta {
+  file: string;
+  oldFile?: string;
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface DiffMetadata {
+  files: DiffFileMeta[];
+  totalLines: number;
+}
+
 export interface BlameLine {
   line: number;
   hash: string;
@@ -66,6 +79,11 @@ export interface PaginatedCommits {
   hasPrevious: boolean;
 }
 
+export interface GitAuthorIdentity {
+  name: string;
+  email: string;
+}
+
 interface RefIndex {
   branchesByCommit: Map<string, string[]>;
   tagsByCommit: Map<string, string[]>;
@@ -89,6 +107,7 @@ const LOG_FORMAT = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s', '%b'].join(FIEL
 const REF_INDEX_TTL_MS = 5_000;
 const COUNT_CACHE_TTL_MS = 10_000;
 const AUTHORS_CACHE_TTL_MS = 5 * 60_000;
+const MAX_INTERNAL_PAGE_SIZE = 20_000;
 
 export class NotARepositoryError extends Error {
   constructor() {
@@ -169,7 +188,7 @@ export class GitService {
     }
 
     const page = Math.max(1, options.page || 1);
-    const pageSize = clamp(options.pageSize || 25, 1, 500);
+    const pageSize = clamp(options.pageSize || 25, 1, MAX_INTERNAL_PAGE_SIZE);
     const skip = (page - 1) * pageSize;
 
     const revision = this.revisionArg(options);
@@ -352,15 +371,13 @@ export class GitService {
     return commits;
   }
 
-  async getCommit(hash: string): Promise<Commit> {
+  async getCommit(hash: string, opts: GitStreamOptions = {}): Promise<Commit> {
     if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
 
-    const out = await this.git([
-      'log',
-      '--max-count=1',
-      `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
-      hash
-    ]);
+    const out = await this.git(
+      ['log', '--max-count=1', `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`, hash],
+      opts
+    );
 
     const refs = await this.getRefIndex();
     const commits = this.parseLog(out, refs);
@@ -397,6 +414,26 @@ export class GitService {
     return authors;
   }
 
+  async getAuthorIdentities(opts: GitStreamOptions = {}): Promise<GitAuthorIdentity[]> {
+    const raw = await this.git(['log', '--all', '--no-merges', '--pretty=format:%an%x00%ae'], {
+      ...opts,
+      maxBuffer: 16 * 1024 * 1024
+    });
+    const identities = new Map<string, GitAuthorIdentity>();
+    for (const line of raw.split('\n')) {
+      const [name, email] = line.split('\0');
+      const normalizedEmail = email?.trim();
+      if (!name?.trim() || !normalizedEmail) continue;
+      identities.set(normalizedEmail.toLowerCase(), {
+        name: name.trim(),
+        email: normalizedEmail
+      });
+    }
+    return Array.from(identities.values()).sort(
+      (a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email)
+    );
+  }
+
   async getDiff(hash: string, opts: GitStreamOptions = {}): Promise<DiffFile[]> {
     if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
 
@@ -424,19 +461,7 @@ export class GitService {
    * Uses git diff-tree --numstat which is orders of magnitude cheaper than
    * full diff parsing for large commits.
    */
-  async getDiffMeta(
-    hash: string,
-    opts: GitStreamOptions = {}
-  ): Promise<{
-    files: Array<{
-      file: string;
-      oldFile?: string;
-      status: string;
-      additions: number;
-      deletions: number;
-    }>;
-    totalLines: number;
-  }> {
+  async getDiffMeta(hash: string, opts: GitStreamOptions = {}): Promise<DiffMetadata> {
     if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
 
     const parentsOut = await this.git(['log', '-1', '--pretty=format:%P', hash], opts);
@@ -459,62 +484,7 @@ export class GitService {
         : ['diff', '--name-status', '-M', '--no-color', `${hash}^1`, hash];
     const statusRaw = await this.git(statusArgs, opts);
 
-    const statusMap = new Map<string, { code: string; oldFile?: string }>();
-    for (const line of statusRaw.split('\n').filter(Boolean)) {
-      const match = line.match(/^([AMDRC])\d*\t(.+?)(?:\t(.+))?$/);
-      if (match) {
-        const target = match[3] ?? match[2];
-        const oldFile = match[3] ? match[2] : undefined;
-        statusMap.set(target, { code: match[1], oldFile });
-      }
-    }
-
-    const files: Array<{
-      file: string;
-      oldFile?: string;
-      status: string;
-      additions: number;
-      deletions: number;
-    }> = [];
-    let totalLines = 0;
-    // --numstat without -z: "add\tdel\tfile" per line, renames as "add\tdel\told => new"
-    for (const line of raw.split('\n').filter(Boolean)) {
-      const m = line.match(/^(-|\d+)\t(-|\d+)\t(.+)$/);
-      if (!m) continue;
-      const binary = m[1] === '-' || m[2] === '-';
-      const add = m[1] === '-' ? 0 : parseInt(m[1], 10);
-      const del = m[2] === '-' ? 0 : parseInt(m[2], 10);
-      let filePath = m[3];
-      let oldFile: string | undefined;
-      // Renames show as "old => new" or "{prefix/old => prefix/new}"
-      const renameMatch = filePath.match(/^(.+?)\{(.+?) => (.+?)\}(.*)$|^(.+?) => (.+)$/);
-      if (renameMatch) {
-        if (renameMatch[5] !== undefined) {
-          oldFile = renameMatch[5];
-          filePath = renameMatch[6];
-        } else {
-          oldFile = renameMatch[1] + renameMatch[2] + renameMatch[4];
-          filePath = renameMatch[1] + renameMatch[3] + renameMatch[4];
-        }
-      }
-      const info = statusMap.get(filePath);
-      if (info?.oldFile) oldFile = info.oldFile;
-      const statusCode = info?.code ?? 'M';
-      const status = binary
-        ? 'binary'
-        : statusCode === 'A'
-          ? 'added'
-          : statusCode === 'D'
-            ? 'deleted'
-            : statusCode === 'R'
-              ? 'renamed'
-              : statusCode === 'C'
-                ? 'copied'
-                : 'modified';
-      files.push({ file: filePath, oldFile, status, additions: add, deletions: del });
-      totalLines += binary ? 1 : add + del;
-    }
-    return { files, totalLines };
+    return parseDiffMetadata(raw, statusRaw);
   }
 
   /** Full diff for a single file within a commit, avoiding parsing the entire patch. */
@@ -547,6 +517,29 @@ export class GitService {
       maxBuffer: 64 * 1024 * 1024
     });
     return parseUnifiedDiff(raw);
+  }
+
+  async getRangeMetadata(
+    from: string,
+    to: string,
+    opts: GitStreamOptions = {}
+  ): Promise<DiffMetadata & { commits: Commit[]; commitCount: number }> {
+    if (!isSafeRef(from) || !isSafeRef(to)) throw new Error('Invalid ref');
+    const refs = await this.getRefIndex();
+    const [raw, statusRaw, logRaw, countRaw] = await Promise.all([
+      this.git(['diff', '--numstat', '-M', '--no-color', from, to], opts),
+      this.git(['diff', '--name-status', '-M', '--no-color', from, to], opts),
+      this.git(
+        ['log', '--max-count=100', `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`, `${from}..${to}`],
+        opts
+      ),
+      this.git(['rev-list', '--count', `${from}..${to}`], opts)
+    ]);
+    return {
+      ...parseDiffMetadata(raw, statusRaw),
+      commits: this.parseLog(logRaw, refs),
+      commitCount: Number.parseInt(countRaw.trim(), 10) || 0
+    };
   }
 
   /** Resolve any ref (branch/tag/HEAD) to its commit at or before `atIso`. */
@@ -666,7 +659,7 @@ export class GitService {
   }
 
   /** Pass-through git runner for trusted callers (e.g., SqliteIndex builder). */
-  async runRaw(args: string[], opts: { maxBuffer?: number } = {}): Promise<string> {
+  async runRaw(args: string[], opts: GitExecOptions = {}): Promise<string> {
     return this.git(args, opts);
   }
 
@@ -726,7 +719,8 @@ export class GitService {
             if (code === 0) resolve();
             else reject(new Error(`git ${args[0]} exited ${code}: ${stderr.trim()}`));
           });
-        })
+        }),
+      opts.signal
     );
   }
 
@@ -979,7 +973,7 @@ export class GitService {
         const msg = e.stderr?.toString().trim() || e.message;
         throw new Error(`git ${args[0]} failed: ${msg}`);
       }
-    });
+    }, opts.signal);
   }
 }
 
@@ -999,7 +993,7 @@ function assertSafeRepoPath(filePath: string): void {
   if (!isSafeRepoPath(filePath)) throw new Error('Invalid path');
 }
 
-function isSafeRef(ref: string): boolean {
+export function isSafeRef(ref: string): boolean {
   if (typeof ref !== 'string' || ref.length === 0 || ref.length > 200) return false;
   if (ref.startsWith('-') || ref.startsWith('^')) return false;
   if (ref.includes('..') || ref.includes('@{') || ref.endsWith('/') || ref.endsWith('.'))
@@ -1052,6 +1046,50 @@ function normalizeNumstatPath(file: string): string {
 
   const arrow = file.lastIndexOf(' => ');
   return arrow >= 0 ? file.slice(arrow + 4) : file;
+}
+
+function parseDiffMetadata(raw: string, statusRaw: string): DiffMetadata {
+  const statusMap = new Map<string, { code: string; oldFile?: string }>();
+  for (const line of statusRaw.split('\n').filter(Boolean)) {
+    const match = line.match(/^([AMDRC])\d*\t(.+?)(?:\t(.+))?$/);
+    if (!match) continue;
+    const target = match[3] ?? match[2];
+    statusMap.set(target, { code: match[1], oldFile: match[3] ? match[2] : undefined });
+  }
+
+  const files: DiffFileMeta[] = [];
+  let totalLines = 0;
+  for (const line of raw.split('\n').filter(Boolean)) {
+    const match = line.match(/^(-|\d+)\t(-|\d+)\t(.+)$/);
+    if (!match) continue;
+    const binary = match[1] === '-' || match[2] === '-';
+    const additions = binary ? 0 : parseInt(match[1], 10);
+    const deletions = binary ? 0 : parseInt(match[2], 10);
+    let file = match[3];
+    let oldFile: string | undefined;
+    const rename = file.match(/^(.+?)\{(.+?) => (.+?)\}(.*)$|^(.+?) => (.+)$/);
+    if (rename) {
+      if (rename[5] !== undefined) {
+        oldFile = rename[5];
+        file = rename[6];
+      } else {
+        oldFile = rename[1] + rename[2] + rename[4];
+        file = rename[1] + rename[3] + rename[4];
+      }
+    }
+    const info = statusMap.get(file);
+    if (info?.oldFile) oldFile = info.oldFile;
+    const status =
+      binary || info?.code === undefined
+        ? binary
+          ? 'binary'
+          : 'modified'
+        : ({ A: 'added', D: 'deleted', R: 'renamed', C: 'copied', M: 'modified' }[info.code] ??
+          'modified');
+    files.push({ file, oldFile, status, additions, deletions });
+    totalLines += binary ? 1 : additions + deletions;
+  }
+  return { files, totalLines };
 }
 
 function parseUnifiedDiff(raw: string): DiffFile[] {

@@ -18,19 +18,24 @@ export interface InsightsOptions {
 
 const CONCURRENCY = 3;
 const FALLBACK_DIFF_LIMIT = 50;
+const DEFAULT_MAX_COMMITS = 5000;
+const MAX_COMMITS = 20_000;
 
 export async function computeInsights(
   gitService: GitService,
   opts: InsightsOptions = {}
 ): Promise<InsightsBundle> {
-  const maxCommits = Math.min(2000, Math.max(50, opts.maxCommits ?? 500));
-  const page = await gitService.getCommits({
-    since: opts.since,
-    until: opts.until,
-    branch: opts.branch,
-    page: 1,
-    pageSize: maxCommits
-  });
+  const maxCommits = Math.min(MAX_COMMITS, Math.max(50, opts.maxCommits ?? DEFAULT_MAX_COMMITS));
+  const page = await gitService.getCommits(
+    {
+      since: opts.since,
+      until: opts.until,
+      branch: opts.branch,
+      page: 1,
+      pageSize: maxCommits
+    },
+    { signal: opts.signal }
+  );
   const commits = page.commits;
 
   // Fast path: a single `git log --numstat` returns per-commit additions
@@ -73,7 +78,8 @@ export async function computeInsights(
           const i = cursor++;
           const commit = commits[i];
           const files = await gitService
-            .getDiff(commit.hash, { signal: opts.signal })
+            .getDiffMeta(commit.hash, { signal: opts.signal })
+            .then((meta) => meta.files.map((file) => ({ ...file, changes: '' }) as DiffFile))
             .catch(() => []);
           pairs.push({ commit, files });
         }
@@ -93,6 +99,9 @@ export async function computeInsights(
   return {
     windowStart,
     windowEnd,
+    analyzedCommits: commits.length,
+    availableCommits: page.total,
+    truncated: commits.length < page.total,
     totalCommits: commits.length,
     totalAuthors: new Set(commits.map((c) => c.authorEmail || c.author)).size,
     topContributors: contributors,

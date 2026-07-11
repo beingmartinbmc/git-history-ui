@@ -124,6 +124,7 @@ export const WRAPPED_TEMPLATES: readonly WrappedTemplate[] = [
 
 const DEFAULT_PALETTE = WRAPPED_PALETTES[0];
 const DEFAULT_TEMPLATE: WrappedTemplateId = 'classic';
+export const CANONICAL_PROJECT_URL = 'https://github.com/beingmartinbmc/git-history-ui';
 
 /**
  * Renders a "Git Wrapped" summary card to a canvas and exports it as a PNG.
@@ -424,7 +425,7 @@ export class WrappedCardRenderer {
   private drawFooter(ctx: CanvasRenderingContext2D, p: WrappedPalette, centered: boolean): void {
     ctx.fillStyle = p.inkFaint;
     ctx.font = `500 24px ${this.FONT}`;
-    const text = 'made with git-history-ui · npx git-history-ui';
+    const text = `made with ${CANONICAL_PROJECT_URL}`;
     if (centered) {
       ctx.textAlign = 'center';
       ctx.fillText(text, this.W / 2, this.H - 70);

@@ -48,15 +48,17 @@ function fakeGit(opts: FakeOpts): GitService {
       if (opts.failNumstat) throw new Error('boom');
       return new Map(Object.entries(opts.numstat ?? {}));
     },
-    getDiff: async (hash: string) => {
+    getDiffMeta: async (hash: string) => {
       if (opts.failDiff?.(hash)) throw new Error('boom');
-      return (opts.diffs?.[hash] ?? []).map((d) => ({
-        file: d.file,
-        status: 'modified' as const,
-        additions: 0,
-        deletions: 0,
-        changes: ''
-      }));
+      return {
+        files: (opts.diffs?.[hash] ?? []).map((d) => ({
+          file: d.file,
+          status: 'modified',
+          additions: 0,
+          deletions: 0
+        })),
+        totalLines: 0
+      };
     }
   } as unknown as GitService;
 }

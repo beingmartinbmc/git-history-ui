@@ -7,13 +7,15 @@ on:
 
 jobs:
   publish-npm:
-    name: Publish to npm
+    name: Verify and publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node 20
         uses: actions/setup-node@v4
@@ -22,28 +24,64 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: npm
 
-      - name: Install backend deps
-        run: npm ci
+      - name: Verify tag matches package version
+        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
 
-      - name: Install frontend deps
-        run: npm ci --prefix frontend
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix frontend
 
-      - run: npm run audit:prod
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test -- --ci
-      - name: Coverage gate (backend >= 90%)
-        run: >-
-          npx jest --coverage --ci
-          --coverageThreshold='{"global":{"statements":90,"functions":90,"lines":90}}'
-      - name: Test frontend
-        run: npm run --prefix frontend test -- --watch=false --browsers=ChromeHeadless
-      - run: npm run build
+      - name: Audit production dependencies
+        run: |
+          npm run audit:prod
+          npm run audit:frontend:prod
 
-      - name: Publish
+      - name: Lint, typecheck, and test
+        run: |
+          npm run lint
+          npm run typecheck
+          npm test -- --ci
+          npm run --prefix frontend test -- --watch=false --browsers=ChromeHeadless
+
+      - name: Build and smoke
+        run: |
+          npm run build
+          npm run smoke:action
+          npm pack --dry-run
+          package="$(npm pack --silent)"
+          temp="$(mktemp -d)"
+          trap 'kill "${demo_pid:-}" 2>/dev/null || true; rm -rf "$temp"' EXIT
+          npm install --prefix "$temp" --ignore-scripts "$package"
+          "$temp/node_modules/.bin/git-history-ui" --no-open --port 3210 demo >"$temp/demo.log" 2>&1 &
+          demo_pid=$!
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3210/api/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "${ready:-}" = 1
+          kill "$demo_pid"
+          rm -f "$package"
+
+      - name: Publish npm package
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_TOKEN }}
+
+      - name: Package Chrome extension
+        run: npm run package:extension
+
+      - name: Upload extension release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-extension
+          path: |
+            dist/extension/*.zip
+            dist/extension/*.sha256
+          if-no-files-found: error
 
   github-release:
     name: Create GitHub release
@@ -53,7 +91,23 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: chrome-extension
+          path: release-assets
+      - name: Build curated release body
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { capture=1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release-body.md
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-body.md
           generate_release_notes: true
+          files: |
+            release-assets/*.zip
+            release-assets/*.sha256

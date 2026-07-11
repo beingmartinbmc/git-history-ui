@@ -1,23 +1,18 @@
 # Git History UI — Wiki
 
-Welcome to the **git-history-ui** wiki! This is the single source of truth for architecture, APIs, development workflows, and operational guidance.
+Welcome to the **git-history-ui** wiki. The maintained references below live
+with the repository and should be checked against the current release.
 
 ## Quick Navigation
 
 | Section | Description |
 |---------|-------------|
 | [Architecture Overview](./Architecture-Overview.md) | System design, component diagram, data flow |
-| [Backend API Reference](./Backend-API-Reference.md) | All REST endpoints with request/response schemas |
-| [Frontend Architecture](./Frontend-Architecture.md) | Angular components, services, state management |
-| [CLI Reference](./CLI-Reference.md) | All flags, subcommands, and environment variables |
-| [Git Service Internals](./Git-Service-Internals.md) | How the backend talks to git |
-| [Search & NL Engine](./Search-and-NL-Engine.md) | Heuristic and AI-powered search |
-| [LLM Integration](./LLM-Integration.md) | Provider abstraction, configuration, prompts |
-| [SQLite Index](./SQLite-Index.md) | Local indexing for large repos |
-| [Insights & Analytics](./Insights-and-Analytics.md) | Aggregations, churn, risk scoring, wrapped |
-| [Security Model](./Security-Model.md) | Auth, CORS, rate limiting, input validation |
-| [Development Guide](./Development-Guide.md) | Setup, building, testing, contributing |
-| [Deployment & Production](./Deployment-and-Production.md) | Running in prod, environment variables |
+| [Backend API Reference](./Backend-API-Reference.md) | Wiki summary of the current REST API |
+| [Canonical API reference](../API.md) | Complete route and behavior reference |
+| [Architecture](../architecture.md) | Maintained backend/frontend architecture |
+| [Configuration](../configuration.md) | CLI, environment, Docker, and privacy settings |
+| [Troubleshooting](../troubleshooting.md) | Common runtime and protocol issues |
 
 ---
 
@@ -37,13 +32,15 @@ A **local-first** Git history visualization tool that runs in your browser. It p
 - AI-powered explanations and summaries (opt-in)
 - Breakage analysis (SZZ-lite suspect scoring)
 - "Git Wrapped" year-in-review cards
-- Export commits/insights/Wrapped as JSON or CSV
+- Export commits as JSON or CSV, and insights/Wrapped as JSON
 
-**Key principle:** Your code never leaves your machine unless you explicitly configure an LLM provider API key.
+**Key principle:** Git processing is local. If you configure an LLM provider
+and invoke an AI action, the selected prompt, commit metadata, and relevant
+diff/history data are sent to that provider.
 
 ## Version
 
-Current: **v5.2.1**
+Current: **v5.4.0**
 
 ## License
 

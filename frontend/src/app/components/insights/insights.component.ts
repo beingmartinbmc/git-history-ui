@@ -1,6 +1,15 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
+import { Subject, catchError, map, of, switchMap } from 'rxjs';
 import { InsightsBundle } from '../../models/git.models';
 import { InsightsService } from '../../services/insights.service';
 import { ChurnChartComponent } from './churn-chart.component';
@@ -12,7 +21,7 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
   imports: [CommonModule, HotspotsTreemapComponent, ChurnChartComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="page">
+    <div class="page" [attr.aria-busy]="loading()">
       <header class="head">
         <div>
           <p class="eyebrow">Repository intelligence</p>
@@ -23,27 +32,48 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
         </p>
       </header>
 
-      <div class="empty" *ngIf="loading()">Computing insights (this may take a few seconds)…</div>
-      <div class="empty error" *ngIf="error() as e">{{ e }}</div>
+      <div class="empty" *ngIf="loading() && !bundle()">
+        Computing insights (this may take a few seconds)…
+      </div>
+      <div class="empty error" *ngIf="error() as e">
+        {{ e }} <button type="button" (click)="retry()">Retry</button>
+      </div>
+      <div class="empty" *ngIf="!loading() && !error() && bundle()?.analyzedCommits === 0">
+        No commits are available for insights.
+      </div>
 
-      <div class="grid" *ngIf="bundle() as b">
+      <div class="grid" *ngIf="nonEmptyBundle() as b">
         <section class="kpis">
-          <button class="kpi">
+          <div class="kpi">
             <span class="label">Commits analyzed</span>
-            <strong>{{ b.totalCommits }}</strong>
-            <span class="hint">current insight window</span>
-          </button>
-          <button class="kpi">
+            <strong>{{ b.analyzedCommits }}</strong>
+            <span class="hint">
+              {{
+                b.truncated ? 'of ' + b.availableCommits + ' available' : 'current insight window'
+              }}
+            </span>
+          </div>
+          <div class="kpi">
             <span class="label">Contributors</span>
             <strong>{{ b.totalAuthors }}</strong>
             <span class="hint">{{ topContributor(b) }}</span>
-          </button>
-          <button class="kpi" (click)="openTopHotspot(b)">
+          </div>
+          <button
+            type="button"
+            class="kpi"
+            (click)="openTopHotspot(b)"
+            [disabled]="!b.hotspots.length"
+          >
             <span class="label">Hotspots</span>
             <strong>{{ b.hotspots.length }}</strong>
             <span class="hint">click to open the top file</span>
           </button>
-          <button class="kpi" (click)="openTopRisk(b)">
+          <button
+            type="button"
+            class="kpi"
+            (click)="openTopRisk(b)"
+            [disabled]="!b.riskyFiles.length"
+          >
             <span class="label">Risk alerts</span>
             <strong>{{ b.riskyFiles.length }}</strong>
             <span class="hint">highest churn and ownership risk</span>
@@ -98,10 +128,18 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
             <span><strong>Color</strong> = additions + deletions</span>
             <span><strong>People</strong> = number of authors touching it</span>
           </div>
-          <app-hotspots-treemap [data]="b.hotspots" (fileClick)="openFile($event)" />
+          @defer (on viewport) {
+            <app-hotspots-treemap [data]="b.hotspots" (fileClick)="openFile($event)" />
+          } @placeholder {
+            <div class="defer-placeholder">Preparing hotspots treemap…</div>
+          } @error {
+            <div class="defer-error">Hotspots treemap could not be displayed.</div>
+          }
           <ul class="hot-list compact" aria-label="Top hot files">
             <li *ngFor="let h of b.hotspots.slice(0, 5)">
-              <a class="path" (click)="openFile(h.file)" [title]="h.file">{{ h.file }}</a>
+              <button type="button" class="path" (click)="openFile(h.file)" [title]="h.file">
+                {{ h.file }}
+              </button>
               <span class="count">{{ h.commits }} commits</span>
               <span class="count">{{ h.authors }} authors</span>
               <button
@@ -142,7 +180,9 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
             >
               <span class="rank">{{ i + 1 }}</span>
               <div class="risk-main">
-                <a class="path" (click)="openFile(r.file)" [title]="r.file">{{ r.file }}</a>
+                <button type="button" class="path" (click)="openFile(r.file)" [title]="r.file">
+                  {{ r.file }}
+                </button>
                 <span class="reason">{{ r.reason }}</span>
               </div>
               <div class="risk-meter" [attr.aria-label]="'Risk score ' + riskScore(r.riskScore)">
@@ -170,7 +210,13 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
 
         <section class="card wide chart-card">
           <h3>Churn over time</h3>
-          <app-churn-chart [data]="b.churnByDay" />
+          @defer (on viewport) {
+            <app-churn-chart [data]="b.churnByDay" />
+          } @placeholder {
+            <div class="defer-placeholder">Preparing churn chart…</div>
+          } @error {
+            <div class="defer-error">Churn chart could not be displayed.</div>
+          }
         </section>
       </div>
     </div>
@@ -254,7 +300,14 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
         cursor: pointer;
         text-align: left;
       }
-      .kpi:hover {
+      div.kpi {
+        cursor: default;
+      }
+      .kpi:disabled {
+        cursor: default;
+        opacity: 0.65;
+      }
+      button.kpi:hover:not(:disabled) {
         border-color: color-mix(in oklab, var(--accent) 36%, var(--border-soft));
         box-shadow: var(--shadow-md);
       }
@@ -461,7 +514,13 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
         border-bottom: 0;
       }
       .path {
+        max-width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
         font-family: var(--font-mono, monospace);
+        font-size: inherit;
+        text-align: left;
         color: var(--accent);
         cursor: pointer;
         white-space: nowrap;
@@ -627,6 +686,17 @@ import { HotspotsTreemapComponent } from './hotspots-treemap.component';
         color: var(--fg-muted);
         font-size: 11px;
       }
+      .defer-placeholder,
+      .defer-error {
+        display: grid;
+        min-height: 12rem;
+        place-items: center;
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+      .defer-error {
+        color: var(--danger);
+      }
       .risk-high .rank {
         background: color-mix(in oklab, var(--danger) 18%, transparent);
         color: var(--danger);
@@ -673,11 +743,37 @@ export class InsightsComponent {
   readonly loading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
   readonly maxAuthorCommits = signal<number>(0);
+  readonly nonEmptyBundle = computed(() => {
+    const bundle = this.bundle();
+    return bundle && bundle.analyzedCommits > 0 ? bundle : null;
+  });
+  private readonly requests = new Subject<void>();
 
   constructor() {
-    effect(() => {
-      this.load();
-    });
+    this.requests
+      .pipe(
+        switchMap(() => {
+          this.loading.set(true);
+          this.error.set(null);
+          return this.insightsApi.bundle().pipe(
+            map((bundle) => ({ bundle, error: null })),
+            catchError((error) =>
+              of({ bundle: null, error: error?.error?.error ?? 'Failed to load insights' }),
+            ),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe(({ bundle, error }) => {
+        this.loading.set(false);
+        if (error) {
+          this.error.set(error);
+          return;
+        }
+        this.bundle.set(bundle);
+        this.maxAuthorCommits.set(bundle?.topContributors[0]?.commits ?? 0);
+      });
+    effect(() => this.retry());
   }
 
   trackByDate(_: number, d: { date: string }): string {
@@ -740,19 +836,7 @@ export class InsightsComponent {
     if (file) this.openFile(file);
   }
 
-  private load() {
-    this.loading.set(true);
-    this.error.set(null);
-    this.insightsApi.bundle({ maxCommits: 500 }).subscribe({
-      next: (b) => {
-        this.bundle.set(b);
-        this.maxAuthorCommits.set(b.topContributors[0]?.commits ?? 0);
-        this.loading.set(false);
-      },
-      error: (err) => {
-        this.error.set(err?.error?.error ?? 'Failed to load insights');
-        this.loading.set(false);
-      },
-    });
+  retry() {
+    this.requests.next();
   }
 }

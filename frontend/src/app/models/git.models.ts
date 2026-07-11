@@ -53,6 +53,38 @@ export interface PaginatedCommits {
   hasPrevious: boolean;
 }
 
+export interface RepositoryIdentity {
+  name: string;
+  remoteUrl: string | null;
+  webUrl: string | null;
+  currentBranch: string | null;
+  defaultBranch: string | null;
+  currentAuthor: { name: string | null; email: string | null };
+}
+
+export interface GitAuthorIdentity {
+  name: string;
+  email: string;
+}
+
+export interface InvestigationReport {
+  schemaVersion: 1;
+  repository: RepositoryIdentity;
+  target:
+    | { type: 'commit'; hash: string; subject: string; author: string; date: string }
+    | { type: 'range'; from: string; to: string };
+  summary: {
+    commits: number;
+    files: number;
+    additions: number;
+    deletions: number;
+    modules: string[];
+  };
+  files: Array<Omit<DiffFile, 'changes'>>;
+  relatedCommits: Array<Pick<Commit, 'hash' | 'shortHash' | 'subject' | 'author' | 'date'>>;
+  portableUrl: string | null;
+}
+
 export type IndexPhase = 'idle' | 'checking' | 'indexing' | 'done' | 'cancelled' | 'error';
 
 export interface IndexProgress {
@@ -139,6 +171,9 @@ export interface CommitImpact {
 export interface InsightsBundle {
   windowStart: string | null;
   windowEnd: string | null;
+  analyzedCommits: number;
+  availableCommits: number;
+  truncated: boolean;
   totalCommits: number;
   totalAuthors: number;
   topContributors: Array<{

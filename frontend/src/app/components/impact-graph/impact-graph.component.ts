@@ -8,9 +8,12 @@ import {
   OnChanges,
   OnDestroy,
   ViewChild,
+  effect,
+  inject,
 } from '@angular/core';
 import * as d3 from 'd3';
 import { CommitImpact } from '../../models/git.models';
+import { ThemeService } from '../../services/theme.service';
 
 interface Node extends d3.SimulationNodeDatum {
   id: string;
@@ -37,11 +40,36 @@ interface Link extends d3.SimulationLinkDatum<Node> {
       <span class="hint">Scroll to explore. Lines show module membership and imports.</span>
     </div>
     <div class="canvas-wrap" tabindex="0">
-      <svg #svg aria-label="Commit impact graph"></svg>
+      <svg #svg aria-hidden="true"></svg>
       <div class="empty" *ngIf="!hasData">
         No graph data — changed files have no detectable internal imports.
       </div>
     </div>
+    <details class="accessible-data" *ngIf="impact">
+      <summary>
+        Impact data: {{ impact.files.length }} changed files, {{ impact.modules.length }} modules,
+        {{ impact.dependencyRipple.length }} import relationships
+      </summary>
+      <table *ngIf="impact.files.length">
+        <caption>
+          Changed files
+        </caption>
+        <tbody>
+          <tr *ngFor="let file of impact.files.slice(0, 50)">
+            <td>{{ file }}</td>
+            <td>{{ moduleFor(file) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <ul *ngIf="impact.dependencyRipple.length">
+        <li *ngFor="let relation of impact.dependencyRipple.slice(0, 30)">
+          {{ relation.from }} imports {{ relation.to }}
+        </li>
+      </ul>
+      <p *ngIf="impact.files.length > 50 || impact.dependencyRipple.length > 30">
+        Large impact output is summarized to keep this page responsive.
+      </p>
+    </details>
   `,
   styles: [
     `
@@ -121,6 +149,29 @@ interface Link extends d3.SimulationLinkDatum<Node> {
         font-size: 11px;
         pointer-events: none;
       }
+      .accessible-data {
+        margin-top: 0.5rem;
+        color: var(--fg-secondary);
+        font-size: 11px;
+      }
+      .accessible-data table {
+        width: 100%;
+        margin-top: 0.4rem;
+        border-collapse: collapse;
+      }
+      .accessible-data caption {
+        text-align: left;
+        font-weight: 600;
+      }
+      .accessible-data td {
+        padding: 0.25rem;
+        border-bottom: 1px solid var(--border-soft);
+        font-family: var(--font-mono, monospace);
+      }
+      .accessible-data ul {
+        max-height: 10rem;
+        overflow: auto;
+      }
       :host ::ng-deep .column-title {
         fill: var(--fg-muted);
         font-size: 11px;
@@ -171,9 +222,24 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
   @ViewChild('svg', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
   private simulation: d3.Simulation<Node, Link> | null = null;
+  private theme = inject(ThemeService);
+  private resizeObserver: ResizeObserver | null = null;
   hasData = false;
 
+  constructor() {
+    effect(() => {
+      void this.theme.resolved();
+      this.render();
+    });
+  }
+
   ngAfterViewInit() {
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.render());
+      this.resizeObserver.observe(
+        this.svgRef.nativeElement.parentElement ?? this.svgRef.nativeElement,
+      );
+    }
     this.render();
   }
 
@@ -183,6 +249,11 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
 
   ngOnDestroy() {
     this.simulation?.stop();
+    this.resizeObserver?.disconnect();
+  }
+
+  moduleFor(file: string): string {
+    return detectModule(file);
   }
 
   private render() {
@@ -271,7 +342,7 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
     positionColumn(changed, columns.changed, top, rowHeight);
     positionColumn(imported, columns.imported, top, rowHeight);
 
-    const link = svg
+    svg
       .append('g')
       .selectAll<SVGPathElement, Link>('path')
       .data(links)
@@ -299,7 +370,7 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
 
     node.append('title').text((d) => `${d.group}: ${d.id.slice(2)}`);
 
-    const labelBg = svg
+    svg
       .append('g')
       .selectAll<SVGRectElement, Node>('rect')
       .data(nodes)
@@ -312,7 +383,7 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
       .attr('x', (d) => (d.x ?? 0) + 10)
       .attr('y', (d) => (d.y ?? 0) - 11);
 
-    const label = svg
+    svg
       .append('g')
       .selectAll<SVGTextElement, Node>('text')
       .data(nodes)

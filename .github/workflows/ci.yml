@@ -36,13 +36,16 @@ jobs:
       - name: Audit production dependencies
         run: npm run audit:prod
 
+      - name: Audit frontend production dependencies
+        run: npm run audit:frontend:prod
+
       - name: Lint
         run: npm run lint
 
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test (backend)
+      - name: Test (backend, extension, and action helpers)
         run: npm test -- --ci
 
       - name: Coverage gate (backend >= 90%)
@@ -55,6 +58,9 @@ jobs:
 
       - name: Build backend
         run: npm run build:backend
+
+      - name: Smoke PR impact action logic
+        run: npm run smoke:action
 
       - name: Build frontend
         run: npm run build:frontend
@@ -101,3 +107,38 @@ jobs:
           push: false
           load: true
           tags: git-history-ui:ci
+
+      - name: Smoke test mounted repository and authentication
+        shell: bash
+        run: |
+          repo="$(mktemp -d)"
+          trap 'docker rm -f git-history-ui-ci >/dev/null 2>&1 || true; rm -rf "$repo"' EXIT
+          git -C "$repo" init -q -b main
+          git -C "$repo" config user.name "CI"
+          git -C "$repo" config user.email "ci@example.com"
+          echo "smoke" > "$repo/README.md"
+          git -C "$repo" add README.md
+          git -C "$repo" commit -q -m "test: docker smoke"
+          chmod -R a+rX "$repo"
+
+          docker run -d --name git-history-ui-ci \
+            -p 127.0.0.1:3000:3000 \
+            -e GIT_HISTORY_UI_TOKEN=ci-secret \
+            -v "$repo:/repo:ro" \
+            git-history-ui:ci
+
+          for attempt in {1..30}; do
+            if curl --fail --silent --user ignored:ci-secret \
+              "http://127.0.0.1:3000/api/health" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "${ready:-}" = 1
+
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            "http://127.0.0.1:3000/api/commits")"
+          test "$status" = 401
+          curl --fail --silent --user ignored:ci-secret \
+            "http://127.0.0.1:3000/api/commits?pageSize=1" >/dev/null

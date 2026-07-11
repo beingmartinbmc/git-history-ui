@@ -1,4 +1,4 @@
-import { CommonModule } from '@angular/common';
+import { CommonModule, DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -62,7 +62,7 @@ import { GitService } from '../../services/git.service';
         display: flex;
         gap: 0.75rem;
         align-items: center;
-        max-width: min(560px, calc(100vw - 2rem));
+        max-width: min(560px, calc(100% - 2rem));
         padding: 0.55rem 0.7rem;
         border: 1px solid var(--border-soft);
         border-radius: var(--radius-md);
@@ -140,7 +140,12 @@ import { GitService } from '../../services/git.service';
 })
 export class IndexStatusComponent implements OnDestroy {
   private git = inject(GitService);
+  private doc = inject(DOCUMENT);
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private readonly onVisibilityChange = () => {
+    if (this.doc.visibilityState === 'hidden') this.clearTimer();
+    else this.refresh();
+  };
 
   status = signal<IndexStatus | null>(null);
   busy = signal(false);
@@ -165,11 +170,13 @@ export class IndexStatusComponent implements OnDestroy {
   });
 
   constructor() {
-    this.refresh();
+    this.doc.addEventListener?.('visibilitychange', this.onVisibilityChange);
+    if (this.doc.visibilityState !== 'hidden') this.refresh();
   }
 
   ngOnDestroy(): void {
-    if (this.timer) clearTimeout(this.timer);
+    this.clearTimer();
+    this.doc.removeEventListener?.('visibilitychange', this.onVisibilityChange);
   }
 
   build(): void {
@@ -185,12 +192,13 @@ export class IndexStatusComponent implements OnDestroy {
   }
 
   private refresh(): void {
+    if (this.doc.visibilityState === 'hidden') return;
     this.git.getIndexStatus().subscribe({
       next: (s) => {
         this.status.set(s);
-        this.schedule(s.running ? 1000 : 10_000);
+        if (s.running) this.schedule(1000);
       },
-      error: () => this.schedule(15_000),
+      error: () => this.clearTimer(),
     });
   }
 
@@ -198,16 +206,25 @@ export class IndexStatusComponent implements OnDestroy {
     this.busy.set(true);
     action().subscribe({
       next: (s) => this.status.set(s),
-      error: () => this.busy.set(false),
+      error: () => {
+        this.busy.set(false);
+        this.refresh();
+      },
       complete: () => {
         this.busy.set(false);
-        this.schedule(this.status()?.running ? 1000 : 5_000);
+        this.refresh();
       },
     });
   }
 
   private schedule(ms: number): void {
-    if (this.timer) clearTimeout(this.timer);
+    this.clearTimer();
+    if (this.doc.visibilityState === 'hidden') return;
     this.timer = setTimeout(() => this.refresh(), ms);
+  }
+
+  private clearTimer(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
   }
 }

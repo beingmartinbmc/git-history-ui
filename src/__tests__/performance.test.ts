@@ -13,7 +13,7 @@ import { GitService } from '../backend/gitService';
 import { computeInsights } from '../backend/insights';
 import { runNlSearch } from '../backend/search/nlSearch';
 import { buildCommitGroups } from '../backend/grouping/prGrouping';
-import { getDefaultLlmService } from '../backend/llm';
+import { createLlmService } from '../backend/llm';
 import { makeBigRepo } from './helpers/repo';
 
 const COMMIT_COUNT = 1500;
@@ -69,13 +69,15 @@ describe('performance: large repo (synthetic 1.5k commits)', () => {
   });
 
   it(`computeInsights uses numstat fast path and stays under ${BUDGET_INSIGHTS_MS}ms`, async () => {
-    // Spy on getDiff to make sure we are NOT fanning out per-commit
-    // diffs (the old, slow code path).
-    const diffSpy = jest.spyOn(gs, 'getDiff');
+    // Spy on getDiffMeta to make sure we are NOT fanning out per-commit
+    // metadata calls (the old, slow fallback path).
+    const diffSpy = jest.spyOn(gs, 'getDiffMeta');
     const t0 = Date.now();
     const insights = await computeInsights(gs, { maxCommits: COMMIT_COUNT });
     const elapsed = Date.now() - t0;
-    expect(insights.totalCommits).toBeGreaterThan(0);
+    expect(insights.analyzedCommits).toBe(COMMIT_COUNT);
+    expect(insights.availableCommits).toBe(COMMIT_COUNT);
+    expect(insights.truncated).toBe(false);
     expect(insights.hotspots.length).toBeGreaterThan(0);
     expect(insights.topContributors.length).toBeGreaterThan(0);
     expect(elapsed).toBeLessThan(BUDGET_INSIGHTS_MS);
@@ -86,7 +88,7 @@ describe('performance: large repo (synthetic 1.5k commits)', () => {
   });
 
   it(`heuristic NL search across ${COMMIT_COUNT} commits returns within ${BUDGET_NL_SEARCH_MS}ms`, async () => {
-    const llm = getDefaultLlmService({});
+    const llm = createLlmService({});
     const t0 = Date.now();
     const result = await runNlSearch(gs, llm, {
       query: 'fixes in the api last month',

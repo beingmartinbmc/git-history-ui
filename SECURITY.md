@@ -34,17 +34,21 @@ The following are in scope:
 - The Express backend server (`src/backend/`)
 - API key handling (Anthropic, OpenAI, GitHub tokens)
 - The local SQLite index (`~/.git-history-ui/`)
+- The Chrome extension ZIP distributed with GitHub releases
 
 The following are **out of scope**:
 
 - Third-party services (Anthropic, OpenAI, GitHub APIs)
 - The user's own git repository contents
-- The Chrome extension and GitHub App scaffolds (experimental, not published)
+
+The Chrome Web Store listing is not currently published; submission and listing
+maintenance remain manual distribution work.
 
 ## Principles
 
-- **Local-first.** Your repository data never leaves your machine unless you
-  explicitly configure an LLM provider key.
+- **Local-first.** Git processing stays local. If you configure an LLM provider
+  and invoke an AI action, selected prompt, commit metadata, and relevant
+  diff/history data are sent to that provider.
 - **No telemetry.** We do not collect analytics, crash reports, or usage data.
 - **API keys are yours.** Keys are read from environment variables and sent
   directly to the provider you chose. They are never logged, stored, or

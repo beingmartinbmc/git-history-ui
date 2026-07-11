@@ -140,6 +140,10 @@ describe('computeWrapped (async path)', () => {
     expect(commitQuery.author).toBe('bob');
     expect(numstatQuery.branch).toBe('main');
     expect(numstatQuery.author).toBe('bob');
+
+    await computeWrapped(svc, { year: 2026, author: 'same.name+git@example.com' });
+    expect(commitQuery.author).toBe('<same\\.name\\+git@example\\.com>$');
+    expect(numstatQuery.author).toBe('<same\\.name\\+git@example\\.com>$');
   });
 
   it('clamps maxCommits between 50 and 20000', async () => {

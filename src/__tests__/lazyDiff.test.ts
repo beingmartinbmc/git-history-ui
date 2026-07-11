@@ -1,38 +1,9 @@
-import http from 'http';
 import { AddressInfo } from 'net';
 import { writeFileSync } from 'fs';
 import path from 'path';
 import { startServer } from '../backend/server';
+import { request } from './helpers/http';
 import { makeRepo, type TestRepo } from './helpers/repo';
-
-interface Json {
-  status: number;
-  body: any;
-}
-
-function get(url: string): Promise<Json> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const req = http.request(
-      { hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET' },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          let parsed: unknown = data;
-          try {
-            parsed = JSON.parse(data);
-          } catch {
-            /* raw */
-          }
-          resolve({ status: res.statusCode || 0, body: parsed });
-        });
-      }
-    );
-    req.on('error', reject);
-    req.end();
-  });
-}
 
 describe('Lazy diff endpoints', () => {
   let repo: TestRepo;
@@ -66,7 +37,7 @@ describe('Lazy diff endpoints', () => {
   });
 
   it('GET /api/diff/:hash/files returns file metadata without full diff text', async () => {
-    const r = await get(`${url}/api/diff/${hash}/files`);
+    const r = await request({ url: `${url}/api/diff/${hash}/files` });
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body.files)).toBe(true);
     expect(r.body.files.length).toBe(2);
@@ -81,7 +52,7 @@ describe('Lazy diff endpoints', () => {
   });
 
   it('GET /api/diff/:hash/file?path=... returns diff for a single file', async () => {
-    const r = await get(`${url}/api/diff/${hash}/file?path=file-a.ts`);
+    const r = await request({ url: `${url}/api/diff/${hash}/file?path=file-a.ts` });
     expect(r.status).toBe(200);
     expect(r.body.file).toBe('file-a.ts');
     expect(typeof r.body.changes).toBe('string');
@@ -89,7 +60,7 @@ describe('Lazy diff endpoints', () => {
   });
 
   it('GET /api/diff/:hash/file without path returns 400', async () => {
-    const r = await get(`${url}/api/diff/${hash}/file`);
+    const r = await request({ url: `${url}/api/diff/${hash}/file` });
     expect(r.status).toBe(400);
   });
 });

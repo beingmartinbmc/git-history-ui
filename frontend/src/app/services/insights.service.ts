@@ -88,8 +88,4 @@ export class InsightsService {
       TTL.VOLATILE,
     );
   }
-
-  invalidate(): void {
-    this.cache.clear();
-  }
 }

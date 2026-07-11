@@ -30,12 +30,15 @@ describe('CommitListComponent', () => {
   it('selects commits and keeps keyboard navigation bounded', () => {
     const commits = [commit('a111111'), commit('b222222')];
     state.commits.set(commits);
+    const viewport = jasmine.createSpyObj('CdkVirtualScrollViewport', ['scrollToIndex']);
+    component.viewport = viewport;
 
     component.select(commits[0]);
     expect(state.selectedHash()).toBe('a111111');
 
     component.onKey(new KeyboardEvent('keydown', { key: 'j' }));
     expect(state.selectedHash()).toBe('b222222');
+    expect(viewport.scrollToIndex).toHaveBeenCalledWith(1);
 
     component.onKey(new KeyboardEvent('keydown', { key: 'j' }));
     expect(state.selectedHash()).toBe('b222222');

@@ -1,4 +1,4 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ComponentFixture, DeferBlockState, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { Router } from '@angular/router';
@@ -34,7 +34,7 @@ describe('InsightsComponent', () => {
 
   it('loads and renders KPI cards for the insights bundle', () => {
     fixture.detectChanges();
-    http.expectOne('/api/insights?maxCommits=500').flush(bundleFixture());
+    http.expectOne('/api/insights').flush(bundleFixture());
     fixture.detectChanges();
 
     const text = fixture.nativeElement.textContent as string;
@@ -43,6 +43,37 @@ describe('InsightsComponent', () => {
     expect(text).toContain('Contributors');
     expect(text).toContain('Ada');
     expect(component.topContributor(component.bundle()!)).toBe('Ada');
+  });
+
+  it('distinguishes first loading from a true empty result', () => {
+    fixture.detectChanges();
+    const page = fixture.nativeElement.querySelector('.page') as HTMLElement;
+    expect(page.getAttribute('aria-busy')).toBe('true');
+    expect(page.textContent).toContain('Computing insights');
+
+    http
+      .expectOne('/api/insights')
+      .flush(bundleFixture({ analyzedCommits: 0, availableCommits: 0, totalCommits: 0 }));
+    fixture.detectChanges();
+
+    expect(page.getAttribute('aria-busy')).toBe('false');
+    expect(page.textContent).toContain('No commits are available for insights.');
+  });
+
+  it('shows an inline error and retries', () => {
+    fixture.detectChanges();
+    http
+      .expectOne('/api/insights')
+      .flush({ error: 'offline' }, { status: 500, statusText: 'Server Error' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('offline');
+
+    component.retry();
+    http.expectOne('/api/insights').flush(bundleFixture());
+    fixture.detectChanges();
+
+    expect(component.error()).toBeNull();
+    expect(component.bundle()?.analyzedCommits).toBe(42);
   });
 
   it('navigates summary widgets to the top hotspot and risk file', () => {
@@ -63,7 +94,7 @@ describe('InsightsComponent', () => {
 
   it('renders contributor ownership, hotspot help, and risk explanations', () => {
     fixture.detectChanges();
-    http.expectOne('/api/insights?maxCommits=500').flush(bundleFixture());
+    http.expectOne('/api/insights').flush(bundleFixture());
     fixture.detectChanges();
 
     const text = fixture.nativeElement.textContent as string;
@@ -74,6 +105,18 @@ describe('InsightsComponent', () => {
     expect(text).toContain('Low');
     expect(text).toContain('Medium');
     expect(text).toContain('High');
+  });
+
+  it('provides lightweight deferred chart placeholders', async () => {
+    fixture.detectChanges();
+    http.expectOne('/api/insights').flush(bundleFixture());
+    fixture.detectChanges();
+
+    const blocks = await fixture.getDeferBlocks();
+    expect(blocks.length).toBe(2);
+    await blocks[0].render(DeferBlockState.Placeholder);
+
+    expect(fixture.nativeElement.textContent).toContain('Preparing hotspots treemap');
   });
 
   it('formats contributor initials, avatar colors, and risk meters', () => {
@@ -92,6 +135,9 @@ describe('InsightsComponent', () => {
     return {
       windowStart: '2026-01-01T00:00:00.000Z',
       windowEnd: '2026-01-31T00:00:00.000Z',
+      analyzedCommits: 42,
+      availableCommits: 42,
+      truncated: false,
       totalCommits: 42,
       totalAuthors: 3,
       topContributors: [

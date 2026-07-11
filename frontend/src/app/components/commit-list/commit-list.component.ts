@@ -3,9 +3,9 @@ import { ScrollingModule, CdkVirtualScrollViewport } from '@angular/cdk/scrollin
 import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   HostListener,
   ViewChild,
-  computed,
   inject,
 } from '@angular/core';
 import { Commit } from '../../models/git.models';
@@ -34,6 +34,7 @@ import { UiStateService } from '../../services/ui-state.service';
         [class.selected]="c.hash === selectedHash()"
         (click)="select(c)"
         [attr.aria-current]="c.hash === selectedHash() ? 'true' : null"
+        [attr.data-commit-hash]="c.hash"
       >
         <span class="lane">
           <span class="dot" [class.merge]="c.isMerge" [style.background]="laneColor(c)"></span>
@@ -361,6 +362,7 @@ import { UiStateService } from '../../services/ui-state.service';
 })
 export class CommitListComponent {
   state = inject(UiStateService);
+  private host: ElementRef<HTMLElement> = inject(ElementRef);
   @ViewChild(CdkVirtualScrollViewport) viewport?: CdkVirtualScrollViewport;
 
   commits = this.state.commits;
@@ -401,23 +403,47 @@ export class CommitListComponent {
     this.state.onLoadMore?.();
   }
 
+  focusSelected(): void {
+    this.scrollToSelection(true);
+  }
+
   @HostListener('window:keydown', ['$event'])
   onKey(ev: KeyboardEvent) {
     if (this.isTyping(ev.target)) return;
     if (ev.key === 'j') {
       ev.preventDefault();
       this.state.selectByOffset(1);
+      this.scrollToSelection();
     } else if (ev.key === 'k') {
       ev.preventDefault();
       this.state.selectByOffset(-1);
+      this.scrollToSelection();
     } else if (ev.key === 'g') {
       ev.preventDefault();
       const list = this.state.commits();
-      if (list.length) this.state.selectHash(list[0].hash);
+      if (list.length) {
+        this.state.selectHash(list[0].hash);
+        this.scrollToSelection();
+      }
     } else if (ev.key === 'G') {
       ev.preventDefault();
       const list = this.state.commits();
-      if (list.length) this.state.selectHash(list[list.length - 1].hash);
+      if (list.length) {
+        this.state.selectHash(list[list.length - 1].hash);
+        this.scrollToSelection();
+      }
+    }
+  }
+
+  private scrollToSelection(focus = false): void {
+    const hash = this.state.selectedHash();
+    const index = hash ? this.state.commitIndex().get(hash)?.index : undefined;
+    if (index === undefined) return;
+    this.viewport?.scrollToIndex(index);
+    if (focus) {
+      queueMicrotask(() =>
+        this.host.nativeElement.querySelector<HTMLElement>(`[data-commit-hash="${hash}"]`)?.focus(),
+      );
     }
   }
 

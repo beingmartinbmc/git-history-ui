@@ -1,13 +1,8 @@
 import { CommonModule } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  effect,
-  inject,
-  signal,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
+import { Subject, catchError, distinctUntilChanged, forkJoin, map, of, switchMap } from 'rxjs';
 import { BreakageAnalysis, Commit, FileStats } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 import { InsightsService } from '../../services/insights.service';
@@ -56,21 +51,28 @@ type Tab = 'history' | 'blame' | 'breakage';
         </button>
       </nav>
 
-      <section *ngIf="tab() === 'history'" class="history">
-        <div class="empty" *ngIf="loading()">Loading commits…</div>
-        <div class="empty error" *ngIf="error() as e">{{ e }}</div>
+      <section *ngIf="tab() === 'history'" class="history" [attr.aria-busy]="loading()">
+        <div class="empty" *ngIf="loading() && commits().length === 0">Loading commits…</div>
+        <div class="empty error" *ngIf="error() as e">
+          {{ e }} <button type="button" (click)="retryHistory()">Retry</button>
+        </div>
+        <div class="empty" *ngIf="!loading() && !error() && commits().length === 0">
+          No commits found for this file.
+        </div>
         <ul class="commits">
-          <li
-            *ngFor="let c of commits()"
-            class="commit"
-            [class.selected]="c.hash === state.selectedHash()"
-            (click)="onSelectCommit(c.hash)"
-          >
-            <code class="hash">{{ c.shortHash }}</code>
-            <div class="info">
-              <span class="subject">{{ c.subject }}</span>
-              <span class="byline">{{ c.author }} · {{ c.date | slice: 0 : 10 }}</span>
-            </div>
+          <li *ngFor="let c of commits()">
+            <button
+              type="button"
+              class="commit"
+              [class.selected]="c.hash === state.selectedHash()"
+              (click)="onSelectCommit(c.hash)"
+            >
+              <code class="hash">{{ c.shortHash }}</code>
+              <span class="info">
+                <span class="subject">{{ c.subject }}</span>
+                <span class="byline">{{ c.author }} · {{ c.date | slice: 0 : 10 }}</span>
+              </span>
+            </button>
           </li>
         </ul>
       </section>
@@ -79,9 +81,18 @@ type Tab = 'history' | 'blame' | 'breakage';
         <app-blame [file]="filePath()" [onCommitClick]="onSelectCommit.bind(this)" />
       </section>
 
-      <section *ngIf="tab() === 'breakage'" class="breakage" data-testid="breakage-tab">
-        <div class="empty" *ngIf="breakageLoading()">Analyzing breakage history…</div>
-        <div class="empty error" *ngIf="breakageError() as e">{{ e }}</div>
+      <section
+        *ngIf="tab() === 'breakage'"
+        class="breakage"
+        data-testid="breakage-tab"
+        [attr.aria-busy]="breakageLoading()"
+      >
+        <div class="empty" *ngIf="breakageLoading() && !breakage()">
+          Analyzing breakage history…
+        </div>
+        <div class="empty error" *ngIf="breakageError() as e">
+          {{ e }} <button type="button" (click)="retryBreakage()">Retry</button>
+        </div>
 
         <ng-container *ngIf="breakage() as b">
           <div class="risk-card" [attr.data-level]="riskLevel()">
@@ -120,30 +131,33 @@ type Tab = 'history' | 'blame' | 'breakage';
                 No prior change is strongly correlated with a recent fix.
               </div>
               <ol class="suspects" *ngIf="b.suspects.length">
-                <li *ngFor="let s of b.suspects" class="suspect" (click)="onSelectCommit(s.hash)">
-                  <div class="suspect-row">
-                    <code class="hash">{{ s.shortHash }}</code>
-                    <span class="score" [attr.data-strong]="s.score >= 8 ? 'true' : 'false'">{{
-                      s.score
-                    }}</span>
-                    <span class="subject">{{ s.subject }}</span>
-                  </div>
-                  <div class="byline">
-                    {{ s.author }} · {{ s.date | slice: 0 : 10 }} · {{ s.churn }} lines changed
-                  </div>
+                <li *ngFor="let s of b.suspects" class="suspect">
+                  <button type="button" class="suspect-select" (click)="onSelectCommit(s.hash)">
+                    <span class="suspect-row">
+                      <code class="hash">{{ s.shortHash }}</code>
+                      <span class="score" [attr.data-strong]="s.score >= 8 ? 'true' : 'false'">{{
+                        s.score
+                      }}</span>
+                      <span class="subject">{{ s.subject }}</span>
+                    </span>
+                    <span class="byline">
+                      {{ s.author }} · {{ s.date | slice: 0 : 10 }} · {{ s.churn }} lines changed
+                    </span>
+                  </button>
                   <ul class="reasons">
                     <li *ngFor="let r of s.reasons">{{ r }}</li>
                   </ul>
                   <div class="linked" *ngIf="s.linkedFixes.length">
                     Linked fix{{ s.linkedFixes.length === 1 ? '' : 'es' }}:
-                    <a
+                    <button
+                      type="button"
                       *ngFor="let f of s.linkedFixes; let last = last"
                       class="link"
-                      (click)="$event.stopPropagation(); onSelectCommit(f.hash)"
+                      (click)="onSelectCommit(f.hash)"
                     >
                       <code>{{ f.shortHash }}</code
                       ><span *ngIf="!last">, </span>
-                    </a>
+                    </button>
                   </div>
                 </li>
               </ol>
@@ -158,23 +172,25 @@ type Tab = 'history' | 'blame' | 'breakage';
                 No fix/revert commits matched recent history.
               </div>
               <ul class="fixes" *ngIf="b.fixCommits.length">
-                <li
-                  *ngFor="let f of b.fixCommits"
-                  class="commit"
-                  [class.revert]="f.isRevert"
-                  (click)="onSelectCommit(f.hash)"
-                >
-                  <code class="hash">{{ f.shortHash }}</code>
-                  <div class="info">
-                    <span class="subject">
-                      <span class="tag" *ngIf="f.isRevert">revert</span>
-                      <span class="tag fix" *ngIf="f.isFix">fix</span>
-                      {{ f.subject }}
+                <li *ngFor="let f of b.fixCommits">
+                  <button
+                    type="button"
+                    class="commit"
+                    [class.revert]="f.isRevert"
+                    (click)="onSelectCommit(f.hash)"
+                  >
+                    <code class="hash">{{ f.shortHash }}</code>
+                    <span class="info">
+                      <span class="subject">
+                        <span class="tag" *ngIf="f.isRevert">revert</span>
+                        <span class="tag fix" *ngIf="f.isFix">fix</span>
+                        {{ f.subject }}
+                      </span>
+                      <span class="byline"
+                        >{{ f.author }} · {{ f.date | slice: 0 : 10 }} · {{ f.churn }} lines</span
+                      >
                     </span>
-                    <span class="byline"
-                      >{{ f.author }} · {{ f.date | slice: 0 : 10 }} · {{ f.churn }} lines</span
-                    >
-                  </div>
+                  </button>
                 </li>
               </ul>
             </article>
@@ -185,9 +201,11 @@ type Tab = 'history' | 'blame' | 'breakage';
                 <span class="hint">From recent fixes &amp; suspects</span>
               </header>
               <ul class="cochanged">
-                <li *ngFor="let c of b.coChangedFiles" (click)="openFile(c.file)">
-                  <span class="path">{{ c.file }}</span>
-                  <span class="count">{{ c.count }}×</span>
+                <li *ngFor="let c of b.coChangedFiles">
+                  <button type="button" (click)="openFile(c.file)">
+                    <span class="path">{{ c.file }}</span>
+                    <span class="count">{{ c.count }}×</span>
+                  </button>
                 </li>
               </ul>
             </article>
@@ -198,25 +216,27 @@ type Tab = 'history' | 'blame' | 'breakage';
                 <span class="hint">Last {{ b.commits.length }} touches</span>
               </header>
               <ul class="recent">
-                <li
-                  *ngFor="let c of b.commits"
-                  class="commit"
-                  [class.is-fix]="c.isFix || c.isRevert"
-                  (click)="onSelectCommit(c.hash)"
-                >
-                  <code class="hash">{{ c.shortHash }}</code>
-                  <div class="info">
-                    <span class="subject">
-                      <span class="tag fix" *ngIf="c.isFix">fix</span>
-                      <span class="tag" *ngIf="c.isRevert">revert</span>
-                      {{ c.subject }}
+                <li *ngFor="let c of b.commits">
+                  <button
+                    type="button"
+                    class="commit"
+                    [class.is-fix]="c.isFix || c.isRevert"
+                    (click)="onSelectCommit(c.hash)"
+                  >
+                    <code class="hash">{{ c.shortHash }}</code>
+                    <span class="info">
+                      <span class="subject">
+                        <span class="tag fix" *ngIf="c.isFix">fix</span>
+                        <span class="tag" *ngIf="c.isRevert">revert</span>
+                        {{ c.subject }}
+                      </span>
+                      <span class="byline"
+                        >{{ c.author }} · {{ c.date | slice: 0 : 10 }} · +{{ c.additions }}/-{{
+                          c.deletions
+                        }}</span
+                      >
                     </span>
-                    <span class="byline"
-                      >{{ c.author }} · {{ c.date | slice: 0 : 10 }} · +{{ c.additions }}/-{{
-                        c.deletions
-                      }}</span
-                    >
-                  </div>
+                  </button>
                 </li>
               </ul>
             </article>
@@ -296,6 +316,9 @@ type Tab = 'history' | 'blame' | 'breakage';
       .empty.error {
         color: var(--danger);
       }
+      .empty button {
+        margin-left: 0.4rem;
+      }
       .commits {
         list-style: none;
         margin: 0;
@@ -309,8 +332,14 @@ type Tab = 'history' | 'blame' | 'breakage';
         display: flex;
         gap: 0.75rem;
         align-items: flex-start;
+        width: 100%;
         padding: 0.55rem 0.85rem;
+        border: 0;
         border-radius: var(--radius-md);
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
         cursor: pointer;
       }
       .commit:hover {
@@ -458,7 +487,6 @@ type Tab = 'history' | 'blame' | 'breakage';
         padding: 0.55rem 0.7rem;
         border: 1px solid var(--border-soft);
         border-radius: var(--radius-md);
-        cursor: pointer;
         background: var(--bg-elevated);
       }
       .suspect:hover {
@@ -469,6 +497,18 @@ type Tab = 'history' | 'blame' | 'breakage';
         align-items: center;
         gap: 0.5rem;
         min-width: 0;
+      }
+      .suspect-select {
+        display: grid;
+        gap: 0.25rem;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
       }
       .suspect-row .subject {
         font-size: 13px;
@@ -512,8 +552,12 @@ type Tab = 'history' | 'blame' | 'breakage';
         color: var(--fg-muted);
       }
       .linked .link {
+        padding: 0;
+        border: 0;
+        background: transparent;
         cursor: pointer;
         color: var(--accent);
+        font: inherit;
       }
       .linked code {
         font-family: var(--font-mono, monospace);
@@ -538,16 +582,22 @@ type Tab = 'history' | 'blame' | 'breakage';
       .commit.is-fix .tag.fix {
         font-weight: 600;
       }
-      .cochanged li {
+      .cochanged button {
         display: flex;
         justify-content: space-between;
         gap: 0.5rem;
+        width: 100%;
         padding: 0.4rem 0.6rem;
+        border: 0;
         border-radius: var(--radius-md);
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
         cursor: pointer;
         font-size: 12px;
       }
-      .cochanged li:hover {
+      .cochanged button:hover {
         background: var(--bg-elevated);
       }
       .cochanged .path {
@@ -581,6 +631,8 @@ export class FileHistoryComponent {
   readonly breakage = signal<BreakageAnalysis | null>(null);
   readonly breakageLoading = signal<boolean>(false);
   readonly breakageError = signal<string | null>(null);
+  private readonly historyRequests = new Subject<string>();
+  private readonly breakageRequests = new Subject<string>();
   readonly riskLevel = computed<'low' | 'moderate' | 'high'>(() => {
     const score = this.breakage()?.riskScore ?? 0;
     if (score >= 60) return 'high';
@@ -589,28 +641,89 @@ export class FileHistoryComponent {
   });
 
   constructor() {
+    this.historyRequests
+      .pipe(
+        switchMap((file) => {
+          this.loading.set(true);
+          this.error.set(null);
+          return forkJoin({
+            stats: this.insightsApi.fileStats(file).pipe(catchError(() => of(null))),
+            page: this.git.getCommits({ file, page: 1, pageSize: 200 }),
+          }).pipe(
+            map((result) => ({ result, error: null })),
+            catchError((error) =>
+              of({
+                result: null,
+                error: error?.error?.error ?? 'Failed to load file history',
+              }),
+            ),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe(({ result, error }) => {
+        this.loading.set(false);
+        if (error) {
+          this.error.set(error);
+          return;
+        }
+        this.stats.set(result?.stats ?? null);
+        this.commits.set(result?.page.commits ?? []);
+      });
+
+    this.breakageRequests
+      .pipe(
+        switchMap((file) => {
+          this.breakageLoading.set(true);
+          this.breakageError.set(null);
+          return this.insightsApi.breakage(file).pipe(
+            map((breakage) => ({ breakage, error: null })),
+            catchError((error) =>
+              of({
+                breakage: null,
+                error: error?.error?.error ?? 'Failed to analyze breakage',
+              }),
+            ),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe(({ breakage, error }) => {
+        this.breakageLoading.set(false);
+        if (error) {
+          this.breakageError.set(error);
+          return;
+        }
+        this.breakage.set(breakage);
+      });
+
     // Use paramMap observable (not snapshot) so the component reloads when
     // navigating between file-history routes without being destroyed/recreated.
-    this.route.paramMap.subscribe((params) => {
-      const raw = params.get('path') ?? '';
-      const decoded = decodeURIComponent(raw);
-      this.filePath.set(decoded);
-      if (decoded) this.load(decoded);
-    });
-    this.route.queryParamMap.subscribe((qp) => {
-      const requestedTab = qp.get('tab');
-      if (requestedTab === 'breakage' || requestedTab === 'blame' || requestedTab === 'history') {
-        this.tab.set(requestedTab);
-        // If breakage tab was requested via deep link, ensure analysis loads
-        // (paramMap may have already fired load() before tab was set)
-        if (
-          requestedTab === 'breakage' &&
-          this.filePath() &&
-          !this.breakage() &&
-          !this.breakageLoading()
-        ) {
-          this.loadBreakage(this.filePath());
+    this.route.paramMap
+      .pipe(
+        map((params) => decodeURIComponent(params.get('path') ?? '')),
+        distinctUntilChanged(),
+        takeUntilDestroyed(),
+      )
+      .subscribe((file) => {
+        this.filePath.set(file);
+        this.stats.set(null);
+        this.commits.set([]);
+        this.breakage.set(null);
+        this.breakageError.set(null);
+        if (file) {
+          this.historyRequests.next(file);
+          if (this.tab() === 'breakage') this.breakageRequests.next(file);
         }
+      });
+    this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((qp) => {
+      const requestedTab = qp.get('tab');
+      if (requestedTab !== 'breakage' && requestedTab !== 'blame' && requestedTab !== 'history') {
+        return;
+      }
+      this.tab.set(requestedTab);
+      if (requestedTab === 'breakage' && this.filePath() && !this.breakageLoading()) {
+        this.breakageRequests.next(this.filePath());
       }
     });
   }
@@ -627,52 +740,20 @@ export class FileHistoryComponent {
   onSelectBreakageTab() {
     this.tab.set('breakage');
     if (!this.breakage() && !this.breakageLoading()) {
-      this.loadBreakage(this.filePath());
+      this.breakageRequests.next(this.filePath());
     }
+  }
+
+  retryHistory() {
+    if (this.filePath()) this.historyRequests.next(this.filePath());
+  }
+
+  retryBreakage() {
+    if (this.filePath()) this.breakageRequests.next(this.filePath());
   }
 
   openFile(file: string) {
     if (!file) return;
     this.router.navigate(['/file', encodeURIComponent(file)]);
-  }
-
-  private load(file: string) {
-    this.loading.set(true);
-    this.error.set(null);
-    this.breakage.set(null);
-    this.breakageError.set(null);
-    this.insightsApi.fileStats(file).subscribe({
-      next: (s) => this.stats.set(s),
-      error: () => this.stats.set(null),
-    });
-    this.git.getCommits({ file, page: 1, pageSize: 200 }).subscribe({
-      next: (r) => {
-        this.commits.set(r.commits);
-        this.loading.set(false);
-      },
-      error: (err) => {
-        this.error.set(err?.error?.error ?? 'Failed to load file history');
-        this.loading.set(false);
-      },
-    });
-    if (this.tab() === 'breakage') {
-      this.loadBreakage(file);
-    }
-  }
-
-  private loadBreakage(file: string) {
-    if (!file) return;
-    this.breakageLoading.set(true);
-    this.breakageError.set(null);
-    this.insightsApi.breakage(file).subscribe({
-      next: (b) => {
-        this.breakage.set(b);
-        this.breakageLoading.set(false);
-      },
-      error: (err) => {
-        this.breakageError.set(err?.error?.error ?? 'Failed to analyze breakage');
-        this.breakageLoading.set(false);
-      },
-    });
   }
 }

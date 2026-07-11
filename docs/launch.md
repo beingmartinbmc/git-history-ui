@@ -1,66 +1,143 @@
-# v3.0 launch — talking points
+# v5.4 launch plan
 
-## Hacker News title (proposed)
+## Positioning
 
-> Show HN: I added natural-language search and time travel to git-history-ui
+git-history-ui is the local-first path from Git history investigation to a
+shareable report and repeatable PR impact check:
 
-## Lede (~120 words)
+> Investigate local and unpushed history, share a portable result, and automate
+> merge-base impact without a git-history-ui account or project-operated
+> service.
 
-git-history-ui v3 turns your local git history into something you can ask
-questions of. Drop into any repo, run `npx git-history-ui@latest`, and you
-get three features that used to need GitHub Pro, a desktop client, or a
-homegrown script:
+The product is not another hosted Git viewer. Git, reports, Wrapped, and the
+default heuristic search stay local. Optional AI actions send the selected
+prompt, commit metadata, and relevant diff/history data to the user's configured
+provider.
 
-1. **Natural-language search.** Type "login bug last month" or "payments by
-   alice". A heuristic intent parser handles dates, authors, and synonym
-   expansion with no setup; if you set `ANTHROPIC_API_KEY` (or
-   `OPENAI_API_KEY`), the same query gets semantically re-ranked by Claude
-   or GPT — but only the prompt leaves your machine, never the code.
-2. **PR / feature grouping.** A "Grouped" toggle clusters commits by GitHub
-   merge / squash patterns and Conventional Commits scope, turning a wall
-   of 200 commits into ~20 PRs you can scan.
-3. **Time travel.** A horizontal timeline slider shows the repo state at any
-   moment and computes a live diff against HEAD.
+## Deterministic demo
 
-Plus file-level history, blame, commit impact analysis, an insights
-dashboard, and an "Explain this change" AI button on every commit. All
-local. All zero-config. AI is opt-in.
+```bash
+npx git-history-ui@latest demo --reset
+```
 
-## What to emphasize in comments
+The demo is network-free after package installation and recreates the same
+authors, dates, branches, merge, rename, binary file, scopes, and tags. A
+45-second recording should show:
 
-- **Privacy.** Heuristic mode is the default. AI calls only happen on user
-  intent (clicking Explain / Summarize, or running an NL search) and only
-  send the prompt — never the working tree.
-- **Zero deps to add.** No new npm packages were added in v3 — the LLM
-  providers use `fetch`, the date parser is hand-rolled, the heuristic
-  scorer is plain TF-IDF. Same install footprint as v2.
-- **Open to providers.** Anthropic and OpenAI today; the `LlmService`
-  interface is two methods (`score`, `summarize`) so adding Ollama, Gemini,
-  or a self-hosted model is a single file.
-- **What's next (Phase 2 + 3).** Better diff viz (intra-line, scroll-sync
-  split), d3 charts in the insights dashboard, SQLite background indexer
-  for huge repos, virtualized graph rendering, GitHub App + Chrome
-  extension for "open in git-history-ui" deep links, CLI presets.
+1. Grouped history and a search.
+2. Compare with a downloaded report.
+3. Wrapped with the real demo repository name and Copy caption.
+4. `git-history-ui pr-impact --base release/1.x --head main`.
 
-## Demo script (~60s)
+## Launch copy
 
-1. `cd ~/some-busy-repo && npx git-history-ui@latest`.
-2. Click the search icon — it flips to "AI" mode. Type
-   "login bug last month". Show the parsed-query chips appear.
-3. Click "Grouped" in the toolbar. Expand a PR group, click a commit.
-4. On the commit detail, click "✨ Explain change". (If you've set a key,
-   it actually summarizes; otherwise it shows a clear "set a key" message.)
-5. Click "Show impact" — point out the dependency ripple list.
-6. Top nav → "Timeline". Drag the slider to last quarter, watch HEAD
-   pointers update and the "Diff vs HEAD" panel populate.
-7. Top nav → "Insights". Hotspots + risky files.
-8. Click any file in a commit's Files panel → land on `/file/...` →
-   switch to the Blame tab.
+### Hacker News
 
-## Screenshots needed before publishing
+**Title:** Show HN: git-history-ui – investigate, share, and automate local Git history
 
-- [ ] Toolbar with NL chips visible
-- [ ] Grouped commit list with PR cards
-- [ ] Timeline page with slider mid-history
-- [ ] File history → Blame tab
-- [ ] Insights dashboard (hotspots + churn chart)
+**Body:** I built a local-first browser UI for Git history. v5.4 adds a
+deterministic demo, portable metadata-only reports, Git Wrapped sharing, and a
+merge-base PR impact CLI/composite action. No git-history-ui account or
+project-operated service is required. Heuristic search is local; optional AI
+sends selected data to your configured provider. Try it with
+`npx git-history-ui@latest demo`.
+
+### Reddit
+
+I have been working on git-history-ui, a local browser UI for commit search,
+grouping, compare, blame, and impact. v5.4 closes the loop: investigate a
+history, share a portable report or Wrapped card, then run the same merge-base
+impact report in CI. The demo is deterministic:
+`npx git-history-ui@latest demo`. Feedback on the PR impact report and
+large-repository behavior would be especially useful.
+
+### LinkedIn
+
+Git history is most useful when it leads to a decision. git-history-ui v5.4
+connects three workflows: investigate local/unpushed history, share a portable
+report or Git Wrapped card, and automate merge-base PR impact in GitHub Actions.
+It runs locally with no git-history-ui account. Demo:
+`npx git-history-ui@latest demo`.
+
+### X
+
+git-history-ui v5.4: investigate local Git history → share portable reports /
+Git Wrapped → automate merge-base PR impact. No git-history-ui account or
+project-operated hosted service.
+Try the deterministic demo: npx git-history-ui@latest demo
+https://github.com/beingmartinbmc/git-history-ui
+
+### Bluesky
+
+git-history-ui v5.4 turns local Git history into a loop: investigate, share,
+automate. It adds deterministic demo data, Git Wrapped social captions, and a
+fork-safe merge-base PR impact Action—without a project-operated hosted
+service.
+https://github.com/beingmartinbmc/git-history-ui
+
+## FAQ
+
+### Does source code leave my machine?
+
+Git parsing, reports, Wrapped, and heuristic search make no outbound requests.
+If Anthropic or OpenAI is configured and an AI action is invoked, selected
+prompt, commit metadata, and relevant diff/history data go to that provider.
+
+### Does the Action comment on pull requests?
+
+No. It writes `GITHUB_STEP_SUMMARY` and outputs a report path, files changed,
+and total churn. It requires `contents: read` and `fetch-depth: 0`.
+
+### Does npm install register a protocol handler?
+
+No. Registration is explicit with `git-history-ui protocol install`. Status and
+uninstall are also explicit, and uninstall removes only owned artifacts.
+
+### Why does the extension not redirect automatically?
+
+Browsers do not reliably expose custom-protocol launch failure. The extension
+shows a clear “Didn't open?” setup link and only offers a hosted link when the
+user configured a valid http(s) instance.
+
+## Release checklist
+
+The following checks gate the npm package and GitHub v5.4.0 release:
+
+- [ ] Tag equals `package.json` version (`v5.4.0`).
+- [ ] Backend/frontend tests, lint, typecheck, build, and both production audits pass.
+- [ ] `npm pack --dry-run` contains the CLI, protocol script, action helper, and docs.
+- [ ] Packed CLI opens the deterministic demo without using this checkout.
+- [ ] Extension node tests and checker pass.
+- [ ] Deterministic runtime-only extension ZIP and SHA-256 are attached.
+- [ ] Release body uses the curated v5.4 changelog plus generated notes.
+- [ ] Verify protocol install/status/uninstall on macOS, Linux, and Windows.
+
+The Chrome Web Store listing remains unpublished. These are manual post-release
+distribution tasks, not blockers for npm publication or the GitHub v5.4.0
+release:
+
+- [ ] Capture real current UI/extension screenshots; do not use mock images.
+- [ ] Submit the packaged extension and real screenshots to the Chrome Web Store.
+
+## Metrics for the first 30 days
+
+- Demo starts and completed demo sessions.
+- npm weekly downloads and GitHub repository visitors.
+- Wrapped caption/share action usage only if measurable locally without analytics;
+  otherwise use issue/social feedback, not telemetry.
+- Action adoption by public workflow code search.
+- Extension installs and store conversion from platform-provided aggregate metrics.
+- Issues labeled `area:report`, `area:action`, or `area:extension`.
+
+## Scoped community issue seeds
+
+1. **Report:** add an optional path-grouping rule for monorepos, with before/after
+   output fixtures and no new runtime dependency.
+2. **Action:** add a documented GitLab CI example using the same `pr-impact` CLI;
+   no new service or comment bot.
+3. **Extension:** verify GitHub DOM injection points against three current layouts
+   and add fixture tests for selectors.
+4. **Wrapped:** propose one additional standout-stat selector with bounded caption
+   tests for X and Bluesky.
+5. **Docs:** contribute real Linux/Windows protocol screenshots after verifying
+   install/status/uninstall on those platforms.

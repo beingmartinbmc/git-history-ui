@@ -3,8 +3,6 @@
  * - annotations.ts: journal replay of delete ops, withLock error path
  * - gitService.ts: cwd getter, copy-from in diff parser, blame edge cases
  * - server.ts: SSE events endpoint, diff-file 404, close() with clients, error classification
- * - snapshot.ts: legacy fallback (no refsAt)
- * - impact.ts: legacy related commits fallback
  * - prGrouping.ts: successful PR fetch
  */
 import http from 'http';
@@ -14,9 +12,8 @@ import path from 'path';
 import { makeRepo, type TestRepo } from './helpers/repo';
 import { AnnotationsStore } from '../backend/annotations';
 import { GitService } from '../backend/gitService';
-import { getSnapshot } from '../backend/snapshot';
 import { startServer } from '../backend/server';
-import { _resetLlmCache, getDefaultLlmService } from '../backend/llm';
+import { request } from './helpers/http';
 
 // ============================================================================
 // ANNOTATIONS: journal replay of delete op
@@ -107,32 +104,6 @@ describe('GitService — coverage gaps', () => {
 });
 
 // ============================================================================
-// SNAPSHOT: legacy fallback (service without refsAt)
-// ============================================================================
-describe('getSnapshot — legacy fallback', () => {
-  let repo: TestRepo;
-
-  beforeAll(() => {
-    repo = makeRepo('ghui-cov-snap-');
-    repo.commit('a.txt', 'hello', 'first');
-  });
-  afterAll(() => repo.cleanup());
-
-  it('falls back to per-ref revAt when refsAt is absent', async () => {
-    const svc = new GitService(repo.dir);
-    // Create a mock service that has revAt but not refsAt
-    const fakeService: any = {
-      getBranches: () => svc.getBranches(),
-      getTags: () => svc.getTags(),
-      revAt: (ref: string, atIso: string, opts?: any) => svc.revAt(ref, atIso, opts)
-    };
-    const snap = await getSnapshot(fakeService, new Date().toISOString());
-    expect(snap.at).toBeDefined();
-    expect(snap.branches).toBeDefined();
-  });
-});
-
-// ============================================================================
 // SERVER: SSE /api/events, diff file 404, close with clients, error classification
 // ============================================================================
 describe('Server — coverage gaps', () => {
@@ -157,41 +128,6 @@ describe('Server — coverage gaps', () => {
     await close();
     repo.cleanup();
   });
-
-  function request(opts: {
-    url: string;
-    method?: string;
-    body?: unknown;
-  }): Promise<{ status: number; body: any }> {
-    return new Promise((resolve, reject) => {
-      const u = new URL(opts.url);
-      const req = http.request(
-        {
-          hostname: u.hostname,
-          port: u.port,
-          path: u.pathname + u.search,
-          method: opts.method ?? 'GET',
-          headers: { 'Content-Type': 'application/json' }
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => {
-            let parsed: any = data;
-            try {
-              parsed = JSON.parse(data);
-            } catch {
-              // Leave non-JSON responses as raw strings.
-            }
-            resolve({ status: res.statusCode || 0, body: parsed });
-          });
-        }
-      );
-      req.on('error', reject);
-      if (opts.body !== undefined) req.write(JSON.stringify(opts.body));
-      req.end();
-    });
-  }
 
   it('GET /api/events returns SSE stream', async () => {
     const data = await new Promise<string>((resolve) => {
@@ -260,19 +196,6 @@ describe('Server — coverage gaps', () => {
     const r = await request({ url: `${url}/api/index/status` });
     expect(r.status).toBe(200);
     expect(r.body).toHaveProperty('running');
-  });
-});
-
-// ============================================================================
-// LLM: _resetLlmCache coverage
-// ============================================================================
-describe('LLM cache', () => {
-  it('_resetLlmCache resets the singleton', () => {
-    const svc1 = getDefaultLlmService({ provider: 'heuristic' });
-    _resetLlmCache();
-    const svc2 = getDefaultLlmService({ provider: 'heuristic' });
-    // After reset, a new instance is created (though same type)
-    expect(svc1.name).toBe(svc2.name);
   });
 });
 

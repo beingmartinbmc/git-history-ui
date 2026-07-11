@@ -1,17 +1,38 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { HotspotsTreemapComponent } from './hotspots-treemap.component';
+import { ThemeService } from '../../services/theme.service';
 
 describe('HotspotsTreemapComponent', () => {
   let fixture: ComponentFixture<HotspotsTreemapComponent>;
   let component: HotspotsTreemapComponent;
+  let resizeCallback: ResizeObserverCallback;
+  let disconnect: jasmine.Spy;
+  let originalResizeObserver: typeof ResizeObserver;
 
   beforeEach(async () => {
+    originalResizeObserver = window.ResizeObserver;
+    disconnect = jasmine.createSpy('disconnect');
+    window.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {
+        disconnect();
+      }
+    } as typeof ResizeObserver;
+
     await TestBed.configureTestingModule({
       imports: [HotspotsTreemapComponent],
     }).compileComponents();
 
     fixture = TestBed.createComponent(HotspotsTreemapComponent);
     component = fixture.componentInstance;
+  });
+
+  afterEach(() => {
+    window.ResizeObserver = originalResizeObserver;
   });
 
   it('renders a churn legend and emits the clicked file', () => {
@@ -43,6 +64,8 @@ describe('HotspotsTreemapComponent', () => {
 
     fixture.nativeElement.querySelector('g.cell')?.dispatchEvent(new MouseEvent('click'));
     expect(component.fileClick.emit).toHaveBeenCalledWith('src/hot.ts');
+    expect(fixture.nativeElement.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
+    expect(fixture.nativeElement.querySelectorAll('.accessible-data button').length).toBe(2);
   });
 
   it('shows an empty state with no hotspot data', () => {
@@ -51,5 +74,22 @@ describe('HotspotsTreemapComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent as string).toContain('No hotspots');
+  });
+
+  it('redraws on host resize and disconnects its observer', () => {
+    const render = spyOn<any>(component, 'render').and.callThrough();
+    fixture.detectChanges();
+    render.calls.reset();
+
+    resizeCallback([], {} as ResizeObserver);
+    expect(render).toHaveBeenCalled();
+
+    render.calls.reset();
+    TestBed.inject(ThemeService).cycle();
+    fixture.detectChanges();
+    expect(render).toHaveBeenCalled();
+
+    fixture.destroy();
+    expect(disconnect).toHaveBeenCalled();
   });
 });

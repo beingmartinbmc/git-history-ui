@@ -42,6 +42,9 @@ body:
         - Natural-language search
         - AI integration
         - Performance / large repos
+        - Reports / sharing
+        - PR impact Action
+        - Chrome extension
         - Documentation
         - Other
     validations:

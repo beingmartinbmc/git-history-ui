@@ -4,11 +4,13 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import open from 'open';
 import { execFileSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { startServer } from './backend/server';
 import { PresetsStore, type PresetFilters } from './backend/presets';
+import { createDemoRepository } from './backend/demoRepo';
+import { deepLinkBrowserTarget, parseDeepLink, type DeepLink } from './deepLink';
 
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')) as {
   version: string;
@@ -28,14 +30,24 @@ program
   .option('--no-open', 'do not automatically open browser')
   .option('--cwd <path>', 'path to the git repository (defaults to cwd)')
   .option('--llm <provider>', 'LLM provider: heuristic, anthropic, openai (default: auto)')
-  .option('--token <token>', 'protect API routes with a bearer/header token for non-local clients')
+  .option('--token <token>', 'protect UI and API traffic from non-local clients')
   .option('--preset <name>', 'load filters from a saved preset')
   .option('--save-preset <name>', 'save the current flags as a preset for next time')
   .option('--repo-from-url <url>', 'open a repo from a git-history-ui:// protocol URL')
-  .option('--at <ref>', 'select a commit or ref on startup')
+  .option('--at <hash>', 'select a 4-40 character commit hash on startup')
   .option('--pr <number>', 'focus a pull request number on startup')
   .action(() => {
     void main();
+  });
+
+program
+  .command('demo')
+  .description('open a deterministic, network-free demo repository')
+  .option('--reset', 'recreate the demo repository')
+  .action(async (options: { reset?: boolean }) => {
+    const cwd = createDemoRepository({ reset: options.reset });
+    console.log(chalk.gray(`Demo repository ready in the OS temporary directory.`));
+    await main({ cwd });
   });
 
 program
@@ -79,32 +91,131 @@ program
   });
 
 program
+  .command('protocol')
+  .description('manage the git-history-ui:// URL handler')
+  .argument('<action>', 'install | status | uninstall')
+  .action(async (action: string) => {
+    const protocol = (await import(join(__dirname, '..', 'scripts', 'register-protocol.js'))) as {
+      install: () => Promise<{ installed: boolean; paths: { launcher: string } }>;
+      status: () => Promise<{
+        installed: boolean;
+        launcher: boolean;
+        registration: boolean;
+        paths: { launcher: string };
+      }>;
+      uninstall: () => Promise<{ removed: boolean }>;
+    };
+    try {
+      if (action === 'install') {
+        const result = await protocol.install();
+        console.log(
+          result.installed
+            ? chalk.green(`Protocol installed via ${result.paths.launcher}`)
+            : chalk.yellow(
+                'Protocol artifacts were created, but registration could not be verified.'
+              )
+        );
+        if (!result.installed) process.exitCode = 1;
+        return;
+      }
+      if (action === 'status') {
+        const result = await protocol.status();
+        console.log(
+          result.installed
+            ? chalk.green(`Protocol installed via ${result.paths.launcher}`)
+            : chalk.yellow(
+                `Protocol not ready (launcher: ${result.launcher ? 'ok' : 'missing'}, registration: ${result.registration ? 'ok' : 'missing'}).`
+              )
+        );
+        if (!result.installed) process.exitCode = 1;
+        return;
+      }
+      if (action === 'uninstall') {
+        await protocol.uninstall();
+        console.log(chalk.green('Owned protocol artifacts removed.'));
+        return;
+      }
+      throw new Error('Usage: git-history-ui protocol install|status|uninstall');
+    } catch (err) {
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('pr-impact')
+  .description('report pull-request impact from the merge base to head')
+  .requiredOption('--base <ref>', 'base branch or commit')
+  .requiredOption('--head <ref>', 'head branch or commit')
+  .option('--format <format>', 'markdown | json', 'markdown')
+  .option('--output <path>', 'write the report to a file instead of stdout')
+  .action(async (options: { base: string; head: string; format: string; output?: string }) => {
+    try {
+      if (options.format !== 'markdown' && options.format !== 'json') {
+        throw new Error('--format must be markdown or json');
+      }
+      const { GitService } = await import('./backend/gitService');
+      const { buildPrImpactReport, formatPrImpactMarkdown } = await import('./backend/report');
+      const git = new GitService(program.opts<MainOptions>().cwd ?? process.cwd());
+      const report = await buildPrImpactReport(git, options.base, options.head);
+      const rendered =
+        options.format === 'json'
+          ? `${JSON.stringify(report, null, 2)}\n`
+          : formatPrImpactMarkdown(report);
+      if (options.output) {
+        const output = resolve(options.output);
+        writeFileSync(output, rendered, 'utf8');
+        console.log(output);
+      } else {
+        process.stdout.write(rendered);
+      }
+    } catch (err) {
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command('wrapped')
   .description('print a "Git Wrapped" year-in-review for the current repo')
   .option('-y, --year <year>', 'calendar year to summarize (defaults to current year)')
   .option('--cwd <path>', 'path to the git repository (defaults to cwd)')
-  .option('--author <name>', 'limit the recap to a single author')
+  .option('--author <name-or-email>', 'limit the recap to a single author')
+  .option('--all-authors', 'include all contributors instead of the current Git author')
   .option('--json', 'output raw JSON instead of the formatted card')
-  .action(async (cmdOpts: { year?: string; cwd?: string; author?: string; json?: boolean }) => {
-    try {
-      const { GitService } = await import('./backend/gitService');
-      const { computeWrapped } = await import('./backend/wrapped');
-      const git = new GitService(cmdOpts.cwd ?? process.cwd());
-      const year = cmdOpts.year ? parseInt(cmdOpts.year, 10) : undefined;
-      const stats = await computeWrapped(git, {
-        year: Number.isFinite(year as number) ? year : undefined,
-        author: cmdOpts.author
-      });
-      if (cmdOpts.json) {
-        console.log(JSON.stringify(stats, null, 2));
-        return;
+  .action(
+    async (cmdOpts: {
+      year?: string;
+      cwd?: string;
+      author?: string;
+      allAuthors?: boolean;
+      json?: boolean;
+    }) => {
+      try {
+        const { GitService } = await import('./backend/gitService');
+        const { computeWrapped } = await import('./backend/wrapped');
+        const { getRepositoryIdentity } = await import('./backend/repositoryIdentity');
+        const git = new GitService(cmdOpts.cwd ?? process.cwd());
+        const year = cmdOpts.year ? parseInt(cmdOpts.year, 10) : undefined;
+        const identity = await getRepositoryIdentity(git);
+        const author =
+          cmdOpts.author ??
+          (cmdOpts.allAuthors ? undefined : (identity.currentAuthor.email ?? undefined));
+        const stats = await computeWrapped(git, {
+          year: Number.isFinite(year as number) ? year : undefined,
+          author
+        });
+        if (cmdOpts.json) {
+          console.log(JSON.stringify(stats, null, 2));
+          return;
+        }
+        printWrapped(stats);
+      } catch (err) {
+        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        process.exit(1);
       }
-      printWrapped(stats);
-    } catch (err) {
-      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-      process.exit(1);
     }
-  });
+  );
 
 // `main()` runs from the root `.action()` when no subcommand is given,
 // or the `presets` handler runs for that subcommand. Either way, parseAsync
@@ -131,16 +242,8 @@ interface MainOptions {
 }
 
 export function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: string } {
-  try {
-    const url = new URL(raw);
-    return {
-      repo: url.searchParams.get('repo') ?? undefined,
-      at: url.searchParams.get('at') ?? undefined,
-      pr: url.searchParams.get('pr') ?? undefined
-    };
-  } catch {
-    return {};
-  }
+  const link = parseDeepLink(raw);
+  return link ? { repo: link.repo, at: link.at ?? link.commit, pr: link.pr } : {};
 }
 
 /**
@@ -222,12 +325,14 @@ function normalizeRepoPath(value: string): string {
     .replace(/^\/+|\/+$/g, '');
 }
 
-async function main(): Promise<void> {
-  const options = program.opts<MainOptions>();
+async function main(overrides: Partial<MainOptions> = {}): Promise<void> {
+  const options = { ...program.opts<MainOptions>(), ...overrides };
   const presetsStore = new PresetsStore();
+  let protocolLink: DeepLink | null = null;
 
   // Handle git-history-ui://open?repo=...&at=...&pr=... protocol URLs
   if (options.repoFromUrl) {
+    protocolLink = parseDeepLink(options.repoFromUrl);
     const parsed = parseProtocolUrl(options.repoFromUrl);
     if (parsed.at && !options.at) options.at = parsed.at;
     if (parsed.pr && !options.pr) options.pr = parsed.pr;
@@ -306,11 +411,14 @@ async function main(): Promise<void> {
     console.log(chalk.green(`Listening on ${result.url}`));
 
     if (options.open) {
-      const deepLinkParams = new URLSearchParams();
+      const target = protocolLink
+        ? deepLinkBrowserTarget(protocolLink)
+        : { path: '/', query: new URLSearchParams() };
+      const deepLinkParams = target.query;
       if (options.at) deepLinkParams.set('commit', options.at);
       if (options.pr) deepLinkParams.set('pr', options.pr);
       const suffix = deepLinkParams.toString();
-      const openUrl = suffix ? `${result.url}/?${suffix}` : result.url;
+      const openUrl = `${result.url}${target.path}${suffix ? `?${suffix}` : ''}`;
       try {
         await open(openUrl);
       } catch {

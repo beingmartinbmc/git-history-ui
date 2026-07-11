@@ -30,7 +30,10 @@ function fakeGit(commits: Commit[], diffs: Record<string, DiffFile[]>): GitServi
       hasNext: false,
       hasPrevious: false
     }),
-    getDiff: async (hash: string) => diffs[hash] ?? []
+    getDiffMeta: async (hash: string) => ({
+      files: diffs[hash] ?? [],
+      totalLines: 0
+    })
   } as unknown as GitService;
 }
 
@@ -58,6 +61,9 @@ describe('computeInsights', () => {
 
     const bundle = await computeInsights(svc, {});
     expect(bundle.totalCommits).toBe(3);
+    expect(bundle.analyzedCommits).toBe(3);
+    expect(bundle.availableCommits).toBe(3);
+    expect(bundle.truncated).toBe(false);
     expect(bundle.totalAuthors).toBe(2);
     expect(bundle.windowStart).toBe('2026-04-01T00:00:00Z');
     expect(bundle.windowEnd).toBe('2026-04-03T00:00:00Z');
@@ -72,7 +78,7 @@ describe('computeInsights', () => {
     expect(bundle.riskyFiles.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('clamps maxCommits between 50 and 2000', async () => {
+  it('defaults to 5000 commits and clamps maxCommits between 50 and 20000', async () => {
     let calledWith = -1;
     const svc = {
       getCommits: async (q: { pageSize?: number }) => {
@@ -87,13 +93,15 @@ describe('computeInsights', () => {
           hasPrevious: false
         };
       },
-      getDiff: async () => []
+      getDiffMeta: async () => ({ files: [], totalLines: 0 })
     } as unknown as GitService;
 
+    await computeInsights(svc);
+    expect(calledWith).toBe(5000);
     await computeInsights(svc, { maxCommits: 1 });
     expect(calledWith).toBe(50);
     await computeInsights(svc, { maxCommits: 99999 });
-    expect(calledWith).toBe(2000);
+    expect(calledWith).toBe(20000);
     await computeInsights(svc, { maxCommits: 700 });
     expect(calledWith).toBe(700);
   });
@@ -119,7 +127,7 @@ describe('computeInsights', () => {
         hasNext: false,
         hasPrevious: false
       }),
-      getDiff: async () => {
+      getDiffMeta: async () => {
         throw new Error('boom');
       }
     } as unknown as GitService;

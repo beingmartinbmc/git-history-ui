@@ -30,17 +30,17 @@ Source lives in `src/backend/`.
 | `insights.ts` / `aggregations.ts` | Contributor, churn, hotspot, and risky-file calculations. |
 | `cache/sqliteIndex.ts` | Optional `better-sqlite3` FTS index for large repositories; supports author/date filter pushdown and true `LIMIT`/`OFFSET` paging. |
 | `cache/resultCache.ts` | Generic in-memory TTL cache for expensive aggregations (insights, PR groups, Wrapped). |
-| `gitProcessQueue.ts` | Bounds concurrent `git` subprocesses (default 4) across all callers — one-shot commands and long-running streams alike. |
+| `gitProcessQueue.ts` | Bounds concurrent backend repository-query `git` subprocesses (default 4), including one-shot commands and long-running streams. |
 | `refWatcher.ts` | Watches `.git/HEAD` and `.git/refs` for changes; debounces and emits a `change` event used to invalidate caches and push SSE `new-commits` notifications. |
 | `llm/` | Provider abstraction for heuristic, Anthropic, and OpenAI scoring/summaries. Outbound calls use a 60s request timeout. |
 | `annotations.ts` | Local per-commit notes stored under `~/.git-history-ui/`, guarded by cross-process file locking. |
 | `presets.ts` | Saved CLI filter presets, also exposed to the UI via `/api/presets`. |
 
 The backend uses `execFile` and `spawn` instead of shell interpolation so git
-arguments stay explicit and predictable. All git subprocess creation —
-including streaming reads used by `streamCommits`/`streamRaw` — is routed
-through `gitProcessQueue` so a burst of UI requests can't spawn unbounded
-processes.
+arguments stay explicit and predictable. Repository-query subprocesses created
+through `GitService`—including streaming reads used by
+`streamCommits`/`streamRaw`—are routed through `gitProcessQueue` so a burst of
+UI requests cannot spawn unbounded processes.
 
 On shutdown, the server stops the ref watcher, cancels any in-progress index
 build, closes open SSE connections, and force-closes lingering HTTP
@@ -83,8 +83,8 @@ frontend build copy   ─────────────► build/frontend/
 ```
 
 The npm package publishes the compiled backend (`dist/`), compiled frontend
-(`build/`), fallback public assets (`public/`), docs, README, changelog, and
-license files.
+(`build/`), docs, README, changelog, and license files. If the Angular build is
+missing, the server returns a clear 404 instead of serving a legacy fallback.
 
 ## Local data
 

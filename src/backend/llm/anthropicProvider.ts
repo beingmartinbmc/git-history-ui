@@ -1,4 +1,10 @@
-import type { LlmService, ScoreCandidate, ScoredCandidate } from './types';
+import type {
+  LlmCallOptions,
+  LlmService,
+  LlmSummaryOptions,
+  ScoreCandidate,
+  ScoredCandidate
+} from './types';
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_SUMMARY_TOKENS = 700;
@@ -27,7 +33,11 @@ export class AnthropicProvider implements LlmService {
     private model: string = DEFAULT_MODEL
   ) {}
 
-  async score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]> {
+  async score(
+    query: string,
+    candidates: ScoreCandidate[],
+    opts: LlmCallOptions = {}
+  ): Promise<ScoredCandidate[]> {
     if (candidates.length === 0) return [];
     const items = candidates.map((c, i) => ({
       idx: i,
@@ -49,24 +59,24 @@ export class AnthropicProvider implements LlmService {
         'Candidates:',
         ...batch.map((it) => `[${it.idx}] ${it.text}`)
       ].join('\n');
-      const text = await this.call(prompt, 1024);
+      const text = await this.call(prompt, 1024, opts.signal);
       const parsed = parseScores(text, items.length);
       for (const [k, v] of Object.entries(parsed)) allScores[Number(k)] = v;
     }
     return items.map((it) => ({ id: it.id, score: allScores[it.idx] ?? 0 }));
   }
 
-  async summarize(text: string, opts?: { hint?: string; maxTokens?: number }): Promise<string> {
+  async summarize(text: string, opts: LlmSummaryOptions = {}): Promise<string> {
     const prompt = [
       opts?.hint ?? 'Summarize the following text in one short paragraph (max 3 sentences).',
       '---',
       text.length > 8000 ? text.slice(0, 8000) + '\n[truncated]' : text
     ].join('\n');
-    const out = await this.call(prompt, opts?.maxTokens ?? DEFAULT_SUMMARY_TOKENS);
+    const out = await this.call(prompt, opts.maxTokens ?? DEFAULT_SUMMARY_TOKENS, opts.signal);
     return out.trim();
   }
 
-  private async call(prompt: string, maxTokens: number): Promise<string> {
+  private async call(prompt: string, maxTokens: number, signal?: AbortSignal): Promise<string> {
     const resp = await fetch(ENDPOINT, {
       method: 'POST',
       headers: {
@@ -79,7 +89,9 @@ export class AnthropicProvider implements LlmService {
         max_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }]
       }),
-      signal: AbortSignal.timeout(60_000)
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000)
     });
     if (!resp.ok) {
       const err = await resp.text().catch(() => '');

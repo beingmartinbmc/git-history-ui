@@ -11,7 +11,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { catchError, of, switchMap } from 'rxjs';
+import { catchError, map, of, switchMap } from 'rxjs';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { AnnotationComment, CommitImpact, DiffFile } from '../../models/git.models';
 import { AnnotationsService } from '../../services/annotations.service';
@@ -21,6 +21,14 @@ import { UiStateService } from '../../services/ui-state.service';
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
 import { MarkdownPipe } from '../../pipes/markdown.pipe';
+
+interface DiffFileMetas {
+  commitHash: string | null;
+  files: Array<Omit<DiffFile, 'changes'>>;
+  totalLines: number;
+  isLarge: boolean;
+  error: string | null;
+}
 
 @Component({
   selector: 'app-commit-detail',
@@ -64,15 +72,25 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
           >
             {{ loadingImpact() ? '...' : impact() ? 'Refresh impact' : 'Show impact' }}
           </button>
-          <button class="btn btn-ghost btn-sm" (click)="copyShareLink()">
-            {{ shareCopied() ? 'Copied!' : '🔗 Share' }}
+          <button class="btn btn-ghost btn-sm" (click)="copyPortableLink()">
+            {{ shareCopied() ? 'Copied!' : 'Copy portable link' }}
           </button>
+          <button class="btn btn-ghost btn-sm" (click)="copyMarkdownReport()">
+            {{ reportCopied() ? 'Copied!' : 'Copy Markdown report' }}
+          </button>
+          <button class="btn btn-ghost btn-sm" (click)="downloadReport()">Download report</button>
         </div>
 
         <div class="ai-card" *ngIf="explanation() as e">
           <span class="ai-pill">AI</span>
           <div class="ai-text" [innerHTML]="e | markdown"></div>
-          <button class="btn btn-ghost btn-icon close" (click)="explanation.set(null)">×</button>
+          <button
+            class="btn btn-ghost btn-icon close"
+            (click)="explanation.set(null)"
+            aria-label="Close explanation"
+          >
+            ×
+          </button>
         </div>
         <div class="ai-card error" *ngIf="explainError() as e">{{ e }}</div>
       </header>
@@ -85,7 +103,13 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
             {{ imp.relatedCommits.length }} related commits
           </span>
         </div>
-        <app-impact-graph [impact]="imp" />
+        @defer (on viewport) {
+          <app-impact-graph [impact]="imp" />
+        } @placeholder {
+          <div class="defer-placeholder">Preparing impact graph…</div>
+        } @error {
+          <div class="defer-error">Impact graph could not be displayed.</div>
+        }
         <div class="impact-body">
           <div>
             <h4>Modules</h4>
@@ -96,9 +120,11 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
           <div>
             <h4>Related commits</h4>
             <ul class="related">
-              <li *ngFor="let r of imp.relatedCommits" (click)="state.selectHash(r.hash)">
-                <code>{{ r.hash.slice(0, 7) }}</code>
-                <span>{{ r.subject }}</span>
+              <li *ngFor="let r of imp.relatedCommits">
+                <button type="button" (click)="state.selectHash(r.hash)">
+                  <code>{{ r.hash.slice(0, 7) }}</code>
+                  <span>{{ r.subject }}</span>
+                </button>
               </li>
             </ul>
           </div>
@@ -106,7 +132,7 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
       </div>
 
       <div class="split">
-        <aside class="files">
+        <aside class="files" [attr.aria-busy]="loading()">
           <div class="files-header">
             <span>Files</span>
             <span class="count" *ngIf="files().length">{{ files().length }}</span>
@@ -116,6 +142,7 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
               <button
                 class="file"
                 [class.selected]="f.file === activeFile()?.file"
+                [attr.aria-pressed]="f.file === activeFile()?.file"
                 (click)="selectFile(f)"
               >
                 <span class="status-dot" [attr.data-status]="f.status"></span>
@@ -129,6 +156,7 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
                 class="file-history"
                 (click)="openFileHistory(f.file)"
                 title="View file history"
+                [attr.aria-label]="'View history for ' + f.file"
               >
                 ⏱
               </button>
@@ -141,11 +169,16 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
                 ⚠
               </button>
             </div>
-            <div class="files-empty" *ngIf="!files().length && !loading()">No files changed.</div>
-            <div class="files-empty" *ngIf="loading()">Loading…</div>
+            <div class="files-empty error" *ngIf="fileError() as message">
+              {{ message }} <button type="button" (click)="retryFiles()">Retry</button>
+            </div>
+            <div class="files-empty" *ngIf="!files().length && !loading() && !fileError()">
+              No files changed.
+            </div>
+            <div class="files-empty" *ngIf="loading() && !files().length">Loading…</div>
           </div>
         </aside>
-        <section class="diff">
+        <section class="diff" [attr.aria-busy]="activeFileLoading()">
           <details class="annotations" [open]="annotationsOpen()">
             <summary (click)="toggleAnnotations($event)">
               💬 Notes ({{ comments().length }})
@@ -178,7 +211,15 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
               </div>
             </div>
           </details>
-          <app-diff-viewer [fileInput]="activeFile()" />
+          @defer (when activeFile()) {
+            <app-diff-viewer [fileInput]="activeFile()" />
+          } @placeholder {
+            <div class="defer-placeholder">
+              {{ activeFileLoading() ? 'Loading diff…' : 'Select a file to see its diff.' }}
+            </div>
+          } @error {
+            <div class="defer-error">Diff viewer could not be displayed.</div>
+          }
         </section>
       </div>
     </ng-container>
@@ -395,6 +436,9 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
         font-size: 12px;
         text-align: center;
       }
+      .files-empty.error {
+        color: var(--danger);
+      }
 
       .diff {
         min-width: 0;
@@ -583,12 +627,19 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
         font-size: 11px;
         color: var(--fg-secondary);
       }
-      .related li {
-        cursor: pointer;
+      .related button {
         display: flex;
         gap: 0.4rem;
+        width: 100%;
+        padding: 2px 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
       }
-      .related li:hover {
+      .related button:hover {
         color: var(--accent);
       }
       .related code {
@@ -691,6 +742,18 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
       .comment-form .btn {
         align-self: flex-end;
       }
+      .defer-placeholder,
+      .defer-error {
+        display: grid;
+        min-height: 5rem;
+        place-items: center;
+        padding: 1rem;
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+      .defer-error {
+        color: var(--danger);
+      }
     `,
   ],
 })
@@ -712,6 +775,7 @@ export class CommitDetailComponent {
   readonly comments = signal<AnnotationComment[]>([]);
   readonly annotationsOpen = signal<boolean>(false);
   readonly shareCopied = signal<boolean>(false);
+  readonly reportCopied = signal<boolean>(false);
 
   commentDraft = '';
   commentAuthor = 'me';
@@ -719,74 +783,72 @@ export class CommitDetailComponent {
   private impactSub?: { unsubscribe(): void };
   private explainSub?: { unsubscribe(): void };
   private diffSub?: { unsubscribe(): void };
+  private reportSub?: { unsubscribe(): void };
 
   loading = signal(false);
+  private metadataReload = signal(0);
 
   /** Lightweight file metadata (no patch bodies). */
   fileMetas = toSignal(
-    toObservable(this.commit).pipe(
-      switchMap((c) => {
+    toObservable(computed(() => ({ commit: this.commit(), reload: this.metadataReload() }))).pipe(
+      switchMap(({ commit: c }) => {
         if (!c) {
           this.loading.set(false);
-          return of({
-            files: [] as Array<{
-              file: string;
-              oldFile?: string;
-              status: string;
-              additions: number;
-              deletions: number;
-            }>,
-            totalLines: 0,
-            isLarge: false,
-          });
+          return of(emptyFileMetas());
         }
         this.loading.set(true);
         return this.git.getDiffFiles(c.hash).pipe(
-          catchError(() =>
-            of({
-              files: [] as Array<{
-                file: string;
-                oldFile?: string;
-                status: string;
-                additions: number;
-                deletions: number;
-              }>,
-              totalLines: 0,
-              isLarge: false,
+          map(
+            (result): DiffFileMetas => ({
+              ...result,
+              commitHash: c.hash,
+              files: result.files as Array<Omit<DiffFile, 'changes'>>,
+              error: null,
             }),
+          ),
+          catchError((error) =>
+            of(
+              emptyFileMetas(c.hash, error?.error?.error ?? 'Failed to load files for this commit'),
+            ),
           ),
         );
       }),
     ),
-    {
-      initialValue: {
-        files: [] as Array<{
-          file: string;
-          oldFile?: string;
-          status: string;
-          additions: number;
-          deletions: number;
-        }>,
-        totalLines: 0,
-        isLarge: false,
-      },
-    },
+    { initialValue: emptyFileMetas() },
   );
 
-  files = computed(() => this.fileMetas().files as unknown as DiffFile[]);
+  files = computed(() =>
+    this.fileMetas().commitHash === this.commit()?.hash
+      ? (this.fileMetas().files as unknown as DiffFile[])
+      : [],
+  );
+  fileError = computed(() =>
+    this.fileMetas().commitHash === this.commit()?.hash ? this.fileMetas().error : null,
+  );
 
   activeFileIndex = signal(0);
   /** Full diff (with patch body) for the currently selected file, loaded lazily. */
   activeFile = signal<DiffFile | null>(null);
-  private activeFileLoading = signal(false);
+  readonly activeFileLoading = signal(false);
 
   constructor() {
+    let previousHash: string | null = null;
+    effect(() => {
+      const hash = this.commit()?.hash ?? null;
+      if (hash === previousHash) return;
+      previousHash = hash;
+      this.activeFileIndex.set(0);
+      this.activeFile.set(null);
+      this.activeFileLoading.set(false);
+    });
+
     effect(() => {
       const metas = this.fileMetas();
+      const c = this.commit();
+      if (!c || metas.commitHash !== c.hash) return;
       const sharedFile = untracked(() => this.state.activeFilePath());
       const sharedIdx = sharedFile ? metas.files.findIndex((f) => f.file === sharedFile) : -1;
       this.activeFileIndex.set(sharedIdx >= 0 ? sharedIdx : 0);
-      if (sharedIdx >= 0) this.state.activeFilePath.set(null);
       this.activeFile.set(null);
       this.loading.set(false);
     });
@@ -798,18 +860,22 @@ export class CommitDetailComponent {
       const meta = metas.files[idx];
       const c = this.commit();
       this.diffSub?.unsubscribe();
-      if (!c || !meta) {
+      this.reportSub?.unsubscribe();
+      if (!c || metas.commitHash !== c.hash || !meta) {
         this.activeFile.set(null);
+        this.activeFileLoading.set(false);
         return;
       }
       this.activeFileLoading.set(true);
       this.diffSub = this.git.getDiffFile(c.hash, meta.file).subscribe({
         next: (f) => {
           this.activeFile.set(f);
+          this.state.activeFilePath.set(f.file);
           this.activeFileLoading.set(false);
         },
         error: () => {
           this.activeFile.set(meta as unknown as DiffFile);
+          this.state.activeFilePath.set(meta.file);
           this.activeFileLoading.set(false);
         },
       });
@@ -835,6 +901,7 @@ export class CommitDetailComponent {
       this.explaining.set(false);
       this.loadingImpact.set(false);
       this.shareCopied.set(false);
+      this.reportCopied.set(false);
       if (!c) {
         this.comments.set([]);
         return;
@@ -852,7 +919,14 @@ export class CommitDetailComponent {
 
   selectFile(f: DiffFile) {
     const idx = this.fileMetas().files.findIndex((x) => x.file === f.file);
-    if (idx >= 0) this.activeFileIndex.set(idx);
+    if (idx >= 0) {
+      this.state.activeFilePath.set(f.file);
+      this.activeFileIndex.set(idx);
+    }
+  }
+
+  retryFiles() {
+    this.metadataReload.update((value) => value + 1);
   }
 
   openFileHistory(file: string) {
@@ -909,31 +983,49 @@ export class CommitDetailComponent {
     });
   }
 
-  copyShareLink() {
+  copyPortableLink() {
     const c = this.commit();
     if (!c) return;
-    const params = new URLSearchParams();
-    params.set('commit', c.hash);
-    const filters = this.state.filters();
-    if (filters.author) params.set('author', filters.author);
-    if (filters.since) params.set('since', filters.since);
-    if (filters.until) params.set('until', filters.until);
-    if (filters.branch) params.set('branch', filters.branch);
-    if (filters.file) params.set('file', filters.file);
-    const mode = this.state.viewMode();
-    if (mode !== 'flat') params.set('mode', mode);
-    const active = this.activeFile();
-    if (active) params.set('activeFile', active.file);
-    const url = window.location.origin + '/?' + params.toString();
-    navigator.clipboard
-      ?.writeText(url)
-      .then(() => {
-        this.shareCopied.set(true);
-        setTimeout(() => this.shareCopied.set(false), 1500);
+    this.reportSub?.unsubscribe();
+    this.reportSub = this.git
+      .createPortableLink({
+        view: 'history',
+        commit: c.hash,
+        activeFile: this.state.activeFilePath(),
       })
-      .catch(() => {
-        this.shareCopied.set(false);
+      .subscribe({
+        next: ({ url }) => void this.copyText(url, this.shareCopied),
+        error: () => this.shareCopied.set(false),
       });
+  }
+
+  copyMarkdownReport() {
+    const c = this.commit();
+    if (!c) return;
+    this.reportSub?.unsubscribe();
+    this.reportSub = this.git.getCommitReportMarkdown(c.hash).subscribe({
+      next: (markdown) => void this.copyText(markdown, this.reportCopied),
+      error: () => this.reportCopied.set(false),
+    });
+  }
+
+  downloadReport() {
+    const c = this.commit();
+    if (!c) return;
+    this.reportSub?.unsubscribe();
+    this.reportSub = this.git.getCommitReportMarkdown(c.hash).subscribe({
+      next: (markdown) => downloadText(`git-investigation-${c.shortHash}.md`, markdown),
+    });
+  }
+
+  private async copyText(text: string, copied: { set(value: boolean): void }) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copied.set(true);
+      setTimeout(() => copied.set(false), 1500);
+    } catch {
+      copied.set(false);
+    }
   }
 
   toggleAnnotations(_event: Event) {
@@ -960,4 +1052,20 @@ export class CommitDetailComponent {
       next: () => this.comments.set(this.comments().filter((x) => x.id !== id)),
     });
   }
+}
+
+function emptyFileMetas(
+  commitHash: string | null = null,
+  error: string | null = null,
+): DiffFileMetas {
+  return { commitHash, files: [], totalLines: 0, isLarge: false, error };
+}
+
+function downloadText(name: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

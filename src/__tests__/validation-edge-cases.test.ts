@@ -339,14 +339,15 @@ describe('getFileBreakageAnalysis — deep edge cases', () => {
         hasPrevious: false
       }),
       getNumstat: async () => new Map(Object.entries(opts.numstat ?? {})),
-      getDiff: async (hash: string) =>
-        (opts.diffs?.[hash] ?? []).map((d) => ({
+      getDiffMeta: async (hash: string) => ({
+        files: (opts.diffs?.[hash] ?? []).map((d) => ({
           file: d.file,
-          status: 'modified' as const,
+          status: 'modified',
           additions: 0,
-          deletions: 0,
-          changes: ''
-        }))
+          deletions: 0
+        })),
+        totalLines: 0
+      })
     } as unknown as GitService;
   }
 
@@ -417,7 +418,7 @@ describe('getFileBreakageAnalysis — deep edge cases', () => {
 describe('getCommitImpact — edge cases', () => {
   it('handles empty diff (no files changed)', async () => {
     const svc = {
-      getDiff: async () => [],
+      getDiffMeta: async () => ({ files: [], totalLines: 0 }),
       getFileAtCommit: async () => '',
       getCommitsForFiles: async () => []
     } as unknown as GitService;
@@ -430,9 +431,10 @@ describe('getCommitImpact — edge cases', () => {
 
   it('handles deeply nested file paths for module detection', async () => {
     const svc = {
-      getDiff: async () => [
-        { file: 'a/b/c/d/e/f.ts', status: 'modified', additions: 1, deletions: 0, changes: '' }
-      ],
+      getDiffMeta: async () => ({
+        files: [{ file: 'a/b/c/d/e/f.ts', status: 'modified', additions: 1, deletions: 0 }],
+        totalLines: 1
+      }),
       getFileAtCommit: async () => '',
       getCommitsForFiles: async () => []
     } as unknown as GitService;
@@ -443,9 +445,10 @@ describe('getCommitImpact — edge cases', () => {
 
   it('handles circular/self-referencing imports (side-effect imports not parsed)', async () => {
     const svc = {
-      getDiff: async () => [
-        { file: 'src/a.ts', status: 'modified', additions: 1, deletions: 0, changes: '' }
-      ],
+      getDiffMeta: async () => ({
+        files: [{ file: 'src/a.ts', status: 'modified', additions: 1, deletions: 0 }],
+        totalLines: 1
+      }),
       getFileAtCommit: async () => "import { x } from './a';\nimport { y } from './b';\n",
       getCommitsForFiles: async () => []
     } as unknown as GitService;

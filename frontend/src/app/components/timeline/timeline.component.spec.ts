@@ -3,7 +3,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { of } from 'rxjs';
 import { TimelineComponent } from './timeline.component';
-import { TimelineService } from '../../services/timeline.service';
+import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { Commit } from '../../models/git.models';
 
@@ -11,14 +11,14 @@ describe('TimelineComponent', () => {
   let fixture: ComponentFixture<TimelineComponent>;
   let component: TimelineComponent;
   let state: UiStateService;
-  let timelineApi: {
-    snapshot: jasmine.Spy;
-    rangeDiff: jasmine.Spy;
+  let git: {
+    getSnapshot: jasmine.Spy;
+    getTimelineRangeDiff: jasmine.Spy;
   };
 
   beforeEach(async () => {
-    timelineApi = {
-      snapshot: jasmine.createSpy('snapshot').and.returnValue(
+    git = {
+      getSnapshot: jasmine.createSpy('getSnapshot').and.returnValue(
         of({
           at: '2026-01-01T00:00:00.000Z',
           ref: 'old-ref',
@@ -26,7 +26,7 @@ describe('TimelineComponent', () => {
           tags: { 'v1.0.0': 'old-ref' },
         }),
       ),
-      rangeDiff: jasmine.createSpy('rangeDiff').and.returnValue(
+      getTimelineRangeDiff: jasmine.createSpy('getTimelineRangeDiff').and.returnValue(
         of([
           {
             file: 'src/app.ts',
@@ -44,7 +44,7 @@ describe('TimelineComponent', () => {
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
-        { provide: TimelineService, useValue: timelineApi },
+        { provide: GitService, useValue: git },
       ],
     }).compileComponents();
 
@@ -73,8 +73,8 @@ describe('TimelineComponent', () => {
     tick(181);
     fixture.detectChanges();
 
-    expect(timelineApi.snapshot).toHaveBeenCalled();
-    expect(timelineApi.rangeDiff).toHaveBeenCalledWith('old-ref', 'HEAD');
+    expect(git.getSnapshot).toHaveBeenCalled();
+    expect(git.getTimelineRangeDiff).toHaveBeenCalledWith('old-ref', 'HEAD');
     expect(component.selectedFile()?.file).toBe('src/app.ts');
   }));
 

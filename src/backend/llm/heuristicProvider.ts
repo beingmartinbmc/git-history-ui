@@ -1,4 +1,10 @@
-import type { LlmService, ScoreCandidate, ScoredCandidate } from './types';
+import type {
+  LlmCallOptions,
+  LlmService,
+  LlmSummaryOptions,
+  ScoreCandidate,
+  ScoredCandidate
+} from './types';
 
 /**
  * Synonyms expand a single query token into a set of related tokens.
@@ -125,7 +131,12 @@ export class HeuristicProvider implements LlmService {
   readonly name = 'heuristic' as const;
   readonly isAi = false;
 
-  async score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]> {
+  async score(
+    query: string,
+    candidates: ScoreCandidate[],
+    opts: LlmCallOptions = {}
+  ): Promise<ScoredCandidate[]> {
+    opts.signal?.throwIfAborted();
     const queryTokens = expandKeywords(query);
     if (queryTokens.length === 0) {
       return candidates.map((c) => ({ id: c.id, score: 0 }));
@@ -161,7 +172,8 @@ export class HeuristicProvider implements LlmService {
     });
   }
 
-  async summarize(text: string, _opts?: { hint?: string; maxTokens?: number }): Promise<string> {
+  async summarize(text: string, opts: LlmSummaryOptions = {}): Promise<string> {
+    opts.signal?.throwIfAborted();
     const trimmed = (text || '').trim();
     if (!trimmed) return '';
     // Heuristic summary: first non-empty paragraph, truncated.

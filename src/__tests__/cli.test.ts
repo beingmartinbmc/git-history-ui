@@ -29,13 +29,17 @@ describe('cli', () => {
     expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  maybe('--help exits 0 and lists the presets subcommand', () => {
+  maybe('--help exits 0 and lists growth-loop subcommands', () => {
     const result = spawnSync(process.execPath, [cliPath, '--help'], {
       encoding: 'utf8',
       timeout: 10_000
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/presets/);
+    expect(result.stdout).toMatch(/demo/);
+    expect(result.stdout).toMatch(/protocol/);
+    expect(result.stdout).toMatch(/pr-impact/);
+    expect(result.stdout).toMatch(/wrapped/);
   });
 
   maybe('no-args invocation reaches main() (does not just print help)', () => {
@@ -73,7 +77,7 @@ describe('cli', () => {
         'git-history-ui://open?repo=https%3A%2F%2Fgithub.com%2Fbeingmartinbmc%2Fgit-history-ui.git&at=abc1234&pr=42'
       );
       expect(parsed).toEqual({
-        repo: 'https://github.com/beingmartinbmc/git-history-ui.git',
+        repo: 'https://github.com/beingmartinbmc/git-history-ui',
         at: 'abc1234',
         pr: '42'
       });

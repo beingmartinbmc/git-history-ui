@@ -49,8 +49,8 @@ body:
     id: version
     attributes:
       label: git-history-ui version
-      description: Run `npx git-history-ui@latest --version`.
-      placeholder: '4.0.1'
+      description: Enter the installed version that exhibited the failure (run `git-history-ui --version`).
+      placeholder: '5.4.0'
     validations:
       required: true
 

@@ -4,10 +4,16 @@ import { Observable } from 'rxjs';
 import {
   BlameLine,
   Commit,
+  CommitGroup,
   DiffFile,
+  GitAuthorIdentity,
   GitOptions,
   IndexStatus,
+  InvestigationReport,
+  NlSearchResponse,
   PaginatedCommits,
+  RepositoryIdentity,
+  SnapshotResponse,
 } from '../models/git.models';
 import { ObservableCache, TTL } from './observable-cache';
 
@@ -16,6 +22,9 @@ export class GitService {
   private http = inject(HttpClient);
   private base = '/api';
   private cache = new ObservableCache(200);
+  private groupsCache = new ObservableCache(50);
+  private searchCache = new ObservableCache(50);
+  private timelineCache = new ObservableCache(100);
 
   getCommits(options: GitOptions = {}): Observable<PaginatedCommits> {
     let params = new HttpParams();
@@ -34,6 +43,54 @@ export class GitService {
   /** Drop all cached entries — call after operations that mutate repo state. */
   invalidate(): void {
     this.cache.clear();
+  }
+
+  getGroups(
+    options: { since?: string; until?: string; author?: string; branch?: string } = {},
+  ): Observable<CommitGroup[]> {
+    let params = new HttpParams();
+    for (const [key, value] of Object.entries(options)) {
+      if (value) params = params.set(key, String(value));
+    }
+    return this.groupsCache.get(
+      `groups:${params.toString()}`,
+      () => this.http.get<CommitGroup[]>(`${this.base}/groups`, { params }),
+      TTL.VOLATILE,
+    );
+  }
+
+  naturalLanguage(query: string, options: GitOptions = {}): Observable<NlSearchResponse> {
+    let params = new HttpParams()
+      .set('q', query)
+      .set('page', String(options.page ?? 1))
+      .set('pageSize', String(options.pageSize ?? 100));
+    for (const key of ['author', 'since', 'until', 'branch', 'file'] as const) {
+      const value = options[key];
+      if (value) params = params.set(key, String(value));
+    }
+    return this.searchCache.get(
+      `nl:${params.toString()}`,
+      () => this.http.get<NlSearchResponse>(`${this.base}/search`, { params }),
+      TTL.SHORT,
+    );
+  }
+
+  getSnapshot(atIso: string): Observable<SnapshotResponse> {
+    const params = new HttpParams().set('at', atIso);
+    return this.timelineCache.get(
+      `snapshot:${atIso}`,
+      () => this.http.get<SnapshotResponse>(`${this.base}/snapshot`, { params }),
+      TTL.IMMUTABLE,
+    );
+  }
+
+  getTimelineRangeDiff(from: string, to: string): Observable<DiffFile[]> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    return this.timelineCache.get(
+      `range:${from}:${to}`,
+      () => this.http.get<DiffFile[]>(`${this.base}/diff`, { params }),
+      TTL.IMMUTABLE,
+    );
   }
 
   streamCommits(options: GitOptions = {}): Observable<PaginatedCommits> {
@@ -130,12 +187,49 @@ export class GitService {
     );
   }
 
-  getDiff(hash: string): Observable<DiffFile[]> {
+  getRepository(): Observable<RepositoryIdentity> {
     return this.cache.get(
-      `diff:${hash}`,
-      () => this.http.get<DiffFile[]>(`${this.base}/diff/${hash}`),
+      'repository',
+      () => this.http.get<RepositoryIdentity>(`${this.base}/repository`),
       TTL.IMMUTABLE,
     );
+  }
+
+  getAuthorIdentities(): Observable<GitAuthorIdentity[]> {
+    return this.cache.get(
+      'author-identities',
+      () => this.http.get<GitAuthorIdentity[]>(`${this.base}/authors/details`),
+      TTL.IMMUTABLE,
+    );
+  }
+
+  createPortableLink(viewState: Record<string, string | number | null | undefined>): Observable<{
+    url: string;
+    expiresAt: null;
+    mode: 'portable';
+  }> {
+    return this.http.post<{ url: string; expiresAt: null; mode: 'portable' }>(
+      `${this.base}/share`,
+      { viewState },
+    );
+  }
+
+  getCommitReport(hash: string): Observable<InvestigationReport> {
+    return this.http.get<InvestigationReport>(`${this.base}/report/${hash}`);
+  }
+
+  getCommitReportMarkdown(hash: string): Observable<string> {
+    return this.http.get(`${this.base}/report/${hash}`, {
+      params: new HttpParams().set('format', 'markdown'),
+      responseType: 'text',
+    });
+  }
+
+  getRangeReportMarkdown(from: string, to: string): Observable<string> {
+    return this.http.get(`${this.base}/report`, {
+      params: new HttpParams().set('from', from).set('to', to).set('format', 'markdown'),
+      responseType: 'text',
+    });
   }
 
   getBlame(filePath: string): Observable<BlameLine[]> {
@@ -183,28 +277,6 @@ export class GitService {
 
   cancelIndexBuild(): Observable<IndexStatus> {
     return this.http.post<IndexStatus>(`${this.base}/index/cancel`, {});
-  }
-
-  // Pickaxe: code content search
-  pickaxeSearch(
-    pattern: string,
-    opts: {
-      mode?: 'S' | 'G';
-      author?: string;
-      since?: string;
-      until?: string;
-      file?: string;
-      branch?: string;
-    } = {},
-  ): Observable<{ commits: Commit[]; total: number }> {
-    let params = new HttpParams().set('pattern', pattern);
-    if (opts.mode) params = params.set('mode', opts.mode);
-    if (opts.author) params = params.set('author', opts.author);
-    if (opts.since) params = params.set('since', opts.since);
-    if (opts.until) params = params.set('until', opts.until);
-    if (opts.file) params = params.set('file', opts.file);
-    if (opts.branch) params = params.set('branch', opts.branch);
-    return this.http.get<{ commits: Commit[]; total: number }>(`${this.base}/pickaxe`, { params });
   }
 
   // Stash explorer
@@ -266,19 +338,6 @@ export class GitService {
       `${this.base}/diff/${hash}/file`,
       { params },
     );
-  }
-
-  // Presets API
-  getPresets(): Observable<Record<string, unknown>> {
-    return this.http.get<Record<string, unknown>>(`${this.base}/presets`);
-  }
-
-  savePreset(name: string, filters: Record<string, unknown>): Observable<{ name: string }> {
-    return this.http.post<{ name: string }>(`${this.base}/presets/${name}`, filters);
-  }
-
-  deletePreset(name: string): Observable<void> {
-    return this.http.delete<void>(`${this.base}/presets/${name}`);
   }
 
   // Export

@@ -1,6 +1,9 @@
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, Router } from '@angular/router';
+import { Subject, catchError, map, of, switchMap } from 'rxjs';
 import { DiffFile } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
@@ -12,54 +15,63 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
   imports: [CommonModule, FormsModule, DiffViewerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="compare-header">
-      <h2>Compare</h2>
-      <div class="selectors">
-        <select [(ngModel)]="fromRef" class="ref-select">
-          <option value="">Select base ref…</option>
-          <option *ngFor="let b of branches()" [value]="b">{{ b }}</option>
-          <option *ngFor="let t of tags()" [value]="t">{{ t }}</option>
-        </select>
-        <span class="arrow">→</span>
-        <select [(ngModel)]="toRef" class="ref-select">
-          <option value="">Select head ref…</option>
-          <option *ngFor="let b of branches()" [value]="b">{{ b }}</option>
-          <option *ngFor="let t of tags()" [value]="t">{{ t }}</option>
-        </select>
-        <button class="btn" (click)="compare()" [disabled]="!fromRef || !toRef || loading()">
-          {{ loading() ? 'Loading…' : 'Compare' }}
-        </button>
+    <div class="compare-page" [attr.aria-busy]="loading()">
+      <div class="compare-header">
+        <h2>Compare</h2>
+        <div class="selectors">
+          <select [(ngModel)]="fromRef" class="ref-select">
+            <option value="">Select base ref…</option>
+            <option *ngFor="let b of branches()" [value]="b">{{ b }}</option>
+            <option *ngFor="let t of tags()" [value]="t">{{ t }}</option>
+          </select>
+          <span class="arrow">→</span>
+          <select [(ngModel)]="toRef" class="ref-select">
+            <option value="">Select head ref…</option>
+            <option *ngFor="let b of branches()" [value]="b">{{ b }}</option>
+            <option *ngFor="let t of tags()" [value]="t">{{ t }}</option>
+          </select>
+          <button class="btn" (click)="compare()" [disabled]="!fromRef || !toRef || loading()">
+            {{ loading() ? 'Loading…' : 'Compare' }}
+          </button>
+          <ng-container *ngIf="compared() && files().length <= 50">
+            <button class="btn" (click)="copyPortableLink()">Copy portable link</button>
+            <button class="btn" (click)="copyMarkdownReport()">Copy Markdown report</button>
+            <button class="btn" (click)="downloadReport()">Download report</button>
+          </ng-container>
+        </div>
       </div>
-    </div>
 
-    <div class="error" *ngIf="error() as err">{{ err }}</div>
-
-    <div class="results" *ngIf="files().length">
-      <div class="summary">
-        {{ files().length }} files changed
-        <span class="add">+{{ totalAdditions() }}</span>
-        <span class="del">-{{ totalDeletions() }}</span>
+      <div class="error" *ngIf="error() as err">
+        {{ err }} <button type="button" (click)="retry()">Retry</button>
       </div>
-      <div class="file-list">
-        <button
-          *ngFor="let f of files()"
-          class="file"
-          [class.selected]="f === activeFile()"
-          (click)="activeFile.set(f)"
-        >
-          <span class="status-dot" [attr.data-status]="f.status"></span>
-          <span class="path">{{ f.file }}</span>
-          <span class="counts">
-            <span class="add" *ngIf="f.additions">+{{ f.additions }}</span>
-            <span class="del" *ngIf="f.deletions">−{{ f.deletions }}</span>
-          </span>
-        </button>
-      </div>
-      <app-diff-viewer [fileInput]="activeFile()" />
-    </div>
 
-    <div class="empty" *ngIf="!files().length && compared() && !loading()">
-      No differences between these refs.
+      <div class="results" *ngIf="files().length">
+        <div class="summary">
+          {{ files().length }} files changed
+          <span class="add">+{{ totalAdditions() }}</span>
+          <span class="del">-{{ totalDeletions() }}</span>
+        </div>
+        <div class="file-list">
+          <button
+            *ngFor="let f of files()"
+            class="file"
+            [class.selected]="f === activeFile()"
+            (click)="activeFile.set(f)"
+          >
+            <span class="status-dot" [attr.data-status]="f.status"></span>
+            <span class="path">{{ f.file }}</span>
+            <span class="counts">
+              <span class="add" *ngIf="f.additions">+{{ f.additions }}</span>
+              <span class="del" *ngIf="f.deletions">−{{ f.deletions }}</span>
+            </span>
+          </button>
+        </div>
+        <app-diff-viewer [fileInput]="activeFile()" />
+      </div>
+
+      <div class="empty" *ngIf="!files().length && compared() && !loading() && !error()">
+        No differences between these refs.
+      </div>
     </div>
   `,
   styles: [
@@ -99,6 +111,9 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
         color: var(--danger);
         margin: 0.5rem 0;
         font-size: 13px;
+      }
+      .error button {
+        margin-left: 0.4rem;
       }
       .summary {
         padding: 0.6rem 0;
@@ -174,6 +189,9 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 export class BranchCompareComponent {
   private git = inject(GitService);
   private state = inject(UiStateService);
+  private route = inject(ActivatedRoute, { optional: true });
+  private router = inject(Router, { optional: true });
+  private destroyRef = inject(DestroyRef);
 
   branches = this.state.branches;
   tags = this.state.tags;
@@ -188,25 +206,111 @@ export class BranchCompareComponent {
 
   totalAdditions = signal(0);
   totalDeletions = signal(0);
+  private readonly requests = new Subject<{ from: string; to: string }>();
+  private pendingActiveFile = '';
+  private reportSub?: { unsubscribe(): void };
+
+  constructor() {
+    this.requests
+      .pipe(
+        switchMap(({ from, to }) => {
+          this.loading.set(true);
+          this.error.set(null);
+          return this.git.getRangeDiff(from, to).pipe(
+            map((files) => ({ files, error: null })),
+            catchError((error) =>
+              of({ files: null, error: error?.error?.error ?? 'Failed to compare' }),
+            ),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe(({ files, error }) => {
+        this.loading.set(false);
+        this.compared.set(true);
+        if (error) {
+          this.error.set(error);
+          return;
+        }
+        const next = files ?? [];
+        this.files.set(next);
+        this.activeFile.set(
+          next.find((file) => file.file === this.pendingActiveFile) ?? next[0] ?? null,
+        );
+        this.totalAdditions.set(next.reduce((sum, file) => sum + file.additions, 0));
+        this.totalDeletions.set(next.reduce((sum, file) => sum + file.deletions, 0));
+      });
+    this.route?.queryParamMap.pipe(takeUntilDestroyed()).subscribe((params) => {
+      const from = params.get('from')?.trim() ?? '';
+      const to = params.get('to')?.trim() ?? '';
+      this.pendingActiveFile = params.get('activeFile')?.trim() ?? '';
+      if (!from || !to || (from === this.fromRef && to === this.toRef && this.compared())) return;
+      this.fromRef = from;
+      this.toRef = to;
+      this.compare();
+    });
+    this.destroyRef.onDestroy(() => this.reportSub?.unsubscribe());
+  }
 
   compare() {
     if (!this.fromRef || !this.toRef) return;
-    this.loading.set(true);
-    this.error.set(null);
-    this.git.getRangeDiff(this.fromRef, this.toRef).subscribe({
-      next: (diff) => {
-        this.files.set(diff);
-        this.activeFile.set(diff[0] ?? null);
-        this.totalAdditions.set(diff.reduce((s, f) => s + f.additions, 0));
-        this.totalDeletions.set(diff.reduce((s, f) => s + f.deletions, 0));
-        this.loading.set(false);
-        this.compared.set(true);
-      },
-      error: (err) => {
-        this.error.set(err?.error?.error ?? 'Failed to compare');
-        this.loading.set(false);
-        this.compared.set(true);
-      },
+    void this.router?.navigate([], {
+      relativeTo: this.route ?? undefined,
+      queryParams: { from: this.fromRef, to: this.toRef },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
     });
+    this.requests.next({ from: this.fromRef, to: this.toRef });
   }
+
+  retry() {
+    this.compare();
+  }
+
+  copyPortableLink() {
+    if (!this.fromRef || !this.toRef) return;
+    this.reportSub?.unsubscribe();
+    this.reportSub = this.git
+      .createPortableLink({
+        view: 'compare',
+        from: this.fromRef,
+        to: this.toRef,
+        activeFile: this.activeFile()?.file,
+      })
+      .subscribe(({ url }) => void navigator.clipboard.writeText(url));
+  }
+
+  copyMarkdownReport() {
+    if (!this.fromRef || !this.toRef) return;
+    this.reportSub?.unsubscribe();
+    this.reportSub = this.git
+      .getRangeReportMarkdown(this.fromRef, this.toRef)
+      .subscribe((markdown) => void navigator.clipboard.writeText(markdown));
+  }
+
+  downloadReport() {
+    if (!this.fromRef || !this.toRef) return;
+    this.reportSub?.unsubscribe();
+    this.reportSub = this.git
+      .getRangeReportMarkdown(this.fromRef, this.toRef)
+      .subscribe((markdown) =>
+        downloadText(
+          `git-investigation-${safeName(this.fromRef)}-${safeName(this.toRef)}.md`,
+          markdown,
+        ),
+      );
+  }
+}
+
+function safeName(value: string): string {
+  return value.replace(/[^a-z0-9._-]+/gi, '-').slice(0, 60);
+}
+
+function downloadText(name: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

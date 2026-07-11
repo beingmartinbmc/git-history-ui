@@ -4,6 +4,7 @@ import {
   Component,
   ElementRef,
   HostListener,
+  OnDestroy,
   ViewChild,
   computed,
   effect,
@@ -32,14 +33,22 @@ import { UiStateService } from '../../services/ui-state.service';
       </div>
 
       <nav class="nav">
-        <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }"
+        <a
+          routerLink="/"
+          routerLinkActive="active"
+          ariaCurrentWhenActive="page"
+          [routerLinkActiveOptions]="{ exact: true }"
           >History</a
         >
-        <a routerLink="/timeline" routerLinkActive="active">Timeline</a>
-        <a routerLink="/insights" routerLinkActive="active">Insights</a>
-        <a routerLink="/wrapped" routerLinkActive="active">Wrapped</a>
-        <a routerLink="/compare" routerLinkActive="active">Compare</a>
-        <a routerLink="/stash" routerLinkActive="active">Stash</a>
+        <a routerLink="/timeline" routerLinkActive="active" ariaCurrentWhenActive="page"
+          >Timeline</a
+        >
+        <a routerLink="/insights" routerLinkActive="active" ariaCurrentWhenActive="page"
+          >Insights</a
+        >
+        <a routerLink="/wrapped" routerLinkActive="active" ariaCurrentWhenActive="page">Wrapped</a>
+        <a routerLink="/compare" routerLinkActive="active" ariaCurrentWhenActive="page">Compare</a>
+        <a routerLink="/stash" routerLinkActive="active" ariaCurrentWhenActive="page">Stash</a>
       </nav>
 
       <div class="filters">
@@ -148,6 +157,7 @@ import { UiStateService } from '../../services/ui-state.service';
           class="btn btn-ghost btn-icon"
           (click)="state.paletteOpen.set(true)"
           title="Command palette (⌘K)"
+          aria-label="Open command palette"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path
@@ -160,6 +170,7 @@ import { UiStateService } from '../../services/ui-state.service';
           class="btn btn-ghost btn-icon"
           (click)="state.shortcutsOpen.set(true)"
           title="Keyboard shortcuts (?)"
+          aria-label="Open keyboard shortcuts"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path
@@ -499,7 +510,7 @@ import { UiStateService } from '../../services/ui-state.service';
     `,
   ],
 })
-export class ToolbarComponent {
+export class ToolbarComponent implements OnDestroy {
   state = inject(UiStateService);
   theme = inject(ThemeService);
   private git = inject(GitService);
@@ -562,8 +573,13 @@ export class ToolbarComponent {
     this.searchValue.set(value);
     if (this.debounce) clearTimeout(this.debounce);
     this.debounce = setTimeout(() => {
+      this.debounce = null;
       this.state.patchFilters({ search: value || undefined });
     }, 250);
+  }
+
+  ngOnDestroy() {
+    if (this.debounce) clearTimeout(this.debounce);
   }
 
   onAuthor(v: string) {
@@ -591,7 +607,9 @@ export class ToolbarComponent {
   }
 
   toggleViewMode() {
-    this.state.viewMode.set(this.state.viewMode() === 'flat' ? 'grouped' : 'flat');
+    const next = this.state.viewMode() === 'flat' ? 'grouped' : 'flat';
+    this.state.viewMode.set(next);
+    if (next === 'flat') this.state.focusedPrNumber.set(null);
   }
 
   clearFilters() {

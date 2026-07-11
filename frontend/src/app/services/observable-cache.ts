@@ -8,8 +8,8 @@ interface CacheEntry<T> {
 
 /**
  * Bounded TTL+LRU observable cache. Entries are deduplicated via
- * `shareReplay({ bufferSize: 1, refCount: false })` so concurrent callers
- * share the in-flight request. Expired entries are recreated on next access.
+ * `shareReplay({ bufferSize: 1, refCount: true })` so concurrent callers
+ * share the in-flight request while the final unsubscribe cancels its source.
  *
  * Two knobs per call:
  *   - `ttlMs`: how long the cached value is considered fresh.
@@ -28,7 +28,7 @@ export class ObservableCache {
     const hit = this.map.get(key) as CacheEntry<T> | undefined;
     if (hit && hit.expiresAt > now) return hit.value;
     if (hit) this.map.delete(key);
-    const value = create().pipe(shareReplay({ bufferSize: 1, refCount: false }));
+    const value = create().pipe(shareReplay({ bufferSize: 1, refCount: true }));
     this.map.set(key, { value, expiresAt: now + ttlMs });
     if (this.map.size > this.maxEntries) {
       const first = this.map.keys().next().value;

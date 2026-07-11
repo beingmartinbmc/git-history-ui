@@ -79,4 +79,12 @@ describe('ToolbarComponent', () => {
     expect(state.filters().search).toBe('impact graph');
     expect(state.filters().page).toBe(1);
   }));
+
+  it('cancels a pending search update when destroyed', fakeAsync(() => {
+    component.onSearchInput('stale query');
+    fixture.destroy();
+    tick(250);
+
+    expect(state.filters().search).toBeUndefined();
+  }));
 });

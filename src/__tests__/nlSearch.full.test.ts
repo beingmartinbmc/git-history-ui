@@ -92,6 +92,39 @@ describe('runNlSearch', () => {
     expect(r.llmProvider).toBe('anthropic');
   });
 
+  it('forwards cancellation to Git and the LLM scorer', async () => {
+    const controller = new AbortController();
+    let gitSignal: AbortSignal | undefined;
+    let llmSignal: AbortSignal | undefined;
+    const svc = {
+      getCommits: async (_query: unknown, opts?: { signal?: AbortSignal }) => {
+        gitSignal = opts?.signal;
+        return {
+          commits: [commit({ hash: 'a', subject: 'fix login bug' })],
+          total: 1,
+          page: 1,
+          pageSize: 1,
+          totalPages: 1,
+          hasNext: false,
+          hasPrevious: false
+        };
+      }
+    } as unknown as GitService;
+    const llm: LlmService = {
+      name: 'anthropic',
+      isAi: true,
+      score: async (_query, candidates, opts) => {
+        llmSignal = opts?.signal;
+        return candidates.map((candidate) => ({ id: candidate.id, score: 1 }));
+      },
+      summarize: async () => ''
+    };
+
+    await runNlSearch(svc, llm, { query: 'login', signal: controller.signal });
+    expect(gitSignal).toBe(controller.signal);
+    expect(llmSignal).toBe(controller.signal);
+  });
+
   it('handles an empty query without throwing', async () => {
     const svc = fakeGit([commit({ hash: 'a', subject: 'x' })]);
     const llm = new HeuristicProvider();

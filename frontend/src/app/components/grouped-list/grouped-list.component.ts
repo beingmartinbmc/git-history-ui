@@ -2,13 +2,15 @@ import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   computed,
-  effect,
   inject,
   signal,
 } from '@angular/core';
+import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
+import { catchError, map, of, switchMap } from 'rxjs';
 import { CommitGroup } from '../../models/git.models';
-import { GroupsService } from '../../services/groups.service';
+import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
 
 @Component({
@@ -17,39 +19,47 @@ import { UiStateService } from '../../services/ui-state.service';
   imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="head">
-      <span class="title">PR / feature groups</span>
-      <span class="meta" *ngIf="groups()?.length as n">{{ n }} groups</span>
-    </div>
+    <div class="content" [attr.aria-busy]="loading()">
+      <div class="head">
+        <span class="title">PR / feature groups</span>
+        <span class="meta" *ngIf="groups()?.length as n">{{ n }} groups</span>
+      </div>
 
-    <div class="empty" *ngIf="loading()">Loading groups…</div>
-    <div class="empty error" *ngIf="error() as e">{{ e }}</div>
-    <div class="empty" *ngIf="!loading() && !error() && (groups()?.length ?? 0) === 0">
-      No groups detected. Try the flat view.
-    </div>
+      <div class="empty" *ngIf="loading() && groups() === null">Loading groups…</div>
+      <div class="empty error" *ngIf="error() as e">
+        {{ e }} <button type="button" (click)="retry()">Retry</button>
+      </div>
+      <div class="empty" *ngIf="!loading() && !error() && (groups()?.length ?? 0) === 0">
+        No groups detected. Try the flat view.
+      </div>
 
-    <ul class="groups">
-      <li *ngFor="let g of groups()" class="group" [class.expanded]="isExpanded(g.id)">
-        <button class="group-head" (click)="toggle(g.id)">
-          <span class="caret" [class.open]="isExpanded(g.id)">▸</span>
-          <span class="badge" [class]="'src-' + g.source">{{ sourceLabel(g.source) }}</span>
-          <span class="pr" *ngIf="g.prNumber">#{{ g.prNumber }}</span>
-          <span class="g-title">{{ g.title }}</span>
-          <span class="count">{{ g.commits.length }}</span>
-        </button>
-        <ul class="commits" *ngIf="isExpanded(g.id)">
-          <li
-            *ngFor="let h of g.commits"
-            class="commit"
-            [class.selected]="h === state.selectedHash()"
-            (click)="state.selectHash(h)"
-          >
-            <code class="hash">{{ shortHash(h) }}</code>
-            <span class="subject">{{ subjectFor(h) }}</span>
-          </li>
-        </ul>
-      </li>
-    </ul>
+      <ul class="groups">
+        <li *ngFor="let g of groups()" class="group" [class.expanded]="isExpanded(g.id)">
+          <button class="group-head" (click)="toggle(g.id)">
+            <span class="caret" [class.open]="isExpanded(g.id)">▸</span>
+            <span class="badge" [class]="'src-' + g.source">{{ sourceLabel(g.source) }}</span>
+            <span class="pr" *ngIf="g.prNumber">#{{ g.prNumber }}</span>
+            <span class="g-title">{{ g.title }}</span>
+            <span class="count">{{ g.commits.length }}</span>
+          </button>
+          <ul class="commits" *ngIf="isExpanded(g.id)">
+            <li *ngFor="let h of g.commits">
+              <button
+                type="button"
+                class="commit"
+                [class.selected]="h === state.selectedHash()"
+                [attr.data-commit-hash]="h"
+                [attr.aria-current]="h === state.selectedHash() ? 'true' : null"
+                (click)="state.selectHash(h)"
+              >
+                <code class="hash">{{ shortHash(h) }}</code>
+                <span class="subject">{{ subjectFor(h) }}</span>
+              </button>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </div>
   `,
   styles: [
     `
@@ -58,6 +68,12 @@ import { UiStateService } from '../../services/ui-state.service';
         flex-direction: column;
         height: 100%;
         overflow: hidden;
+      }
+      .content {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        flex-direction: column;
       }
       .head {
         display: flex;
@@ -81,6 +97,9 @@ import { UiStateService } from '../../services/ui-state.service';
       }
       .empty.error {
         color: var(--danger);
+      }
+      .empty button {
+        margin-left: 0.4rem;
       }
       .groups {
         list-style: none;
@@ -170,7 +189,12 @@ import { UiStateService } from '../../services/ui-state.service';
         display: flex;
         gap: 0.6rem;
         align-items: center;
+        width: 100%;
         padding: 0.34rem 0.85rem 0.34rem 2rem;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
         cursor: pointer;
         font-size: 12px;
       }
@@ -197,12 +221,14 @@ import { UiStateService } from '../../services/ui-state.service';
 })
 export class GroupedListComponent {
   state = inject(UiStateService);
-  private groupsApi = inject(GroupsService);
+  private git = inject(GitService);
+  private host: ElementRef<HTMLElement> = inject(ElementRef);
 
   readonly groups = signal<CommitGroup[] | null>(null);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   private readonly expanded = signal<Set<string>>(new Set());
+  private readonly reload = signal(0);
 
   // Map hash -> subject for fast lookup in template.
   private subjectMap = computed(() => {
@@ -212,11 +238,50 @@ export class GroupedListComponent {
   });
 
   constructor() {
-    effect(() => {
+    const request = computed(() => {
+      this.reload();
       const f = this.state.filters();
-      void this.state.focusedPrNumber();
-      this.load(f.since, f.until, f.author, f.branch);
+      return {
+        since: f.since,
+        until: f.until,
+        author: f.author,
+        branch: f.branch,
+        focusedPr: this.state.focusedPrNumber(),
+      };
     });
+    toObservable(request)
+      .pipe(
+        switchMap(({ focusedPr, ...filters }) => {
+          this.loading.set(true);
+          this.error.set(null);
+          return this.git.getGroups(filters).pipe(
+            map((groups) => ({ groups, focusedPr, error: null })),
+            catchError((error) => of({ groups: null, focusedPr, error: this.errMsg(error) })),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe((result) => {
+        this.loading.set(false);
+        if (result.error) {
+          this.error.set(result.error);
+          return;
+        }
+        const groups = result.groups ?? [];
+        this.groups.set(groups);
+        const focused = result.focusedPr
+          ? groups.find((group) => group.prNumber === result.focusedPr)
+          : undefined;
+        const first = focused ?? groups.find((group) => group.prNumber);
+        if (first) {
+          this.expanded.set(new Set([first.id]));
+          if (focused?.commits[0]) this.state.selectHash(focused.commits[0]);
+        }
+      });
+  }
+
+  retry() {
+    this.reload.update((value) => value + 1);
   }
 
   isExpanded(id: string): boolean {
@@ -228,6 +293,12 @@ export class GroupedListComponent {
     if (next.has(id)) next.delete(id);
     else next.add(id);
     this.expanded.set(next);
+  }
+
+  focusSelected(): void {
+    const hash = this.state.selectedHash();
+    if (!hash) return;
+    this.host.nativeElement.querySelector<HTMLElement>(`[data-commit-hash="${hash}"]`)?.focus();
   }
 
   shortHash(h: string): string {
@@ -249,30 +320,6 @@ export class GroupedListComponent {
       case 'standalone':
         return 'commit';
     }
-  }
-
-  private load(since?: string, until?: string, author?: string, branch?: string) {
-    this.loading.set(true);
-    this.error.set(null);
-    this.groupsApi.list({ since, until, author, branch }).subscribe({
-      next: (g) => {
-        this.groups.set(g);
-        this.loading.set(false);
-        const focusedPr = this.state.focusedPrNumber();
-        const focused = focusedPr ? g.find((x) => x.prNumber === focusedPr) : undefined;
-        const first = focused ?? g.find((x) => x.prNumber);
-        if (first) {
-          this.expanded.set(new Set([first.id]));
-          if (focused?.commits[0]) {
-            this.state.selectHash(focused.commits[0]);
-          }
-        }
-      },
-      error: (err) => {
-        this.error.set(this.errMsg(err));
-        this.loading.set(false);
-      },
-    });
   }
 
   private errMsg(err: unknown): string {

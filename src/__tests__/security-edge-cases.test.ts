@@ -13,55 +13,10 @@
  *   - Graceful degradation under failures
  */
 
-import http from 'http';
 import { AddressInfo } from 'net';
 import { startServer } from '../backend/server';
+import { request, requestRaw } from './helpers/http';
 import { makeRepo, type TestRepo } from './helpers/repo';
-
-interface Json {
-  status: number;
-  body: any;
-  headers: http.IncomingHttpHeaders;
-}
-
-function request(opts: {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: unknown;
-}): Promise<Json> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(opts.url);
-    const req = http.request(
-      {
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        method: opts.method ?? 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...opts.headers
-        }
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          let parsed: unknown = data;
-          try {
-            parsed = data ? JSON.parse(data) : null;
-          } catch {
-            /* leave as string */
-          }
-          resolve({ status: res.statusCode || 0, body: parsed, headers: res.headers });
-        });
-      }
-    );
-    req.on('error', reject);
-    if (opts.body !== undefined) req.write(JSON.stringify(opts.body));
-    req.end();
-  });
-}
 
 describe('Security & edge cases — HTTP server', () => {
   let repo: TestRepo;
@@ -234,37 +189,11 @@ describe('Security & edge cases — HTTP server', () => {
   });
 
   it('handles malformed JSON in request body (Express returns 400 or 500)', async () => {
-    const resp = await new Promise<Json>((resolve, reject) => {
-      const u = new URL(`${url}/api/share`);
-      const req = http.request(
-        {
-          hostname: u.hostname,
-          port: u.port,
-          path: u.pathname,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => {
-            let parsed: unknown = data;
-            try {
-              parsed = JSON.parse(data);
-            } catch {
-              /* leave as string */
-            }
-            resolve({
-              status: res.statusCode || 0,
-              body: parsed,
-              headers: res.headers
-            });
-          });
-        }
-      );
-      req.on('error', reject);
-      req.write('{not json}}');
-      req.end();
+    const resp = await requestRaw({
+      url: `${url}/api/share`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not json}}'
     });
     // Express's json parser returns 400 or the error handler returns 500
     expect([400, 500]).toContain(resp.status);

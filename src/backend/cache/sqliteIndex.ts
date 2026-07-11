@@ -92,7 +92,6 @@ export type GitStreamRunner = (
 
 export class SqliteIndex {
   private dbFile: string;
-  private repoCwd: string;
   private db: SqliteDB | null = null;
   private buildPromise: Promise<void> | null = null;
   private streamGit: GitStreamRunner | null;
@@ -108,7 +107,6 @@ export class SqliteIndex {
     private runGit: GitRunner,
     streamGit?: GitStreamRunner
   ) {
-    this.repoCwd = repoCwd;
     this.streamGit = streamGit ?? null;
     const id = crypto.createHash('sha256').update(path.resolve(repoCwd)).digest('hex').slice(0, 16);
     this.dbFile = path.join(ROOT_DIR, `${id}.db`);
@@ -178,6 +176,14 @@ export class SqliteIndex {
     return { ...this.progress };
   }
 
+  async isFresh(): Promise<boolean> {
+    if (!this.open()) return false;
+    const stored = (
+      this.db!.prepare("SELECT v FROM meta WHERE k='refsSig'").get() as { v: string } | undefined
+    )?.v;
+    return !!stored && stored === (await this.refSignature());
+  }
+
   /** Synchronously build the index from `git log --all`. Idempotent. */
   async build(opts: { signal?: AbortSignal } = {}): Promise<IndexStats> {
     if (!this.open()) return this.stats();
@@ -205,32 +211,16 @@ export class SqliteIndex {
       this.setProgress('done', await this.rowCount(), 'already up to date');
       return;
     }
-    const head = await this.currentHead();
-    const storedHead =
-      (
-        this.db.prepare("SELECT v FROM meta WHERE k='indexedHead'").get() as
-          | { v: string }
-          | undefined
-      )?.v ?? '';
-    const canIncrement = !!storedHead && !!head && (await this.isAncestor(storedHead, head));
-
-    const args = [
-      'log',
-      '--all',
-      ...(canIncrement ? ['--not', storedHead] : []),
-      `--pretty=format:${SQLITE_LOG_FORMAT}${RECORD_SEP}`
-    ];
+    const args = ['log', '--all', `--pretty=format:${SQLITE_LOG_FORMAT}${RECORD_SEP}`];
 
     let indexed = 0;
     this.db.exec('BEGIN');
     try {
-      if (!canIncrement) {
-        this.db.exec('DELETE FROM commits');
-        try {
-          this.db.exec('DELETE FROM commits_fts');
-        } catch {
-          /* no fts */
-        }
+      this.db.exec('DELETE FROM commits');
+      try {
+        this.db.exec('DELETE FROM commits_fts');
+      } catch {
+        /* no fts */
       }
       const ins = this.db.prepare(
         'INSERT OR REPLACE INTO commits(hash,short,author,email,date,parents,subject,body) VALUES (?,?,?,?,?,?,?,?)'
@@ -245,11 +235,7 @@ export class SqliteIndex {
         }
       })();
 
-      this.setProgress(
-        'indexing',
-        indexed,
-        canIncrement ? 'indexing new commits' : 'rebuilding index'
-      );
+      this.setProgress('indexing', indexed, 'rebuilding index');
       const ingest = (record: string) => {
         const trimmed = record.trim();
         if (!trimmed) return;
@@ -260,11 +246,7 @@ export class SqliteIndex {
         ins.run(hash, shortHash, author, email, date, parentsStr, subject, body);
         indexed++;
         if (indexed === 1 || indexed % 250 === 0) {
-          this.setProgress(
-            'indexing',
-            indexed,
-            canIncrement ? 'indexing new commits' : 'rebuilding index'
-          );
+          this.setProgress('indexing', indexed, 'rebuilding index');
         }
         if (insFts) {
           try {
@@ -304,7 +286,6 @@ export class SqliteIndex {
       }
 
       this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('refsSig', ?)").run(sig);
-      this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('indexedHead', ?)").run(head);
       this.db
         .prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('builtAt', ?)")
         .run(new Date().toISOString());
@@ -398,7 +379,7 @@ export class SqliteIndex {
 
   invalidate() {
     if (!this.open()) return;
-    this.db!.prepare("DELETE FROM meta WHERE k IN ('refsSig', 'indexedHead', 'builtAt')").run();
+    this.db!.prepare("DELETE FROM meta WHERE k IN ('refsSig', 'indexedHead')").run();
     this.setProgress('idle', 0, 'index invalidated');
   }
 
@@ -433,13 +414,6 @@ export class SqliteIndex {
     return this.runGit(['rev-parse', 'HEAD'])
       .then((s) => s.trim())
       .catch(() => '');
-  }
-
-  private async isAncestor(base: string, head: string): Promise<boolean> {
-    if (!/^[0-9a-fA-F]{4,40}$/.test(base) || !/^[0-9a-fA-F]{4,40}$/.test(head)) return false;
-    return this.runGit(['merge-base', '--is-ancestor', base, head])
-      .then(() => true)
-      .catch(() => false);
   }
 
   private async rowCount(): Promise<number> {

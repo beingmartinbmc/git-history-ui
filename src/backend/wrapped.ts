@@ -130,12 +130,13 @@ export async function computeWrapped(
 ): Promise<WrappedStats> {
   const { since, until, label } = resolveWindow(opts);
   const maxCommits = Math.min(20_000, Math.max(50, opts.maxCommits ?? 5000));
+  const author = exactEmailAuthorFilter(opts.author);
 
   const page = await gitService.getCommits({
     since,
     until,
     branch: opts.branch,
-    author: opts.author,
+    author,
     page: 1,
     pageSize: maxCommits
   });
@@ -146,7 +147,7 @@ export async function computeWrapped(
   let numstat: Awaited<ReturnType<typeof gitService.getNumstat>> | null = null;
   try {
     numstat = await gitService.getNumstat(
-      { since, until, branch: opts.branch, author: opts.author },
+      { since, until, branch: opts.branch, author },
       maxCommits,
       { signal: opts.signal }
     );
@@ -164,6 +165,11 @@ export async function computeWrapped(
     }));
 
   return aggregateWrapped(commits, churnFor, label, since ?? null, until ?? null);
+}
+
+function exactEmailAuthorFilter(author?: string): string | undefined {
+  if (!author || !/^[^\s<>@]+@[^\s<>@]+$/.test(author)) return author;
+  return `<${author.replace(/[\\.^$*+?()[\]{}|]/g, '\\$&')}>$`;
 }
 
 /**

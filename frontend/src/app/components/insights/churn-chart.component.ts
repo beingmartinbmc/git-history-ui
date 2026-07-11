@@ -8,8 +8,11 @@ import {
   OnChanges,
   OnDestroy,
   ViewChild,
+  effect,
+  inject,
 } from '@angular/core';
 import * as d3 from 'd3';
+import { ThemeService } from '../../services/theme.service';
 
 interface ChurnPoint {
   date: string;
@@ -31,14 +34,34 @@ interface ChurnPoint {
         <span><i class="swatch deletions"></i> deletions</span>
       </div>
       <div class="chart-wrap">
-        <svg
-          #svg
-          width="100%"
-          [attr.height]="height"
-          aria-label="Interactive churn over time"
-        ></svg>
+        <svg #svg width="100%" [attr.height]="height" aria-hidden="true"></svg>
         <div #tooltip class="tooltip" hidden></div>
       </div>
+      <details class="accessible-data" *ngIf="data.length">
+        <summary>
+          Churn data: {{ totalCommits() }} commits, {{ totalAdditions() }} additions,
+          {{ totalDeletions() }} deletions across {{ data.length }} days
+        </summary>
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Commits</th>
+              <th>Additions</th>
+              <th>Deletions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let point of data.slice(-30)">
+              <td>{{ point.date }}</td>
+              <td>{{ point.commits }}</td>
+              <td>{{ point.additions }}</td>
+              <td>{{ point.deletions }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p *ngIf="data.length > 30">Showing the latest 30 days.</p>
+      </details>
     </div>
   `,
   styles: [
@@ -135,6 +158,26 @@ interface ChurnPoint {
       .tooltip .value {
         color: var(--fg-primary);
       }
+      .accessible-data {
+        color: var(--fg-secondary);
+        font-size: 11px;
+      }
+      .accessible-data table {
+        width: 100%;
+        margin-top: 0.4rem;
+        border-collapse: collapse;
+        font-variant-numeric: tabular-nums;
+      }
+      .accessible-data th,
+      .accessible-data td {
+        padding: 0.25rem 0.4rem;
+        border-bottom: 1px solid var(--border-soft);
+        text-align: right;
+      }
+      .accessible-data th:first-child,
+      .accessible-data td:first-child {
+        text-align: left;
+      }
     `,
   ],
 })
@@ -144,10 +187,23 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
   @ViewChild('svg', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
   @ViewChild('tooltip', { static: true }) tooltipRef!: ElementRef<HTMLDivElement>;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastRendered: ChurnPoint[] | null = null;
-  private lastHeight = 0;
+  private theme = inject(ThemeService);
+  private resizeObserver: ResizeObserver | null = null;
+
+  constructor() {
+    effect(() => {
+      void this.theme.resolved();
+      this.render();
+    });
+  }
 
   ngAfterViewInit() {
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.render());
+      this.resizeObserver.observe(
+        this.svgRef.nativeElement.parentElement ?? this.svgRef.nativeElement,
+      );
+    }
     this.render();
   }
   ngOnChanges() {
@@ -155,16 +211,23 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
   }
   ngOnDestroy() {
     if (this.hideTimer) clearTimeout(this.hideTimer);
+    this.resizeObserver?.disconnect();
+  }
+
+  totalCommits(): number {
+    return this.data.reduce((sum, point) => sum + point.commits, 0);
+  }
+
+  totalAdditions(): number {
+    return this.data.reduce((sum, point) => sum + point.additions, 0);
+  }
+
+  totalDeletions(): number {
+    return this.data.reduce((sum, point) => sum + point.deletions, 0);
   }
 
   private render() {
     if (!this.svgRef) return;
-    // d3 layout is non-trivial; bail when nothing actually changed so
-    // ChangeDetection ticks (e.g. theme attribute writes from the parent)
-    // don't trigger a full re-render.
-    if (this.data === this.lastRendered && this.height === this.lastHeight) return;
-    this.lastRendered = this.data;
-    this.lastHeight = this.height;
     const el = this.svgRef.nativeElement;
     const tooltip = this.tooltipRef?.nativeElement;
     const width = el.clientWidth || 600;
@@ -352,7 +415,6 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
 
     const bisect = d3.bisector<(typeof parsed)[number], Date>((d) => d.date).center;
     svg
-      .attr('tabindex', 0)
       .on('pointermove', (event) => {
         const [mx, my] = d3.pointer(event, g.node());
         if (mx < 0 || mx > innerW || my < 0 || my > innerH) {
@@ -377,7 +439,7 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
           churn: fmt(d.churn),
         });
       })
-      .on('pointerleave blur', () => {
+      .on('pointerleave', () => {
         focus.attr('display', 'none');
         if (this.hideTimer) clearTimeout(this.hideTimer);
         this.hideTimer = setTimeout(() => hideTooltip(tooltip), 80);

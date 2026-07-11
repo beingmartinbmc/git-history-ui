@@ -20,22 +20,17 @@ export interface NlSearchResult extends PaginatedCommits {
 
 const AUTHOR_PHRASE = /\bby\s+@?([a-zA-Z][\w.-]*)\b/i;
 
-export interface ParseOptions {
-  /** When true, skip stripping date/author phrases from keywords. */
-  preserveOriginal?: boolean;
-}
-
 /**
  * Parse a free-form NL query into structured filter components plus a
  * cleaned keyword list. Pure function — no I/O.
  */
-export function parseNlQuery(query: string, opts: ParseOptions = {}): NlInterpretation {
+export function parseNlQuery(query: string): NlInterpretation {
   const raw = (query || '').trim();
   const dateRange = parseDatePhrase(raw);
   const authorMatch = raw.match(AUTHOR_PHRASE);
   const author = authorMatch ? authorMatch[1] : undefined;
 
-  let cleaned = opts.preserveOriginal ? raw : stripDatePhrase(raw);
+  let cleaned = stripDatePhrase(raw);
   if (author) cleaned = cleaned.replace(AUTHOR_PHRASE, ' ').replace(/\s+/g, ' ').trim();
 
   const keywords = tokenize(cleaned);
@@ -62,6 +57,7 @@ export interface NlSearchOptions {
   pageSize?: number;
   /** Cap on candidates pulled from git for LLM rerank. */
   candidateCap?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -88,23 +84,27 @@ export async function runNlSearch(
   const grep = top.length > 0 ? top.map(escapeForGrep).join('|') : undefined;
 
   // Pull candidate set. We deliberately ignore pagination here so we can re-rank.
-  const candidatesPage = await gitService.getCommits({
-    author: parsed.author ?? options.author,
-    since: parsed.since ?? options.since,
-    until: parsed.until ?? options.until,
-    branch: options.branch,
-    file: options.file,
-    search: grep,
-    page: 1,
-    pageSize: candidateCap
-  });
+  const candidatesPage = await gitService.getCommits(
+    {
+      author: parsed.author ?? options.author,
+      since: parsed.since ?? options.since,
+      until: parsed.until ?? options.until,
+      branch: options.branch,
+      file: options.file,
+      search: grep,
+      page: 1,
+      pageSize: candidateCap
+    },
+    { signal: options.signal }
+  );
 
   const scored = await llm.score(
     options.query,
     candidatesPage.commits.map((c) => ({
       id: c.hash,
       text: textForScoring(c)
-    }))
+    })),
+    { signal: options.signal }
   );
 
   // Map back to commits, sort by score (desc).

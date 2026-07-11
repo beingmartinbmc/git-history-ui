@@ -6,9 +6,10 @@ Adds a "Open in git-history-ui" button to:
 - `github.com/{owner}/{repo}/commit/{sha}`
 - `github.com/{owner}/{repo}/commits/...`
 
-The button tries the `git-history-ui://` custom protocol first (registered by
-the CLI's post-install script on supporting platforms), then falls back to a
-hosted instance URL configured in the popup.
+The button opens the `git-history-ui://` custom protocol. Install it explicitly
+with `git-history-ui protocol install`; npm installation never changes OS URL
+handlers. If the link does not open, the page shows setup help and, when you
+configured a valid http(s) URL in the popup, an explicit hosted-instance link.
 
 ## Install (developer mode)
 
@@ -19,9 +20,12 @@ hosted instance URL configured in the popup.
 
 ## Status
 
-This is a Manifest V3 extension. It re-injects the button across GitHub's
-SPA navigation (`MutationObserver` + URL polling), so the button reliably
-reappears when you navigate between PRs/commits without a full page load.
-Web Store packaging is still TODO. The protocol-handler fallback is
-best-effort: browsers vary in how they expose protocol launch failure, so
-the script uses a `blur` heuristic with an 800ms timeout.
+This is a Manifest V3 extension. It re-injects the button across GitHub's SPA
+navigation with a `MutationObserver`. It does not use remote code, analytics,
+automatic fallback redirects, or permissions beyond GitHub page access and
+sync storage for the optional hosted URL. Depending on browser settings, that
+URL may be synchronized through browser/Google account infrastructure.
+
+Run `npm run test:node`, `npm run check:extension`, and
+`npm run package:extension` before release. See [PRIVACY.md](./PRIVACY.md) and
+[store-listing.md](./store-listing.md).

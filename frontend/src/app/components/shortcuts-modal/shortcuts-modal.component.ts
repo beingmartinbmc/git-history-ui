@@ -1,5 +1,6 @@
-import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, HostListener, inject } from '@angular/core';
+import { A11yModule } from '@angular/cdk/a11y';
+import { CommonModule, DOCUMENT } from '@angular/common';
+import { ChangeDetectionStrategy, Component, HostListener, effect, inject } from '@angular/core';
 import { UiStateService } from '../../services/ui-state.service';
 
 interface Binding {
@@ -31,15 +32,29 @@ const GROUPS: { title: string; bindings: Binding[] }[] = [
 @Component({
   selector: 'app-shortcuts-modal',
   standalone: true,
-  imports: [CommonModule],
+  imports: [A11yModule, CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <ng-container *ngIf="state.shortcutsOpen()">
-      <div class="backdrop" (click)="close()"></div>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+      <div class="backdrop" (click)="close()" aria-hidden="true"></div>
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcuts-title"
+        cdkTrapFocus
+        [cdkTrapFocusAutoCapture]="true"
+      >
         <div class="head">
           <h2 id="shortcuts-title">Keyboard shortcuts</h2>
-          <button class="btn btn-ghost btn-icon" (click)="close()" aria-label="Close">✕</button>
+          <button
+            cdkFocusInitial
+            class="btn btn-ghost btn-icon"
+            (click)="close()"
+            aria-label="Close keyboard shortcuts"
+          >
+            ✕
+          </button>
         </div>
         <div class="body">
           <section *ngFor="let g of groups">
@@ -71,7 +86,7 @@ const GROUPS: { title: string; bindings: Binding[] }[] = [
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        width: min(560px, calc(100vw - 32px));
+        width: min(560px, calc(100% - 32px));
         max-height: 80vh;
         overflow: auto;
         background: var(--bg-elevated);
@@ -134,7 +149,27 @@ const GROUPS: { title: string; bindings: Binding[] }[] = [
 })
 export class ShortcutsModalComponent {
   state = inject(UiStateService);
+  private doc = inject(DOCUMENT);
+  private restoreFocusTo: HTMLElement | null = null;
   groups = GROUPS;
+
+  constructor() {
+    let wasOpen = false;
+    effect(() => {
+      const open = this.state.shortcutsOpen();
+      if (open && !wasOpen) {
+        this.restoreFocusTo =
+          this.doc.activeElement instanceof HTMLElement ? this.doc.activeElement : null;
+      } else if (!open && wasOpen) {
+        const target = this.restoreFocusTo;
+        this.restoreFocusTo = null;
+        queueMicrotask(() => {
+          if (target?.isConnected) target.focus();
+        });
+      }
+      wasOpen = open;
+    });
+  }
 
   close() {
     this.state.shortcutsOpen.set(false);

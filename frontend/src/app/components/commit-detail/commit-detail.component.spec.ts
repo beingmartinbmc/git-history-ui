@@ -1,6 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { Subject, of } from 'rxjs';
 import { Commit, CommitImpact } from '../../models/git.models';
 import { AnnotationsService } from '../../services/annotations.service';
@@ -34,7 +34,12 @@ describe('CommitDetailComponent', () => {
   let fixture: ComponentFixture<CommitDetailComponent>;
   let component: CommitDetailComponent;
   let state: UiStateService;
-  let git: { getDiffFiles: jasmine.Spy; getDiffFile: jasmine.Spy };
+  let git: {
+    getDiffFiles: jasmine.Spy;
+    getDiffFile: jasmine.Spy;
+    createPortableLink: jasmine.Spy;
+    getCommitReportMarkdown: jasmine.Spy;
+  };
   let insights: { impact: jasmine.Spy; explainCommit: jasmine.Spy };
 
   beforeEach(async () => {
@@ -43,6 +48,12 @@ describe('CommitDetailComponent', () => {
         .createSpy('getDiffFiles')
         .and.returnValue(of({ files: [], totalLines: 0, isLarge: false })),
       getDiffFile: jasmine.createSpy('getDiffFile').and.returnValue(of(null)),
+      createPortableLink: jasmine
+        .createSpy('createPortableLink')
+        .and.returnValue(of({ url: 'git-history-ui://open?view=history', expiresAt: null })),
+      getCommitReportMarkdown: jasmine
+        .createSpy('getCommitReportMarkdown')
+        .and.returnValue(of('# report')),
     };
     const annotations = {
       list: jasmine.createSpy('list').and.returnValue(of([])),
@@ -153,7 +164,34 @@ describe('CommitDetailComponent', () => {
 
     expect(component.activeFileIndex()).toBe(1);
     expect(git.getDiffFile).toHaveBeenCalledWith('aaa', 'b.ts');
-    expect(state.activeFilePath()).toBeNull();
+    expect(state.activeFilePath()).toBe('b.ts');
+  });
+
+  it('never combines file metadata from an old commit with a new hash', () => {
+    state.commits.set([makeCommit('aaa'), makeCommit('bbb')]);
+    const first = new Subject<any>();
+    const second = new Subject<any>();
+    git.getDiffFiles.and.returnValues(first.asObservable(), second.asObservable());
+
+    state.selectHash('aaa');
+    fixture.detectChanges();
+    state.selectHash('bbb');
+    fixture.detectChanges();
+
+    first.next({
+      files: [{ file: 'old-only.ts', status: 'modified', additions: 1, deletions: 0 }],
+      totalLines: 1,
+      isLarge: false,
+    });
+    expect(git.getDiffFile).not.toHaveBeenCalledWith('bbb', 'old-only.ts');
+
+    second.next({
+      files: [{ file: 'new-only.ts', status: 'modified', additions: 1, deletions: 0 }],
+      totalLines: 1,
+      isLarge: false,
+    });
+    fixture.detectChanges();
+    expect(git.getDiffFile).toHaveBeenCalledWith('bbb', 'new-only.ts');
   });
 
   it('cancels stale lazy diff requests when another file is selected', () => {
@@ -208,4 +246,30 @@ describe('CommitDetailComponent', () => {
     expect(impact.observed).toBeFalse();
     expect(explain.observed).toBeFalse();
   });
+
+  it('copies backend-generated portable links and Markdown reports', fakeAsync(() => {
+    const writeText = jasmine.createSpy('writeText').and.returnValue(Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const selected = makeCommit('abcdef1');
+    state.commits.set([selected]);
+    state.selectHash(selected.hash);
+    fixture.detectChanges();
+
+    component.copyPortableLink();
+    tick();
+    expect(git.createPortableLink).toHaveBeenCalledWith({
+      view: 'history',
+      commit: selected.hash,
+      activeFile: null,
+    });
+    expect(writeText).toHaveBeenCalledWith('git-history-ui://open?view=history');
+
+    component.copyMarkdownReport();
+    tick();
+    expect(git.getCommitReportMarkdown).toHaveBeenCalledWith(selected.hash);
+    expect(writeText).toHaveBeenCalledWith('# report');
+  }));
 });

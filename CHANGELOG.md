@@ -6,6 +6,30 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.4.0] - 2026-07-11
+
+### Added
+
+- Deterministic `demo` repository, credential-free repository identity, portable
+  investigation reports, and versioned deep links across CLI/API/UI.
+- Git Wrapped defaults to the current Git author email, preserves an
+  all-contributor mode, uses the real repository name, and adds accessible
+  native/social sharing with canonical attribution.
+- Explicit `protocol install|status|uninstall` lifecycle backed by a stable
+  user-local launcher; npm installation never changes OS URL handlers.
+- Hardened Manifest V3 Chrome extension with tested URL serialization,
+  explicit protocol help, privacy/store copy, deterministic runtime checker,
+  ZIP, and checksum.
+- Merge-base `pr-impact` Markdown/JSON CLI and a summary-only composite Action
+  with fork-safe event resolution and files/churn outputs.
+
+### Changed
+
+- README and launch guidance now lead with investigate → share → automate and
+  state the optional AI data boundary explicitly.
+- Release verification now covers package dry runs, packed demo smoke, Action
+  smoke, and deterministic extension artifacts.
+
 ## [5.3.0] - 2026-07-06
 
 ### Added
@@ -291,11 +315,11 @@ repos, easier to embed elsewhere, and easier to share a view with a teammate
 - **CLI presets.** New `--preset <name>` and `--save-preset <name>` flags
   plus a `git-history-ui presets list|delete` subcommand, all backed by
   `~/.git-history-ui/presets.json`.
-- **Embeddable distribution.** Scaffolds for a Chrome extension
-  (`apps/chrome-extension/`) that injects a "View in git-history-ui" button
-  on GitHub PR / commit pages, a placeholder GitHub App
-  (`apps/github-app/`), and an opportunistic `git-history-ui://` protocol
-  registration script (`scripts/register-protocol.js`, opt-in).
+- **Embeddable distribution.** A Chrome extension
+  (`apps/chrome-extension/`) injects a "View in git-history-ui" button
+  on GitHub PR / commit pages, alongside an opportunistic
+  `git-history-ui://` protocol registration script
+  (`scripts/register-protocol.js`, opt-in).
 
 ### Changed
 

@@ -10,6 +10,15 @@ export interface ScoredCandidate {
   score: number;
 }
 
+export interface LlmCallOptions {
+  signal?: AbortSignal;
+}
+
+export interface LlmSummaryOptions extends LlmCallOptions {
+  hint?: string;
+  maxTokens?: number;
+}
+
 export interface LlmService {
   readonly name: LlmProviderName;
   readonly isAi: boolean;
@@ -18,12 +27,16 @@ export interface LlmService {
    * Returns scores in [0,1]. Implementations MAY return a subset of inputs
    * (heuristic returns a score for every input; AI providers may also do so).
    */
-  score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]>;
+  score(
+    query: string,
+    candidates: ScoreCandidate[],
+    opts?: LlmCallOptions
+  ): Promise<ScoredCandidate[]>;
   /**
    * Produce a short prose summary of an arbitrary block of text (typically
    * a unified diff or commit message body).
    */
-  summarize(text: string, opts?: { hint?: string; maxTokens?: number }): Promise<string>;
+  summarize(text: string, opts?: LlmSummaryOptions): Promise<string>;
 }
 
 export interface LlmConfig {

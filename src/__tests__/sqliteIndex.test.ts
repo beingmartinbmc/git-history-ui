@@ -139,55 +139,77 @@ describe('SqliteIndex', () => {
     });
   });
 
-  it('incrementally indexes commits when HEAD fast-forwards', async () => {
+  it('detects a new commit and fully rebuilds the index', async () => {
     await withTempHomeAsync(async () => {
       const { SqliteIndex } = fresh();
       if (!SqliteIndex.isAvailable()) return;
       const repo = makeRepo();
       try {
-        const h1 = '1'.repeat(40);
-        const h2 = '2'.repeat(40);
-        let head = h1;
+        repo.commit('one.txt', 'one', 'feat: first searchable');
         const logArgs: string[][] = [];
         const runner = async (args: string[]): Promise<string> => {
-          if (args[0] === 'rev-parse') return `${head}\n`;
-          if (args[0] === 'merge-base') return '';
-          if (args[0] === 'log') {
-            logArgs.push(args);
-            const incremental = args.includes('--not');
-            return fakeLog([
-              incremental
-                ? {
-                    hash: h2,
-                    short: '2222222',
-                    author: 'b',
-                    email: 'b@x',
-                    date: '2026-05-02T00:00:00Z',
-                    parents: h1,
-                    subject: 'second incremental',
-                    body: ''
-                  }
-                : {
-                    hash: h1,
-                    short: '1111111',
-                    author: 'a',
-                    email: 'a@x',
-                    date: '2026-05-01T00:00:00Z',
-                    parents: '',
-                    subject: 'first full',
-                    body: ''
-                  }
-            ]);
-          }
-          return '';
+          if (args[0] === 'log') logArgs.push(args);
+          return repo.git(args);
         };
 
         const idx = new SqliteIndex(repo.dir, runner);
         expect((await idx.build()).total).toBe(1);
-        head = h2;
+        expect(await idx.isFresh()).toBe(true);
+        const second = repo.commit('two.txt', 'two', 'fix: second searchable');
+        expect(await idx.isFresh()).toBe(false);
         expect((await idx.build()).total).toBe(2);
-        expect(logArgs[1]).toEqual(expect.arrayContaining(['--not', h1]));
-        expect((await idx.search('incremental')).map((h) => h.hash)).toContain(h2);
+        expect(logArgs[1]).not.toContain('--not');
+        expect((await idx.search('second')).map((h) => h.hash)).toContain(second);
+        idx.close();
+      } finally {
+        repo.cleanup();
+      }
+    });
+  });
+
+  it('removes unreachable commits after a hard reset', async () => {
+    await withTempHomeAsync(async () => {
+      const { SqliteIndex } = fresh();
+      if (!SqliteIndex.isAvailable()) return;
+      const repo = makeRepo();
+      try {
+        const kept = repo.commit('one.txt', 'one', 'feat: kept commit');
+        const removed = repo.commit('two.txt', 'two', 'feat: unreachable after reset');
+        const idx = new SqliteIndex(repo.dir, async (args) => repo.git(args));
+        expect((await idx.build()).total).toBe(2);
+
+        repo.git(['reset', '--hard', kept]);
+        expect(await idx.isFresh()).toBe(false);
+        expect((await idx.build()).total).toBe(1);
+        expect((await idx.search('unreachable')).map((commit) => commit.hash)).not.toContain(
+          removed
+        );
+        idx.close();
+      } finally {
+        repo.cleanup();
+      }
+    });
+  });
+
+  it('removes commits made unreachable by branch deletion', async () => {
+    await withTempHomeAsync(async () => {
+      const { SqliteIndex } = fresh();
+      if (!SqliteIndex.isAvailable()) return;
+      const repo = makeRepo();
+      try {
+        repo.commit('main.txt', 'main', 'feat: main commit');
+        repo.git(['checkout', '-q', '-b', 'temporary']);
+        const removed = repo.commit('branch.txt', 'branch', 'feat: branch-only searchable');
+        repo.git(['checkout', '-q', 'main']);
+        const idx = new SqliteIndex(repo.dir, async (args) => repo.git(args));
+        expect((await idx.build()).total).toBe(2);
+
+        repo.git(['branch', '-D', 'temporary']);
+        expect(await idx.isFresh()).toBe(false);
+        expect((await idx.build()).total).toBe(1);
+        expect((await idx.search('branch-only')).map((commit) => commit.hash)).not.toContain(
+          removed
+        );
         idx.close();
       } finally {
         repo.cleanup();

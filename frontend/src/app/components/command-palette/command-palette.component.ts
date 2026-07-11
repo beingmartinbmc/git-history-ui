@@ -1,4 +1,5 @@
-import { CommonModule } from '@angular/common';
+import { CommonModule, DOCUMENT } from '@angular/common';
+import { A11yModule } from '@angular/cdk/a11y';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -17,24 +18,43 @@ import { UiStateService } from '../../services/ui-state.service';
 @Component({
   selector: 'app-command-palette',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [A11yModule, CommonModule, FormsModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="backdrop" *ngIf="state.paletteOpen()" (click)="close()"></div>
-    <div class="palette" *ngIf="state.paletteOpen()" role="dialog" aria-modal="true">
+    <div class="backdrop" *ngIf="state.paletteOpen()" (click)="close()" aria-hidden="true"></div>
+    <div
+      class="palette"
+      *ngIf="state.paletteOpen()"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="palette-title"
+      cdkTrapFocus
+      [cdkTrapFocusAutoCapture]="true"
+    >
+      <h2 id="palette-title" class="sr-only">Command palette</h2>
       <input
         #input
+        cdkFocusInitial
         class="search"
         type="text"
         placeholder="Jump to a commit by hash, subject, or author…"
+        aria-label="Search commits"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-controls="palette-results"
+        [attr.aria-expanded]="true"
+        [attr.aria-activedescendant]="results().length ? 'palette-option-' + index() : null"
         [ngModel]="query()"
         (ngModelChange)="onQuery($event)"
         (keydown)="onKey($event)"
       />
-      <ul class="results" role="listbox">
+      <ul id="palette-results" class="results" role="listbox" aria-label="Matching commits">
         <li
           *ngFor="let c of results(); let i = index; trackBy: trackByHash"
+          [id]="'palette-option-' + i"
           class="result"
+          role="option"
+          tabindex="-1"
           [class.active]="i === index()"
           [attr.aria-selected]="i === index()"
           (mouseenter)="index.set(i)"
@@ -44,7 +64,7 @@ import { UiStateService } from '../../services/ui-state.service';
           <span class="subj">{{ c.subject }}</span>
           <span class="auth">{{ c.author }}</span>
         </li>
-        <li class="result empty" *ngIf="!results().length">No matches.</li>
+        <li class="result empty" role="presentation" *ngIf="!results().length">No matches.</li>
       </ul>
       <div class="footer">
         <span><kbd class="kbd">↑</kbd><kbd class="kbd">↓</kbd> navigate</span>
@@ -62,12 +82,23 @@ import { UiStateService } from '../../services/ui-state.service';
         backdrop-filter: blur(2px);
         z-index: 90;
       }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
       .palette {
         position: fixed;
         top: 12vh;
         left: 50%;
         transform: translateX(-50%);
-        width: min(640px, calc(100vw - 32px));
+        width: min(640px, calc(100% - 32px));
         background: color-mix(in oklab, var(--bg-glass) 96%, transparent);
         border: 1px solid var(--border-soft);
         border-radius: var(--radius-xl);
@@ -139,6 +170,8 @@ import { UiStateService } from '../../services/ui-state.service';
 })
 export class CommandPaletteComponent {
   state = inject(UiStateService);
+  private doc = inject(DOCUMENT);
+  private restoreFocusTo: HTMLElement | null = null;
 
   @ViewChild('input') input?: ElementRef<HTMLInputElement>;
 
@@ -161,12 +194,22 @@ export class CommandPaletteComponent {
   });
 
   constructor() {
+    let wasOpen = false;
     effect(() => {
-      if (this.state.paletteOpen()) {
+      const open = this.state.paletteOpen();
+      if (open && !wasOpen) {
+        this.restoreFocusTo =
+          this.doc.activeElement instanceof HTMLElement ? this.doc.activeElement : null;
         this.query.set('');
         this.index.set(0);
-        queueMicrotask(() => this.input?.nativeElement.focus());
+      } else if (!open && wasOpen) {
+        const target = this.restoreFocusTo;
+        this.restoreFocusTo = null;
+        queueMicrotask(() => {
+          if (target?.isConnected) target.focus();
+        });
       }
+      wasOpen = open;
     });
     effect(() => {
       // clamp index when results change
@@ -212,10 +255,16 @@ export class CommandPaletteComponent {
 
   @HostListener('document:keydown', ['$event'])
   onGlobal(ev: KeyboardEvent) {
+    if (this.isTyping(ev.target)) return;
     const meta = ev.metaKey || ev.ctrlKey;
     if (meta && (ev.key === 'k' || ev.key === 'K')) {
       ev.preventDefault();
       this.state.paletteOpen.set(!this.state.paletteOpen());
     }
+  }
+
+  private isTyping(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
   }
 }

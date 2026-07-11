@@ -6,11 +6,15 @@ import {
   ElementRef,
   Input,
   OnChanges,
+  OnDestroy,
   Output,
   EventEmitter,
   ViewChild,
+  effect,
+  inject,
 } from '@angular/core';
 import * as d3 from 'd3';
+import { ThemeService } from '../../services/theme.service';
 
 interface HotspotInput {
   file: string;
@@ -27,12 +31,7 @@ interface HotspotInput {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="treemap-wrap">
-      <svg
-        #svg
-        width="100%"
-        [attr.height]="height"
-        aria-label="Hot files treemap. Larger boxes changed in more commits. Stronger color means more line churn."
-      ></svg>
+      <svg #svg width="100%" [attr.height]="height" aria-hidden="true"></svg>
       <div class="scale" *ngIf="data.length">
         <span>lower churn</span>
         <span class="scale-bar"></span>
@@ -40,6 +39,24 @@ interface HotspotInput {
       </div>
       <div class="empty" *ngIf="data.length === 0">No hotspots in the current window.</div>
     </div>
+    <details class="accessible-data" *ngIf="data.length">
+      <summary>
+        Hot files data: {{ data.length }} files, sized by commit frequency and colored by line churn
+      </summary>
+      <ul>
+        <li *ngFor="let hotspot of data">
+          <button type="button" (click)="fileClick.emit(hotspot.file)">
+            <span>{{ hotspot.file }}</span>
+            <span>
+              {{ hotspot.commits }} commits, {{ hotspot.authors }} authors, +{{
+                hotspot.additions
+              }}
+              −{{ hotspot.deletions }}
+            </span>
+          </button>
+        </li>
+      </ul>
+    </details>
   `,
   styles: [
     `
@@ -92,32 +109,78 @@ interface HotspotInput {
         color: var(--fg-muted);
         font-size: 12px;
       }
+      .accessible-data {
+        margin-top: 0.5rem;
+        color: var(--fg-secondary);
+        font-size: 11px;
+      }
+      .accessible-data ul {
+        max-height: 14rem;
+        margin: 0.4rem 0 0;
+        padding: 0;
+        overflow: auto;
+        list-style: none;
+      }
+      .accessible-data button {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        width: 100%;
+        padding: 0.35rem 0.45rem;
+        border: 0;
+        border-bottom: 1px solid var(--border-soft);
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .accessible-data button span:first-child {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--accent);
+        font-family: var(--font-mono, monospace);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     `,
   ],
 })
-export class HotspotsTreemapComponent implements AfterViewInit, OnChanges {
+export class HotspotsTreemapComponent implements AfterViewInit, OnChanges, OnDestroy {
   @Input() data: HotspotInput[] = [];
   @Input() height = 320;
   @Output() fileClick = new EventEmitter<string>();
   @ViewChild('svg', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
-  private lastRendered: HotspotInput[] | null = null;
-  private lastHeight = 0;
+  private theme = inject(ThemeService);
+  private resizeObserver: ResizeObserver | null = null;
+
+  constructor() {
+    effect(() => {
+      void this.theme.resolved();
+      this.render();
+    });
+  }
 
   ngAfterViewInit() {
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.render());
+      this.resizeObserver.observe(
+        this.svgRef.nativeElement.parentElement ?? this.svgRef.nativeElement,
+      );
+    }
     this.render();
   }
   ngOnChanges() {
     this.render();
   }
 
+  ngOnDestroy() {
+    this.resizeObserver?.disconnect();
+  }
+
   private render() {
     if (!this.svgRef) return;
-    // d3 layout + DOM mutations are noticeable on lower-end machines; skip
-    // when neither the data reference nor the height actually changed.
-    if (this.data === this.lastRendered && this.height === this.lastHeight) return;
-    this.lastRendered = this.data;
-    this.lastHeight = this.height;
     const el = this.svgRef.nativeElement;
     const width = el.clientWidth || 600;
     const svg = d3.select(el);

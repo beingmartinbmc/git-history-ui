@@ -5,7 +5,7 @@ const globals = require('globals');
 
 module.exports = tseslint.config(
   {
-    ignores: ['dist/', 'build/', 'coverage/', 'frontend/', 'apps/', 'demo.js'],
+    ignores: ['dist/', 'build/', 'coverage/', 'frontend/', 'apps/'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

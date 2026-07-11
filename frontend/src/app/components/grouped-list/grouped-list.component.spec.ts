@@ -1,7 +1,7 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
+import { Subject, of, throwError } from 'rxjs';
 import { CommitGroup } from '../../models/git.models';
-import { GroupsService } from '../../services/groups.service';
+import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { GroupedListComponent } from './grouped-list.component';
 
@@ -9,16 +9,16 @@ describe('GroupedListComponent', () => {
   let fixture: ComponentFixture<GroupedListComponent>;
   let component: GroupedListComponent;
   let state: UiStateService;
-  let groupsApi: { list: jasmine.Spy };
+  let git: { getGroups: jasmine.Spy };
 
   beforeEach(async () => {
-    groupsApi = {
-      list: jasmine.createSpy('list').and.returnValue(of(groups())),
+    git = {
+      getGroups: jasmine.createSpy('getGroups').and.returnValue(of(groups())),
     };
 
     await TestBed.configureTestingModule({
       imports: [GroupedListComponent],
-      providers: [{ provide: GroupsService, useValue: groupsApi }],
+      providers: [{ provide: GitService, useValue: git }],
     }).compileComponents();
 
     fixture = TestBed.createComponent(GroupedListComponent);
@@ -36,7 +36,45 @@ describe('GroupedListComponent', () => {
     expect(component.isExpanded(target!.id)).toBeTrue();
     expect(state.selectedHash()).toBe('c42a');
     expect(state.focusedPrNumber()).toBe(42);
+    expect(fixture.nativeElement.querySelector('.commit')?.tagName).toBe('BUTTON');
   });
+
+  it('keeps only the latest filter response', fakeAsync(() => {
+    const first = new Subject<CommitGroup[]>();
+    const second = new Subject<CommitGroup[]>();
+    git.getGroups.calls.reset();
+    git.getGroups.and.returnValues(first.asObservable(), second.asObservable());
+
+    state.patchFilters({ author: 'Ada' });
+    fixture.detectChanges();
+    tick();
+    state.patchFilters({ author: 'Grace' });
+    fixture.detectChanges();
+    tick();
+
+    first.next([group('stale', 7, ['old'])]);
+    expect(component.groups()?.some((item) => item.id === 'stale') ?? false).toBeFalse();
+
+    second.next([group('fresh', 8, ['new'])]);
+    expect(component.groups()?.map((item) => item.id)).toEqual(['fresh']);
+  }));
+
+  it('shows an error and retries the current request', fakeAsync(() => {
+    git.getGroups.and.returnValue(throwError(() => new Error('offline')));
+    state.patchFilters({ branch: 'main' });
+    fixture.detectChanges();
+    tick();
+
+    expect(component.error()).toBe('offline');
+
+    git.getGroups.and.returnValue(of([]));
+    component.retry();
+    fixture.detectChanges();
+    tick();
+
+    expect(component.error()).toBeNull();
+    expect(component.groups()).toEqual([]);
+  }));
 });
 
 function groups(): CommitGroup[] {

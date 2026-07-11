@@ -1,13 +1,7 @@
 import { CommonModule } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  Input,
-  computed,
-  effect,
-  inject,
-  signal,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, Input, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, catchError, map, of, switchMap } from 'rxjs';
 import { BlameLine } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 
@@ -22,21 +16,27 @@ interface BlameRow extends BlameLine {
   imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="empty" *ngIf="loading()">Loading blame…</div>
-    <div class="empty error" *ngIf="error() as e">{{ e }}</div>
-    <div class="empty" *ngIf="!loading() && !error() && rows().length === 0 && file">
-      No blame data (file may be binary or freshly created).
-    </div>
+    <div class="blame-shell" [attr.aria-busy]="loading()">
+      <div class="empty" *ngIf="loading() && rows().length === 0">Loading blame…</div>
+      <div class="empty error" *ngIf="error() as e">
+        {{ e }} <button type="button" (click)="retry()">Retry</button>
+      </div>
+      <div class="empty" *ngIf="!loading() && !error() && rows().length === 0 && file">
+        No blame data (file may be binary or freshly created).
+      </div>
 
-    <div class="blame" *ngIf="rows().length > 0">
-      <div class="row" *ngFor="let r of rows(); trackBy: trackByLine">
-        <div class="meta" [class.invisible]="!r.isFirstOfBlock">
-          <code class="hash" (click)="onSelectCommit(r.hash)">{{ r.hash.slice(0, 7) }}</code>
-          <span class="author">{{ r.author }}</span>
-          <span class="date">{{ shortDate(r.date) }}</span>
+      <div class="blame" *ngIf="rows().length > 0">
+        <div class="row" *ngFor="let r of rows(); trackBy: trackByLine">
+          <div class="meta" [class.invisible]="!r.isFirstOfBlock">
+            <button type="button" class="hash" (click)="onSelectCommit(r.hash)">
+              {{ r.hash.slice(0, 7) }}
+            </button>
+            <span class="author">{{ r.author }}</span>
+            <span class="date">{{ shortDate(r.date) }}</span>
+          </div>
+          <span class="line-no">{{ r.line }}</span>
+          <pre class="code">{{ r.content }}</pre>
         </div>
-        <span class="line-no">{{ r.line }}</span>
-        <pre class="code">{{ r.content }}</pre>
       </div>
     </div>
   `,
@@ -54,6 +54,9 @@ interface BlameRow extends BlameLine {
       }
       .empty.error {
         color: var(--danger);
+      }
+      .empty button {
+        margin-left: 0.4rem;
       }
       .blame {
         display: block;
@@ -87,7 +90,11 @@ interface BlameRow extends BlameLine {
         visibility: hidden;
       }
       .hash {
+        padding: 0;
+        border: 0;
+        background: transparent;
         color: var(--accent);
+        font: inherit;
         cursor: pointer;
         text-decoration: none;
       }
@@ -121,11 +128,12 @@ interface BlameRow extends BlameLine {
 })
 export class BlameComponent {
   private gitService = inject(GitService);
+  private readonly requests = new Subject<string | null>();
 
   @Input() set file(value: string | null) {
+    if (value !== this._file) this.lines.set([]);
     this._file = value;
-    if (value) this.load(value);
-    else this.lines.set([]);
+    this.requests.next(value);
   }
   get file(): string | null {
     return this._file;
@@ -138,6 +146,39 @@ export class BlameComponent {
   readonly lines = signal<BlameLine[]>([]);
   readonly loading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
+
+  constructor() {
+    this.requests
+      .pipe(
+        switchMap((file) => {
+          if (!file) {
+            this.loading.set(false);
+            this.error.set(null);
+            return of({ lines: [] as BlameLine[], error: null });
+          }
+          this.loading.set(true);
+          this.error.set(null);
+          return this.gitService.getBlame(file).pipe(
+            map((lines) => ({ lines, error: null })),
+            catchError((error) =>
+              of({
+                lines: null,
+                error: error?.error?.error ?? 'Failed to load blame',
+              }),
+            ),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe(({ lines, error }) => {
+        this.loading.set(false);
+        if (error) {
+          this.error.set(error);
+          return;
+        }
+        this.lines.set(lines ?? []);
+      });
+  }
 
   readonly rows = computed<BlameRow[]>(() => {
     const out: BlameRow[] = [];
@@ -161,18 +202,7 @@ export class BlameComponent {
     if (this.onCommitClick) this.onCommitClick(hash);
   }
 
-  private load(file: string) {
-    this.loading.set(true);
-    this.error.set(null);
-    this.gitService.getBlame(file).subscribe({
-      next: (l) => {
-        this.lines.set(l);
-        this.loading.set(false);
-      },
-      error: (err) => {
-        this.error.set(err?.error?.error ?? 'Failed to load blame');
-        this.loading.set(false);
-      },
-    });
+  retry() {
+    this.requests.next(this.file);
   }
 }

@@ -17,8 +17,6 @@ import hljs from 'highlight.js/lib/common';
 import { DiffFile } from '../../models/git.models';
 import { InsightsService } from '../../services/insights.service';
 
-type Side = 'left' | 'right';
-
 interface DiffLine {
   type: 'context' | 'add' | 'del' | 'hunk' | 'meta';
   oldNo?: number;

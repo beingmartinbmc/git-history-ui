@@ -56,16 +56,19 @@ frontend/
 2. **Write code.** Follow the existing style — Prettier and ESLint will
    enforce formatting on commit (via the pre-commit hook).
 
-3. **Write tests.** Backend coverage must stay above 90% (CI enforces this).
-   Add tests in `src/__tests__/` for any new backend logic.
+3. **Write tests.** The Jest config requires 93% statements, 80% branches,
+   92% functions, and 95% lines for coverage runs. CI also runs an explicit
+   90% statements/functions/lines gate. Add tests in `src/__tests__/` for any
+   new backend logic.
 
 4. **Run checks locally** before pushing:
 
    ```bash
    npm run lint          # ESLint
    npm run typecheck     # tsc --noEmit
-   npm test              # Jest (backend)
-   npm test --prefix frontend -- --watch=false   # Karma (frontend)
+   npm test              # Node extension/Action tests, extension checker, Jest
+   npm run test:frontend # Karma + Jasmine (frontend)
+   npm run test:coverage # Jest coverage using the configured thresholds
    ```
 
 5. **Commit with a conventional message:**
@@ -102,7 +105,8 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 ## Code Style
 
 - **TypeScript** throughout (backend + frontend).
-- **Prettier** formats on save / on commit.
+- **Prettier** is enforced by `format:check` and formats staged files through
+  lint-staged at commit time; editor format-on-save is optional.
 - **ESLint** with `@typescript-eslint` and `prettier` integration.
 - Prefer `const` over `let`, avoid `any` when practical.
 - Keep functions small and testable.
@@ -110,10 +114,14 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 ## Tests
 
 - **Backend:** Jest + ts-jest. Tests live in `src/__tests__/`.
-  - Use `supertest` for HTTP endpoint tests.
-  - Use `nock` for external HTTP mocking (GitHub API, LLM providers).
-  - Use `helpers/repo.ts` to create ephemeral git repos.
+  - Use `src/__tests__/helpers/http.ts` for HTTP endpoint tests.
+  - Use `src/__tests__/helpers/repo.ts` to create ephemeral git repositories.
+  - Mock outbound `fetch` calls directly for GitHub and LLM provider tests.
 - **Frontend:** Karma + Jasmine. Specs live alongside components (`*.spec.ts`).
+- **Extension/action helpers:** Node's built-in test runner. Keep extension
+  runtime files on the allowlist and do not add remote code or broad permissions.
+- Use real application captures for docs/store assets; do not add screenshot
+  mockups or binary placeholders.
 
 ## Reporting Bugs
 

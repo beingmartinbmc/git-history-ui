@@ -90,7 +90,7 @@ const LANE_COLORS = [
         naive content-sized canvas goes blank past ~960 commits.
       -->
       <div class="phantom" [style.height.px]="contentHeight()"></div>
-      <canvas #canvas aria-label="Commit graph" role="img"></canvas>
+      <canvas #canvas aria-hidden="true"></canvas>
       <div
         class="graph-tooltip"
         *ngIf="hoverTip() as tip"
@@ -112,6 +112,21 @@ const LANE_COLORS = [
         No commits to draw.
       </div>
     </div>
+    <details class="accessible-data" *ngIf="accessibleCommits().length">
+      <summary>Commit graph data: {{ graphSummary() }}</summary>
+      <ol>
+        <li *ngFor="let commit of accessibleCommits()">
+          <button type="button" (click)="state.selectHash(commit.hash)">
+            <code>{{ commit.shortHash }}</code>
+            <span>{{ commit.subject }}</span>
+          </button>
+        </li>
+      </ol>
+      <p *ngIf="state.commits().length > accessibleCommits().length">
+        Showing the first {{ accessibleCommits().length }} commits. Use the commit list for all
+        loaded commits.
+      </p>
+    </details>
   `,
   styles: [
     `
@@ -257,6 +272,38 @@ const LANE_COLORS = [
         font-size: 12px;
         text-align: center;
       }
+      .accessible-data {
+        flex: 0 0 auto;
+        padding: 0.45rem 0.7rem;
+        border-top: 1px solid var(--border-soft);
+        color: var(--fg-secondary);
+        font-size: 11px;
+      }
+      .accessible-data ol {
+        max-height: 12rem;
+        margin: 0.45rem 0 0;
+        padding-left: 1.5rem;
+        overflow: auto;
+      }
+      .accessible-data button {
+        display: inline-flex;
+        gap: 0.5rem;
+        max-width: 100%;
+        padding: 0.2rem;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .accessible-data code {
+        color: var(--accent);
+      }
+      .accessible-data p {
+        margin: 0.4rem 0 0;
+        color: var(--fg-muted);
+      }
     `,
   ],
 })
@@ -276,6 +323,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     const n = this.state.commits().length;
     return n ? PAD_Y * 2 + n * ROW_H : 0;
   });
+  readonly accessibleCommits = computed(() => this.state.commits().slice(0, 20));
 
   @ViewChild('canvas', { static: true }) canvasRef!: ElementRef<HTMLCanvasElement>;
   @ViewChild('scroll', { static: true }) scrollRef!: ElementRef<HTMLDivElement>;
@@ -296,6 +344,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   private canvasSize = { width: 0, height: 0, dpr: 0 };
   private canvasTransform = '';
   private cachedTheme: GraphTheme | null = null;
+  private resizeObserver: ResizeObserver | null = null;
   private readonly onCanvasClick = (e: MouseEvent) => this.onClick(e);
   private readonly onCanvasMove = (e: MouseEvent) => this.onMouseMove(e);
   private readonly onCanvasLeave = () => this.onMouseLeave();
@@ -332,6 +381,10 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     canvas.addEventListener('mousemove', this.onCanvasMove);
     canvas.addEventListener('mouseleave', this.onCanvasLeave);
     this.scrollRef?.nativeElement.addEventListener('scroll', this.onScroll, { passive: true });
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.draw());
+      this.resizeObserver.observe(this.scrollRef.nativeElement);
+    }
     this.draw();
   }
 
@@ -342,6 +395,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     canvas?.removeEventListener('mouseleave', this.onCanvasLeave);
     this.scrollRef?.nativeElement.removeEventListener('scroll', this.onScroll);
     if (this.scrollRaf) cancelAnimationFrame(this.scrollRaf);
+    this.resizeObserver?.disconnect();
     this.cancelIdleLayout();
   }
 

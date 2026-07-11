@@ -1,14 +1,6 @@
-import {
-  HeuristicProvider,
-  createLlmService,
-  expandKeywords,
-  tokenize,
-  _resetLlmCache
-} from '../backend/llm';
+import { HeuristicProvider, createLlmService, expandKeywords, tokenize } from '../backend/llm';
 
 describe('heuristic LLM provider', () => {
-  beforeEach(() => _resetLlmCache());
-
   describe('tokenize / expandKeywords', () => {
     it('lower-cases and strips punctuation/stopwords', () => {
       expect(tokenize('Fix the LOGIN bug, please')).toEqual(['fix', 'login', 'bug', 'please']);

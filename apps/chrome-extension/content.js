@@ -1,56 +1,63 @@
-/**
- * Content script for git-history-ui Chrome extension.
- *
- * Injects a "Open in git-history-ui" button on:
- *   - github.com/<owner>/<repo>/pull/<n>
- *   - github.com/<owner>/<repo>/commit/<sha>
- *   - github.com/<owner>/<repo>/commits/...
- *
- * Handles GitHub SPA navigation via MutationObserver + URL polling
- * so the button re-injects when navigating between pages without
- * a full page load.
- */
-
 (function () {
-  let lastUrl = '';
+  'use strict';
+  var lastUrl = '';
 
   function tryInject() {
     if (location.href === lastUrl && document.querySelector('#ghui-open-btn')) return;
     lastUrl = location.href;
+    remove('#ghui-open-btn');
+    remove('#ghui-open-help');
 
-    // Remove stale button from previous SPA navigation
-    const old = document.querySelector('#ghui-open-btn');
-    if (old) old.remove();
-
-    const m = location.pathname.match(/^\/([^/]+)\/([^/]+)(?:\/(pull|commit|commits)\/(.+))?/);
-    if (!m) return;
-    const [, owner, repo, type, ref] = m;
-    if (!owner || !repo) return;
-
-    const repoUrl = 'https://github.com/' + owner + '/' + repo + '.git';
-    const target =
-      type === 'commit'
-        ? { kind: 'commit', sha: (ref || '').split('/')[0] }
-        : type === 'pull'
-          ? { kind: 'pr', number: parseInt(ref || '0', 10) }
-          : { kind: 'commits' };
-
-    injectButton(repoUrl, target);
-  }
-
-  function injectButton(repoUrl, target) {
-    const host = findInjectionPoint();
+    var parsed = GhuiLink.parseGitHubUrl(location.href);
+    if (!parsed) return;
+    var host = findInjectionPoint();
     if (!host) return;
 
-    const btn = document.createElement('button');
-    btn.id = 'ghui-open-btn';
-    btn.type = 'button';
-    btn.className = 'btn btn-sm';
-    btn.textContent = 'Open in git-history-ui';
-    btn.style.cssText =
+    var button = document.createElement('button');
+    button.id = 'ghui-open-btn';
+    button.type = 'button';
+    button.className = 'btn btn-sm';
+    button.textContent = 'Open in git-history-ui';
+    button.style.cssText =
       'margin-left:6px;background:#6366f1;color:#fff;border:0;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
-    btn.addEventListener('click', () => openInGhui(repoUrl, target));
-    host.appendChild(btn);
+    button.addEventListener('click', function () {
+      openInGhui(parsed, host);
+    });
+    host.appendChild(button);
+  }
+
+  function openInGhui(parsed, host) {
+    location.href = GhuiLink.serializeDeepLink(parsed);
+    chrome.storage.sync.get(['hostedUrl'], function (cfg) {
+      showHelp(host, parsed, cfg && cfg.hostedUrl);
+    });
+  }
+
+  function showHelp(host, parsed, hostedUrl) {
+    remove('#ghui-open-help');
+    var panel = document.createElement('span');
+    panel.id = 'ghui-open-help';
+    panel.style.cssText = 'margin-left:8px;font-size:12px;color:var(--fgColor-muted,#656d76);';
+    panel.appendChild(document.createTextNode("Didn't open? "));
+
+    var help = document.createElement('a');
+    help.href = 'https://github.com/beingmartinbmc/git-history-ui#custom-url-protocol';
+    help.target = '_blank';
+    help.rel = 'noopener noreferrer';
+    help.textContent = 'Install the protocol handler';
+    panel.appendChild(help);
+
+    var hosted = GhuiLink.serializeHostedLink(parsed, hostedUrl);
+    if (hosted) {
+      panel.appendChild(document.createTextNode(' or '));
+      var hostedLink = document.createElement('a');
+      hostedLink.href = hosted;
+      hostedLink.target = '_blank';
+      hostedLink.rel = 'noopener noreferrer';
+      hostedLink.textContent = 'open the hosted instance';
+      panel.appendChild(hostedLink);
+    }
+    host.appendChild(panel);
   }
 
   function findInjectionPoint() {
@@ -62,35 +69,13 @@
     );
   }
 
-  function openInGhui(repoUrl, target) {
-    chrome.storage.sync.get(['hostedUrl'], function (cfg) {
-      var hosted = (cfg && cfg.hostedUrl) || '';
-      var protoUrl =
-        'git-history-ui://open?repo=' +
-        encodeURIComponent(repoUrl) +
-        (target.sha ? '&at=' + target.sha : '') +
-        (target.number ? '&pr=' + target.number : '');
-      var fallback = hosted
-        ? hosted.replace(/\/$/, '') +
-          '/?repo=' +
-          encodeURIComponent(repoUrl) +
-          (target.sha ? '&commit=' + target.sha : '') +
-          (target.number ? '&pr=' + target.number : '')
-        : 'https://github.com/beingmartinbmc/git-history-ui#open-in-git-history-ui';
-      var opened = false;
-      window.addEventListener('blur', function () { opened = true; }, { once: true });
-      window.location.href = protoUrl;
-      setTimeout(function () {
-        if (!opened) window.open(fallback, '_blank');
-      }, 800);
-    });
+  function remove(selector) {
+    var element = document.querySelector(selector);
+    if (element) element.remove();
   }
 
-  // Initial injection
   tryInject();
-
-  // Re-inject on GitHub SPA navigation (turbo drive / pjax / React transitions)
   new MutationObserver(function () {
-    if (location.href !== lastUrl) tryInject();
+    if (location.href !== lastUrl || !document.querySelector('#ghui-open-btn')) tryInject();
   }).observe(document.body, { childList: true, subtree: true });
 })();

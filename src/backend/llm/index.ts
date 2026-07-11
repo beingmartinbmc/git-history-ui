@@ -5,7 +5,9 @@ import type { LlmConfig, LlmProviderName, LlmService } from './types';
 
 export type {
   LlmConfig,
+  LlmCallOptions,
   LlmProviderName,
+  LlmSummaryOptions,
   LlmService,
   ScoreCandidate,
   ScoredCandidate
@@ -49,27 +51,4 @@ export function createLlmService(config: LlmConfig = {}): LlmService {
   }
 
   return new HeuristicProvider();
-}
-
-let cached: LlmService | null = null;
-let cachedKey = '';
-export function getDefaultLlmService(config: LlmConfig = {}): LlmService {
-  const key = JSON.stringify({
-    provider: config.provider ?? process.env.GHUI_LLM_PROVIDER ?? '',
-    a: !!(config.anthropicApiKey || process.env.ANTHROPIC_API_KEY),
-    o: !!(config.openaiApiKey || process.env.OPENAI_API_KEY),
-    m: config.model ?? process.env.GHUI_LLM_MODEL ?? '',
-    am: process.env.ANTHROPIC_MODEL ?? '',
-    om: process.env.OPENAI_MODEL ?? ''
-  });
-  if (cached && cachedKey === key) return cached;
-  cached = createLlmService(config);
-  cachedKey = key;
-  return cached;
-}
-
-/** Force-reset for tests. */
-export function _resetLlmCache(): void {
-  cached = null;
-  cachedKey = '';
 }

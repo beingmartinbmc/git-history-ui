@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "git-history-ui",
-  "version": "0.1.0",
-  "description": "Adds a 'View in git-history-ui' button to GitHub PR and commit pages.",
+  "version": "0.2.0",
+  "description": "Adds an 'Open in git-history-ui' button to GitHub PR and commit pages.",
   "permissions": ["storage"],
   "host_permissions": ["https://github.com/*"],
   "action": {
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["https://github.com/*/*"],
-      "js": ["content.js"],
+      "js": ["link.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

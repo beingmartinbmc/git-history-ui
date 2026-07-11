@@ -1,111 +1,8 @@
-import http from 'http';
 import { AddressInfo } from 'net';
 import { startServer } from '../backend/server';
+import { fetchRaw, request, requestRaw } from './helpers/http';
 import { makeRepo, type TestRepo } from './helpers/repo';
-
-interface Json {
-  status: number;
-  body: any;
-  headers: http.IncomingHttpHeaders;
-}
-
-function request(opts: {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: unknown;
-}): Promise<Json> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(opts.url);
-    const req = http.request(
-      {
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        method: opts.method ?? 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...opts.headers
-        }
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          let parsed: unknown = data;
-          try {
-            parsed = data ? JSON.parse(data) : null;
-          } catch {
-            /* leave as string */
-          }
-          resolve({ status: res.statusCode || 0, body: parsed, headers: res.headers });
-        });
-      }
-    );
-    req.on('error', reject);
-    if (opts.body !== undefined) req.write(JSON.stringify(opts.body));
-    req.end();
-  });
-}
-
-function requestRaw(opts: {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: string;
-}): Promise<Json> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(opts.url);
-    const req = http.request(
-      {
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        method: opts.method ?? 'GET',
-        headers: opts.headers
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          let parsed: unknown = data;
-          try {
-            parsed = data ? JSON.parse(data) : null;
-          } catch {
-            /* leave as string */
-          }
-          resolve({ status: res.statusCode || 0, body: parsed, headers: res.headers });
-        });
-      }
-    );
-    req.on('error', reject);
-    if (opts.body !== undefined) req.write(opts.body);
-    req.end();
-  });
-}
-
-function fetchRaw(
-  url: string,
-  headers: Record<string, string> = {}
-): Promise<{ status: number; data: string; headers: http.IncomingHttpHeaders }> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const req = http.get(
-      {
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        headers
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => resolve({ status: res.statusCode || 0, data, headers: res.headers }));
-      }
-    );
-    req.on('error', reject);
-  });
-}
+import { gitQueue, MAX_PENDING_GIT_JOBS } from '../backend/gitProcessQueue';
 
 describe('HTTP server — full endpoint coverage', () => {
   let repo: TestRepo;
@@ -140,6 +37,23 @@ describe('HTTP server — full endpoint coverage', () => {
     const r = await request({ url: `${url}/api/commit/${firstHash}` });
     expect(r.status).toBe(200);
     expect(r.body.subject).toBe('feat: add a');
+  });
+
+  it('maps a saturated Git process queue to 503', async () => {
+    const releases: Array<() => void> = [];
+    const blocker = () => new Promise<void>((resolve) => releases.push(resolve));
+    const active = Array.from({ length: 4 }, () => gitQueue.run(blocker));
+    const pending = Array.from({ length: MAX_PENDING_GIT_JOBS }, () =>
+      gitQueue.run(() => Promise.resolve())
+    );
+    try {
+      const response = await request({ url: `${url}/api/commits` });
+      expect(response.status).toBe(503);
+      expect(response.body.error).toMatch(/queue is full/i);
+    } finally {
+      releases.forEach((release) => release());
+      await Promise.all([...active, ...pending]);
+    }
   });
 
   it('GET /api/diff/:hash returns parsed diff files', async () => {
@@ -252,6 +166,10 @@ describe('HTTP server — full endpoint coverage', () => {
       expect.arrayContaining(['main', 'feature'])
     );
     expect((await request({ url: `${url}/api/authors` })).body).toContain('Tester');
+    expect((await request({ url: `${url}/api/authors/details` })).body).toContainEqual({
+      name: 'Tester',
+      email: 'tester@example.com'
+    });
   });
 
   it('GET /api/index/stats returns availability + counts', async () => {
@@ -274,6 +192,46 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(waited.status).toBe(200);
     expect(waited.body.running).toBe(false);
     expect(waited.body.progress.phase).toMatch(/done|idle|cancelled|error/);
+  });
+
+  it('falls back to Git immediately when the SQLite index is stale', async () => {
+    const localRepo = makeRepo('ghui-srv-stale-');
+    localRepo.commit('src/old.ts', 'export const old = true;\n', 'feat: old searchable');
+    const local = await startServer(0, '127.0.0.1', {
+      cwd: localRepo.dir,
+      llm: { provider: 'heuristic' }
+    });
+    const localUrl = `http://127.0.0.1:${(local.server.address() as AddressInfo).port}`;
+    try {
+      const built = await request({
+        url: `${localUrl}/api/index/build?wait=true`,
+        method: 'POST',
+        body: {}
+      });
+      if (!built.body.available) return;
+
+      const hash = localRepo.commit(
+        'src/fresh.ts',
+        'export const fresh = true;\n',
+        'feat: stale fallback needle'
+      );
+      const result = await request({
+        url: `${localUrl}/api/search?q=stale%20fallback%20needle`
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.body.commits.map((commit: { hash: string }) => commit.hash)).toContain(hash);
+
+      const rebuilt = await request({
+        url: `${localUrl}/api/index/build?wait=true`,
+        method: 'POST',
+        body: {}
+      });
+      expect(rebuilt.body.progress.phase).toBe('done');
+    } finally {
+      await local.close();
+      localRepo.cleanup();
+    }
   });
 
   it('GET /api/index/status and cancel expose progress state', async () => {
@@ -391,6 +349,21 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(r2.status).toBe(503);
   });
 
+  it('skips the AI rate limiter in heuristic mode', async () => {
+    const statuses = await Promise.all(
+      Array.from({ length: 25 }, async () => {
+        const response = await request({
+          url: `${url}/api/summarize-diff`,
+          method: 'POST',
+          body: { text: 'some diff' }
+        });
+        return response.status;
+      })
+    );
+    expect(statuses).not.toContain(429);
+    expect(new Set(statuses)).toEqual(new Set([503]));
+  });
+
   it('explain-commit requires AI provider', async () => {
     const r = await request({
       url: `${url}/api/explain-commit/${secondHash}`,
@@ -400,29 +373,29 @@ describe('HTTP server — full endpoint coverage', () => {
     expect(r.status).toBe(503);
   });
 
-  it('POST /api/share echoes a deep link with view-state in the query', async () => {
+  it('POST /api/share returns an allowlisted portable deep link', async () => {
     const r = await request({
       url: `${url}/api/share`,
       method: 'POST',
-      body: { viewState: { hash: 'abc', mode: 'split', empty: '', null: null } }
+      body: { viewState: { view: 'history', commit: firstHash, empty: '', null: null } }
     });
     expect(r.status).toBe(201);
-    expect(r.body.url).toContain('hash=abc');
-    expect(r.body.url).toContain('mode=split');
+    expect(r.body.url).toContain(`commit=${firstHash}`);
+    expect(r.body.url).toContain('repo=https%3A%2F%2Fgithub.com%2Facme%2Fx');
     expect(r.body.url).not.toContain('empty=');
     expect(r.body.url).not.toContain('null=');
-    expect(r.body.mode).toBe('local');
+    expect(r.body.mode).toBe('portable');
   });
 
-  it('POST /api/share uses the server URL instead of reflecting Host headers', async () => {
+  it('POST /api/share never reflects server or Host headers', async () => {
     const r = await request({
       url: `${url}/api/share`,
       method: 'POST',
       headers: { Host: 'evil.example' },
-      body: { viewState: { hash: 'abc' } }
+      body: { viewState: { view: 'history', commit: firstHash } }
     });
     expect(r.status).toBe(201);
-    expect(r.body.url).toContain(url);
+    expect(r.body.url).not.toContain(url);
     expect(r.body.url).not.toContain('evil.example');
   });
 
@@ -463,31 +436,34 @@ describe('HTTP server — full endpoint coverage', () => {
 });
 
 describe('HTTP server — empty repo path', () => {
-  it('returns 400 with NotARepositoryError when run outside a repo', async () => {
+  it('rejects startup outside a Git repository', async () => {
     const dir = require('fs').mkdtempSync(
       require('path').join(require('os').tmpdir(), 'ghui-no-repo-')
     );
     try {
-      const result = await startServer(0, '127.0.0.1', { cwd: dir });
-      const addr = result.server.address() as AddressInfo;
-      const r = await request({ url: `http://127.0.0.1:${addr.port}/api/commits` });
-      expect(r.status).toBe(400);
-      expect(r.body.error).toMatch(/Not a git repository/);
-
-      // Streaming endpoint hits the same NotARepositoryError, but inside the
-      // async iterator → covers the SSE error branch.
-      const sse = await fetchRaw(`http://127.0.0.1:${addr.port}/api/commits/stream`);
-      expect(sse.data).toContain('event: error');
-
-      await result.close();
+      await expect(startServer(0, '127.0.0.1', { cwd: dir })).rejects.toThrow(
+        'Not a git repository'
+      );
     } finally {
       require('fs').rmSync(dir, { recursive: true, force: true });
     }
   });
 });
 
-describe('HTTP server — optional API auth token', () => {
-  it('requires a configured token for non-loopback clients', async () => {
+describe('HTTP server — remote authentication', () => {
+  it('fails closed for a non-loopback bind without a token', async () => {
+    const repo = makeRepo('ghui-auth-bind-');
+    repo.commit('a.txt', 'a', 'init');
+    try {
+      await expect(startServer(0, '0.0.0.0', { cwd: repo.dir })).rejects.toThrow(
+        /token is required/
+      );
+    } finally {
+      repo.cleanup();
+    }
+  });
+
+  it('authenticates remote UI and API traffic without accepting query tokens', async () => {
     const repo = makeRepo('ghui-auth-');
     repo.commit('a.txt', 'a', 'init');
     const result = await startServer(0, '127.0.0.1', { cwd: repo.dir, authToken: 'secret' });
@@ -499,12 +475,44 @@ describe('HTTP server — optional API auth token', () => {
         headers: { 'X-Forwarded-For': '203.0.113.10' }
       });
       expect(unauthorized.status).toBe(401);
+      expect(unauthorized.headers['www-authenticate']).toContain('Basic');
 
-      const authorized = await request({
+      const queryToken = await request({
+        url: `${authUrl}/api/health?token=secret`,
+        headers: { 'X-Forwarded-For': '203.0.113.10' }
+      });
+      expect(queryToken.status).toBe(401);
+
+      const wrongToken = await request({
+        url: `${authUrl}/api/health`,
+        headers: { 'X-Forwarded-For': '203.0.113.10', Authorization: 'Bearer wrong' }
+      });
+      expect(wrongToken.status).toBe(401);
+
+      const bearer = await request({
         url: `${authUrl}/api/health`,
         headers: { 'X-Forwarded-For': '203.0.113.10', Authorization: 'Bearer secret' }
       });
-      expect(authorized.status).toBe(200);
+      expect(bearer.status).toBe(200);
+
+      const header = await request({
+        url: `${authUrl}/api/health`,
+        headers: { 'X-Forwarded-For': '203.0.113.10', 'X-Git-History-Token': 'secret' }
+      });
+      expect(header.status).toBe(200);
+
+      const remoteUi = await request({
+        url: authUrl,
+        headers: { 'X-Forwarded-For': '203.0.113.10' }
+      });
+      expect(remoteUi.status).toBe(401);
+
+      const basic = Buffer.from('ignored:secret').toString('base64');
+      const authorizedUi = await request({
+        url: authUrl,
+        headers: { 'X-Forwarded-For': '203.0.113.10', Authorization: `Basic ${basic}` }
+      });
+      expect(authorizedUi.status).not.toBe(401);
     } finally {
       await result.close();
       repo.cleanup();
@@ -544,6 +552,33 @@ describe('HTTP server — CORS', () => {
     expect(blocked.status).toBe(403);
     expect(blocked.body.error).toBe('CORS not allowed');
   });
+
+  it('neutralizes spreadsheet formulas in exported author, email, and subject cells', async () => {
+    const localRepo = makeRepo('ghui-csv-formula-');
+    localRepo.commit('safe.txt', 'safe', 'safe base');
+    localRepo.git([
+      'commit',
+      '--allow-empty',
+      '--author',
+      '=CMD <+formula@example.com>',
+      '-m',
+      '@SUM(A1:A2)'
+    ]);
+    const local = await startServer(0, '127.0.0.1', {
+      cwd: localRepo.dir,
+      llm: { provider: 'heuristic' }
+    });
+    const localUrl = `http://127.0.0.1:${(local.server.address() as AddressInfo).port}`;
+    try {
+      const csv = await fetchRaw(`${localUrl}/api/export/commits?format=csv`);
+      expect(csv.data).toContain("'=CMD");
+      expect(csv.data).toContain("'+formula@example.com");
+      expect(csv.data).toContain("'@SUM(A1:A2)");
+    } finally {
+      await local.close();
+      localRepo.cleanup();
+    }
+  });
 });
 
 describe('HTTP server — AI endpoints (with stub provider)', () => {
@@ -551,6 +586,7 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
   let url: string;
   let close: () => Promise<void>;
   let hash: string;
+  let lastSummarySignal: AbortSignal | undefined;
 
   beforeAll(async () => {
     repo = makeRepo('ghui-ai-');
@@ -560,8 +596,13 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
       name: 'anthropic' as const,
       isAi: true,
       score: async () => [],
-      summarize: async (text: string, opts?: { hint?: string }) =>
-        `STUB(${(opts?.hint ?? '').slice(0, 16)}): ${text.length} chars`
+      summarize: async (
+        text: string,
+        opts?: { hint?: string; maxTokens?: number; signal?: AbortSignal }
+      ) => {
+        lastSummarySignal = opts?.signal;
+        return `STUB(${(opts?.hint ?? '').slice(0, 16)}): ${text.length} chars`;
+      }
     };
 
     const result = await startServer(0, '127.0.0.1', { cwd: repo.dir, llmService: stubLlm });
@@ -583,6 +624,7 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
     expect(r.status).toBe(200);
     expect(r.body.provider).toBe('anthropic');
     expect(r.body.summary).toContain('STUB');
+    expect(lastSummarySignal).toBeDefined();
   });
 
   it('explain-commit fetches the commit + diff and returns a summary', async () => {
@@ -593,5 +635,20 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
     });
     expect(r.status).toBe(200);
     expect(r.body.summary).toContain('STUB');
+    expect(lastSummarySignal).toBeDefined();
+  });
+
+  it('rate limits AI-backed endpoints without waiting for a timer window', async () => {
+    let status = 200;
+    for (let i = 0; i < 30 && status !== 429; i++) {
+      status = (
+        await request({
+          url: `${url}/api/summarize-diff`,
+          method: 'POST',
+          body: { text: `diff ${i}` }
+        })
+      ).status;
+    }
+    expect(status).toBe(429);
   });
 });

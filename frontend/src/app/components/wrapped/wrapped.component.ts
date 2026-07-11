@@ -1,22 +1,49 @@
 import { CommonModule } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  DestroyRef,
-  computed,
-  inject,
-  signal,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { WrappedStats } from '../../models/git.models';
+import { ActivatedRoute } from '@angular/router';
+import { Subject, catchError, forkJoin, map, of, switchMap } from 'rxjs';
+import { GitAuthorIdentity, WrappedStats } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 import { InsightsService } from '../../services/insights.service';
 import {
   WRAPPED_PALETTES,
   WRAPPED_TEMPLATES,
+  CANONICAL_PROJECT_URL,
   WrappedCardRenderer,
   WrappedTemplateId,
 } from '../../services/wrapped-card-renderer';
+
+export function sanitizeFileNamePart(value: string): string {
+  return (
+    value
+      .normalize('NFKD')
+      .replace(/[^a-zA-Z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80) || 'repository'
+  );
+}
+
+export function wrappedCaption(stats: WrappedStats, repoName: string, limit = 280): string {
+  const standout =
+    stats.superlatives.longestStreakDays > 1
+      ? `${stats.superlatives.longestStreakDays}-day commit streak`
+      : `${stats.totalCommits.toLocaleString('en-US')} commits`;
+  const suffix = ` — ${standout}. #GitWrapped ${CANONICAL_PROJECT_URL}`;
+  const available = Math.max(1, limit - suffix.length);
+  const repo =
+    repoName.length > available ? `${repoName.slice(0, Math.max(1, available - 1))}…` : repoName;
+  return `${repo}${suffix}`.slice(0, limit);
+}
+
+export function wrappedSocialUrl(platform: 'bluesky' | 'x', caption: string): string {
+  const base =
+    platform === 'bluesky'
+      ? 'https://bsky.app/intent/compose?text='
+      : 'https://twitter.com/intent/tweet?text=';
+  return `${base}${encodeURIComponent(caption)}`;
+}
 
 @Component({
   selector: 'app-wrapped',
@@ -24,7 +51,7 @@ import {
   imports: [CommonModule, FormsModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="page">
+    <div class="page" [attr.aria-busy]="loading()">
       <header class="head">
         <div>
           <p class="eyebrow">Year in review</p>
@@ -41,16 +68,23 @@ import {
             <span>Author</span>
             <select [ngModel]="author()" (ngModelChange)="setAuthor($event)">
               <option value="">All contributors</option>
-              <option *ngFor="let a of authors()" [value]="a">{{ a }}</option>
+              <option *ngFor="let a of authors()" [value]="a.email">
+                {{ authorLabel(a) }}
+              </option>
             </select>
           </label>
         </div>
       </header>
 
-      <div class="empty" *ngIf="loading()">Computing your year in review…</div>
-      <div class="empty error" *ngIf="error() as e">{{ e }}</div>
+      <div class="empty" *ngIf="loading() && !stats()">Computing your year in review…</div>
+      <div class="empty error" role="alert" aria-live="assertive" *ngIf="error() as e">
+        {{ e }} <button type="button" (click)="retry()">Retry</button>
+      </div>
+      <div class="empty" *ngIf="!loading() && !error() && stats()?.totalCommits === 0">
+        No commits were found for this selection.
+      </div>
 
-      <div class="layout" *ngIf="stats() as s">
+      <div class="layout" *ngIf="nonEmptyStats() as s">
         <div class="preview-wrap">
           <img *ngIf="previewUrl() as url" [src]="url" alt="Git Wrapped card preview" />
         </div>
@@ -120,11 +154,22 @@ import {
             ↗ Share…
           </button>
           <button class="ghost" type="button" (click)="copy()" [disabled]="busy()">
-            ⧉ Copy to clipboard
+            ⧉ Copy image
           </button>
-          <p class="note" *ngIf="status() as msg">{{ msg }}</p>
+          <button class="ghost" type="button" (click)="copyCaption()" [disabled]="busy()">
+            Copy caption
+          </button>
+          <button class="ghost" type="button" (click)="post('bluesky')" [disabled]="busy()">
+            Post on Bluesky
+          </button>
+          <button class="ghost" type="button" (click)="post('x')" [disabled]="busy()">
+            Post on X
+          </button>
+          <p class="note" role="status" aria-live="polite" aria-atomic="true">
+            {{ status() }}
+          </p>
           <p class="hint">
-            Everything is computed locally from your git history — nothing leaves your machine.
+            The card is computed locally. Social actions only open a pre-filled compose page.
           </p>
         </aside>
       </div>
@@ -297,7 +342,7 @@ export class WrappedComponent {
   private insightsApi = inject(InsightsService);
   private renderer = inject(WrappedCardRenderer);
   private git = inject(GitService);
-  private destroyRef = inject(DestroyRef);
+  private route = inject(ActivatedRoute, { optional: true });
 
   readonly stats = signal<WrappedStats | null>(null);
   readonly loading = signal<boolean>(false);
@@ -305,7 +350,13 @@ export class WrappedComponent {
   readonly busy = signal<boolean>(false);
   readonly status = signal<string | null>(null);
   readonly previewUrl = signal<string | null>(null);
-  readonly authors = signal<string[]>([]);
+  readonly authors = signal<GitAuthorIdentity[]>([]);
+  readonly repositoryName = signal<string>('Local repository');
+  readonly nonEmptyStats = computed(() => {
+    const stats = this.stats();
+    return stats && stats.totalCommits > 0 ? stats : null;
+  });
+  private readonly requests = new Subject<{ year: number; author?: string }>();
 
   readonly year = signal<number>(new Date().getFullYear());
   readonly author = signal<string>('');
@@ -323,12 +374,56 @@ export class WrappedComponent {
   });
 
   constructor() {
-    this.git.getAuthors().subscribe({
-      next: (a) => this.authors.set(a),
-      error: () => this.authors.set([]),
-    });
-    this.load();
-    this.destroyRef.onDestroy(() => this.loadSub?.unsubscribe());
+    this.requests
+      .pipe(
+        switchMap((options) => {
+          this.loading.set(true);
+          this.error.set(null);
+          this.status.set(null);
+          return this.insightsApi.wrapped(options).pipe(
+            map((stats) => ({ stats, error: null })),
+            catchError((error) =>
+              of({
+                stats: null,
+                error: error?.error?.error ?? 'Failed to compute Git Wrapped',
+              }),
+            ),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe(({ stats, error }) => {
+        this.loading.set(false);
+        if (error) {
+          this.error.set(error);
+          return;
+        }
+        this.stats.set(stats);
+        if (stats) this.refreshPreview(stats);
+      });
+    const params = this.route?.snapshot.queryParamMap;
+    const year = Number(params?.get('year'));
+    if (Number.isInteger(year) && year >= 1970 && year <= 9999) this.year.set(year);
+    this.author.set(params?.get('author')?.trim() ?? '');
+    const template = params?.get('template');
+    if (this.templates.some((item) => item.id === template)) {
+      this.template.set(template as WrappedTemplateId);
+    }
+    const palette = params?.get('palette');
+    if (this.palettes.some((item) => item.id === palette)) this.paletteId.set(palette!);
+    forkJoin({
+      repository: this.git.getRepository().pipe(catchError(() => of(null))),
+      authors: this.git.getAuthorIdentities().pipe(catchError(() => of([]))),
+    })
+      .pipe(takeUntilDestroyed())
+      .subscribe(({ repository, authors }) => {
+        this.repositoryName.set(repository?.name?.trim() || 'Local repository');
+        this.authors.set(authors);
+        if (!this.author() && repository?.currentAuthor.email) {
+          this.author.set(repository.currentAuthor.email);
+        }
+        this.retry();
+      });
   }
 
   canShare(): boolean {
@@ -337,12 +432,12 @@ export class WrappedComponent {
 
   setYear(y: number): void {
     this.year.set(Number(y));
-    this.load();
+    this.retry();
   }
 
   setAuthor(a: string): void {
     this.author.set(a ?? '');
-    this.load();
+    this.retry();
   }
 
   setTemplate(id: WrappedTemplateId): void {
@@ -365,45 +460,28 @@ export class WrappedComponent {
     return { template: this.template(), paletteId: this.paletteId() };
   }
 
-  private repoName(): string {
-    const title = (document.title || '').replace(/\s*[-–|·].*$/, '').trim();
-    return title && title.toLowerCase() !== 'git history' ? title : 'this repository';
+  authorLabel(author: GitAuthorIdentity): string {
+    const duplicateName = this.authors().some(
+      (item) =>
+        item !== author && item.name.toLocaleLowerCase() === author.name.toLocaleLowerCase(),
+    );
+    return duplicateName ? `${author.name} <${author.email}>` : author.name;
   }
 
-  private loadSub?: { unsubscribe(): void };
-
-  private load(): void {
-    // Cancel any in-flight request so an older year/author response can't
-    // land after a newer one and overwrite it.
-    this.loadSub?.unsubscribe();
-    this.loading.set(true);
-    this.error.set(null);
-    this.status.set(null);
-    this.loadSub = this.insightsApi
-      .wrapped({ year: this.year(), author: this.author().trim() || undefined })
-      .subscribe({
-        next: (s) => {
-          this.stats.set(s);
-          this.loading.set(false);
-          this.refreshPreview(s);
-        },
-        error: (err) => {
-          this.error.set(err?.error?.error ?? 'Failed to compute Git Wrapped');
-          this.loading.set(false);
-        },
-      });
+  retry(): void {
+    this.requests.next({ year: this.year(), author: this.author().trim() || undefined });
   }
 
   private refreshPreview(s: WrappedStats): void {
     try {
-      this.previewUrl.set(this.renderer.toDataUrl(s, this.repoName(), this.cardOptions()));
+      this.previewUrl.set(this.renderer.toDataUrl(s, this.repositoryName(), this.cardOptions()));
     } catch {
       this.previewUrl.set(null);
     }
   }
 
   private fileName(): string {
-    return `git-wrapped-${this.year()}-${this.template()}-${this.paletteId()}.png`;
+    return `git-wrapped-${sanitizeFileNamePart(this.repositoryName())}-${this.year()}-${this.template()}-${this.paletteId()}.png`;
   }
 
   async download(): Promise<void> {
@@ -412,7 +490,7 @@ export class WrappedComponent {
     this.busy.set(true);
     this.status.set(null);
     try {
-      const blob = await this.renderer.toBlob(s, this.repoName(), this.cardOptions());
+      const blob = await this.renderer.toBlob(s, this.repositoryName(), this.cardOptions());
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -433,13 +511,13 @@ export class WrappedComponent {
     this.busy.set(true);
     this.status.set(null);
     try {
-      const blob = await this.renderer.toBlob(s, this.repoName(), this.cardOptions());
+      const blob = await this.renderer.toBlob(s, this.repositoryName(), this.cardOptions());
       const file = new File([blob], this.fileName(), { type: 'image/png' });
       if (navigator.canShare?.({ files: [file] })) {
         await navigator.share({
           files: [file],
           title: `Git Wrapped ${this.year()}`,
-          text: `My Git Wrapped for ${this.year()} 🎁`,
+          text: wrappedCaption(s, this.repositoryName()),
         });
         this.status.set('Shared.');
       } else {
@@ -460,7 +538,7 @@ export class WrappedComponent {
     this.busy.set(true);
     this.status.set(null);
     try {
-      const blob = await this.renderer.toBlob(s, this.repoName(), this.cardOptions());
+      const blob = await this.renderer.toBlob(s, this.repositoryName(), this.cardOptions());
       if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         this.status.set('Copied to clipboard.');
@@ -473,5 +551,28 @@ export class WrappedComponent {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  async copyCaption(): Promise<void> {
+    const s = this.stats();
+    if (!s) return;
+    try {
+      await navigator.clipboard.writeText(wrappedCaption(s, this.repositoryName()));
+      this.status.set('Caption copied.');
+    } catch {
+      this.status.set('Could not copy the caption.');
+    }
+  }
+
+  post(platform: 'bluesky' | 'x'): void {
+    const s = this.stats();
+    if (!s) return;
+    const limit = platform === 'bluesky' ? 300 : 280;
+    const opened = window.open(
+      wrappedSocialUrl(platform, wrappedCaption(s, this.repositoryName(), limit)),
+      '_blank',
+      'noopener,noreferrer',
+    );
+    this.status.set(opened ? `Opened ${platform === 'x' ? 'X' : 'Bluesky'}.` : 'Pop-up blocked.');
   }
 }

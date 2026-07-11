@@ -4,24 +4,85 @@
     <meta charset="utf-8" />
     <title>git-history-ui</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 0; padding: 14px; width: 280px; }
-      h1 { font-size: 14px; margin: 0 0 8px; }
-      label { font-size: 12px; color: #555; display: block; margin-top: 8px; }
-      input { width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; box-sizing: border-box; }
-      button { margin-top: 10px; background: #6366f1; color: #fff; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
-      .hint { font-size: 11px; color: #666; line-height: 1.4; margin-top: 6px; }
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        padding: 14px;
+        width: 280px;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+      label {
+        font-size: 12px;
+        color: #555;
+        display: block;
+        margin-top: 12px;
+      }
+      input {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 12px;
+        box-sizing: border-box;
+      }
+      button {
+        margin-top: 10px;
+        background: #6366f1;
+        color: #fff;
+        border: 0;
+        padding: 8px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .hint {
+        font-size: 11px;
+        color: #666;
+        line-height: 1.4;
+        margin-top: 6px;
+      }
+      .links {
+        font-size: 11px;
+        margin-top: 12px;
+        display: flex;
+        gap: 10px;
+      }
+      .status {
+        min-height: 16px;
+        font-size: 11px;
+        color: #166534;
+      }
     </style>
   </head>
   <body>
     <h1>git-history-ui</h1>
     <div class="hint">
-      The button appears on GitHub PR and commit pages. Clicking it tries the
-      <code>git-history-ui://</code> protocol first, then falls back to your
-      hosted instance.
+      The button appears on GitHub PR and commit pages. It opens the
+      <code>git-history-ui://</code> protocol and shows explicit setup help if you still need to
+      install the handler.
     </div>
-    <label>Hosted instance URL (optional)</label>
+    <label for="hostedUrl">Hosted instance URL (optional, http/https only)</label>
     <input id="hostedUrl" type="url" placeholder="https://gh-ui.example.com" />
     <button id="save">Save</button>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div class="links">
+      <a
+        href="https://github.com/beingmartinbmc/git-history-ui#custom-url-protocol"
+        target="_blank"
+        rel="noopener noreferrer"
+        >Protocol help</a
+      >
+      <a
+        href="https://github.com/beingmartinbmc/git-history-ui/blob/v5.4.0/apps/chrome-extension/PRIVACY.md"
+        target="_blank"
+        rel="noopener noreferrer"
+        >Privacy</a
+      >
+    </div>
+    <script src="link.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

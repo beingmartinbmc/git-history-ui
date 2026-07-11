@@ -1,75 +1,8 @@
 import http from 'http';
 import { AddressInfo } from 'net';
 import { startServer } from '../backend/server';
+import { fetchRaw, request } from './helpers/http';
 import { makeRepo, type TestRepo } from './helpers/repo';
-
-interface Json {
-  status: number;
-  body: any;
-  headers: http.IncomingHttpHeaders;
-}
-
-function request(opts: {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: unknown;
-}): Promise<Json> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(opts.url);
-    const req = http.request(
-      {
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        method: opts.method ?? 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...opts.headers
-        }
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          let parsed: unknown = data;
-          try {
-            parsed = data ? JSON.parse(data) : null;
-          } catch {
-            /* leave as string */
-          }
-          resolve({ status: res.statusCode || 0, body: parsed, headers: res.headers });
-        });
-      }
-    );
-    req.on('error', reject);
-    if (opts.body !== undefined) req.write(JSON.stringify(opts.body));
-    req.end();
-  });
-}
-
-function fetchRaw(
-  url: string,
-  headers: Record<string, string> = {}
-): Promise<{ status: number; data: string; headers: http.IncomingHttpHeaders }> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const req = http.get(
-      {
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        headers
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => resolve({ status: res.statusCode || 0, data, headers: res.headers }));
-      }
-    );
-    req.on('error', reject);
-  });
-}
 
 describe('HTTP server — additional endpoint coverage', () => {
   let repo: TestRepo;

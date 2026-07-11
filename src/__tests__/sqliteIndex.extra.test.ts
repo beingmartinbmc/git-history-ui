@@ -57,7 +57,15 @@ const sampleRows = [
 
 describe('SqliteIndex — search, searchCount, filters and invalidate (static import)', () => {
   if (!SqliteIndex.isAvailable()) {
-    it('skipped: better-sqlite3 not available', () => {});
+    it('requires better-sqlite3 on the primary Ubuntu Node 20 CI lane', () => {
+      const primaryCiLane =
+        process.env.CI === 'true' &&
+        process.platform === 'linux' &&
+        process.versions.node.startsWith('20.');
+      if (primaryCiLane) {
+        throw new Error('better-sqlite3 must be available on the primary Ubuntu Node 20 CI lane');
+      }
+    });
     return;
   }
 

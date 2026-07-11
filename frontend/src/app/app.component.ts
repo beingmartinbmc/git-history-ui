@@ -2,21 +2,23 @@ import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
+  Signal,
+  computed,
   effect,
   inject,
   signal,
   untracked,
 } from '@angular/core';
-import { ActivatedRoute, RouterOutlet } from '@angular/router';
-import { catchError, debounceTime, of, switchMap } from 'rxjs';
-import { toObservable, toSignal } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, NavigationEnd, ParamMap, Router, RouterOutlet } from '@angular/router';
+import { catchError, distinctUntilChanged, filter, map, of, startWith, switchMap } from 'rxjs';
+import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { CommandPaletteComponent } from './components/command-palette/command-palette.component';
 import { IndexStatusComponent } from './components/index-status/index-status.component';
 import { ShortcutsModalComponent } from './components/shortcuts-modal/shortcuts-modal.component';
 import { ToolbarComponent } from './components/toolbar/toolbar.component';
-import { Commit } from './models/git.models';
+import { Commit, PaginatedCommits } from './models/git.models';
 import { GitService } from './services/git.service';
-import { SearchService } from './services/search.service';
 import { UiStateService } from './services/ui-state.service';
 
 @Component({
@@ -34,13 +36,16 @@ import { UiStateService } from './services/ui-state.service';
   template: `
     <app-toolbar />
 
-    <div class="status-bar" *ngIf="state.error() as err">
+    <div class="status-bar" *ngIf="historyActive() && state.error() as err">
       <span>{{ err }}</span>
+      <button type="button" (click)="retryCommits()">Retry</button>
     </div>
 
-    <router-outlet />
+    <div class="route-content" [attr.aria-busy]="historyActive() && state.loading()">
+      <router-outlet />
+    </div>
 
-    <div class="loading" *ngIf="state.loading()" aria-live="polite">
+    <div class="loading" *ngIf="historyActive() && state.loading()" aria-live="polite">
       <span class="spinner"></span> Loading commits…
     </div>
 
@@ -63,17 +68,37 @@ import { UiStateService } from './services/ui-state.service';
         display: flex;
         flex-direction: column;
         height: 100vh;
-        width: 100vw;
+        height: 100dvh;
+        width: 100%;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
         overflow: hidden;
         background: var(--bg-app);
         color: var(--fg-primary);
       }
       .status-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         padding: 0.5rem 1rem;
         background: rgba(220, 38, 38, 0.1);
         color: var(--danger);
         border-bottom: 1px solid var(--border-soft);
         font-size: 13px;
+      }
+      .status-bar button {
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .route-content {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        flex-direction: column;
       }
       .loading {
         position: fixed;
@@ -140,34 +165,23 @@ import { UiStateService } from './services/ui-state.service';
 export class AppComponent {
   state = inject(UiStateService);
   private git = inject(GitService);
-  private search = inject(SearchService);
   private route = inject(ActivatedRoute);
+  private router = inject(Router);
+  private destroyRef = inject(DestroyRef);
+  private reload = signal(0);
+  private queryHydrated = signal(false);
+  private latestQueryParams: ParamMap | null = null;
 
-  private commitsResp = toSignal(
-    toObservable(this.state.filters).pipe(
-      debounceTime(200),
-      switchMap((f) => {
-        this.state.loading.set(true);
-        this.state.error.set(null);
-        const mode = this.state.searchMode();
-        const useNl = mode === 'nl' && (f.search || '').trim().length > 0;
-        const useStream = !useNl && (f.page ?? 1) === 1;
-        const obs = useNl
-          ? this.search.naturalLanguage(f.search || '', f)
-          : useStream
-            ? this.git.streamCommits(f)
-            : this.git.getCommits(f);
-        return obs.pipe(
-          catchError((err) => {
-            this.state.error.set(this.errorMessage(err));
-            this.state.loading.set(false);
-            return of(null);
-          }),
-        );
-      }),
+  readonly historyActive = toSignal(
+    this.router.events.pipe(
+      filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+      map((event) => isHistoryUrl(event.urlAfterRedirects)),
+      startWith(this.router.navigated && isHistoryUrl(this.router.url)),
+      distinctUntilChanged(),
     ),
-    { initialValue: null },
+    { initialValue: this.router.navigated && isHistoryUrl(this.router.url) },
   );
+  private commitsResp: Signal<PaginatedCommits | null>;
 
   private authorsLoaded = signal(false);
   private pendingSharedCommit = signal<string | null>(null);
@@ -177,45 +191,72 @@ export class AppComponent {
   private eventSource: EventSource | null = null;
 
   constructor() {
-    // Handle deep-link query params: commit, at, pr, filters, mode
-    this.route.queryParamMap.subscribe((params) => {
-      const hash = normalizeCommitParam(params.get('commit') || params.get('at'));
-      if (hash) {
-        this.pendingSharedCommit.set(hash);
-        this.state.selectHash(hash);
-      }
-      const activeFile = params.get('activeFile');
-      if (activeFile) this.state.activeFilePath.set(activeFile);
-      // PR deep link: switch to grouped view and set PR filter
-      const pr = params.get('pr');
-      if (pr && /^\d+$/.test(pr)) {
-        this.state.viewMode.set('grouped');
-        this.state.focusedPrNumber.set(Number(pr));
-      }
-      // Restore shared filters
-      const author = params.get('author');
-      const since = params.get('since');
-      const until = params.get('until');
-      const branch = params.get('branch');
-      const file = params.get('file');
-      const mode = params.get('mode');
-      if (author || since || until || branch || file) {
-        this.state.patchFilters({
-          ...(author ? { author } : {}),
-          ...(since ? { since } : {}),
-          ...(until ? { until } : {}),
-          ...(branch ? { branch } : {}),
-          ...(file ? { file } : {}),
-        });
-      }
-      if (mode === 'grouped') this.state.viewMode.set('grouped');
+    this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((params) => {
+      this.latestQueryParams = params;
+      if (!isHistoryUrl(this.router.url)) return;
+      const hash = this.state.hydrateQuery(params);
+      this.pendingSharedCommit.set(hash);
+      this.queryHydrated.set(true);
     });
+
+    effect(() => {
+      if (!this.historyActive() || this.queryHydrated() || !this.latestQueryParams) return;
+      const hash = this.state.hydrateQuery(this.latestQueryParams);
+      this.pendingSharedCommit.set(hash);
+      this.queryHydrated.set(true);
+    });
+
+    const request = computed(() => ({
+      active: this.historyActive() && this.queryHydrated(),
+      filters: this.state.filters(),
+      mode: this.state.searchMode(),
+      reload: this.reload(),
+    }));
+    this.commitsResp = toSignal(
+      toObservable(request).pipe(
+        switchMap(({ active, filters: f, mode }) => {
+          if (!active) {
+            this.state.loading.set(false);
+            return of(null);
+          }
+          this.state.loading.set(true);
+          this.state.error.set(null);
+          const useNl = mode === 'nl' && (f.search || '').trim().length > 0;
+          const useStream = !useNl && (f.page ?? 1) === 1;
+          const obs = useNl
+            ? this.git.naturalLanguage(f.search || '', f)
+            : useStream
+              ? this.git.streamCommits(f)
+              : this.git.getCommits(f);
+          return obs.pipe(
+            catchError((err) => {
+              this.state.error.set(this.errorMessage(err));
+              this.state.loading.set(false);
+              return of(null);
+            }),
+          );
+        }),
+      ),
+      { initialValue: null },
+    );
 
     // Wire load-more into UiStateService so child components can trigger it
     this.state.onLoadMore = () => this.loadMore();
 
-    // SSE: listen for new-commits events from the ref watcher
-    this.connectEventSource();
+    effect(() => {
+      if (this.historyActive()) this.connectEventSource();
+      else this.disconnectEventSource();
+    });
+
+    effect(() => {
+      if (!this.queryHydrated() || !this.historyActive()) return;
+      void this.router.navigate([], {
+        relativeTo: this.route,
+        queryParams: this.state.queryParams(),
+        queryParamsHandling: 'merge',
+        replaceUrl: true,
+      });
+    });
 
     effect(() => {
       const resp = this.commitsResp();
@@ -247,7 +288,7 @@ export class AppComponent {
         return;
       }
       if (!untracked(() => this.state.selectedHash()) && resp.commits.length) {
-        this.state.selectHash(resp.commits[0].hash);
+        this.state.selectedHash.set(resp.commits[0].hash);
       }
     });
 
@@ -268,6 +309,8 @@ export class AppComponent {
         });
       }
     });
+
+    this.destroyRef.onDestroy(() => this.disconnectEventSource());
   }
 
   private errorMessage(err: unknown): string {
@@ -280,7 +323,7 @@ export class AppComponent {
   }
 
   loadMore() {
-    if (this.state.loadingMore() || !this.state.hasNext()) return;
+    if (!this.historyActive() || this.state.loadingMore() || !this.state.hasNext()) return;
     this.state.loadingMore.set(true);
     const nextPage = this.state.page() + 1;
     const filters = this.state.filters();
@@ -301,10 +344,15 @@ export class AppComponent {
   refreshCommits() {
     this.newCommitsAvailable.set(false);
     this.git.invalidate();
-    this.state.patchFilters({ page: 1 });
+    this.reload.update((value) => value + 1);
+  }
+
+  retryCommits() {
+    this.reload.update((value) => value + 1);
   }
 
   private connectEventSource() {
+    if (this.eventSource) return;
     try {
       this.eventSource = new EventSource('/api/events');
       this.eventSource.addEventListener('new-commits', () => {
@@ -316,6 +364,11 @@ export class AppComponent {
     } catch {
       // SSE not available
     }
+  }
+
+  private disconnectEventSource() {
+    this.eventSource?.close();
+    this.eventSource = null;
   }
 
   private loadSharedCommit(hash: string) {
@@ -339,11 +392,6 @@ export class AppComponent {
   }
 }
 
-function normalizeCommitParam(value: string | null): string | null {
-  const trimmed = value?.trim();
-  return trimmed && /^[0-9a-f]{7,40}$/i.test(trimmed) ? trimmed : null;
-}
-
 function findCommit(commits: Commit[], hash: string): Commit | undefined {
   const lower = hash.toLowerCase();
   return commits.find(
@@ -352,4 +400,9 @@ function findCommit(commits: Commit[], hash: string): Commit | undefined {
       c.shortHash.toLowerCase() === lower ||
       c.hash.toLowerCase().startsWith(lower),
   );
+}
+
+function isHistoryUrl(url: string): boolean {
+  const path = url.split(/[?#]/, 1)[0].replace(/\/+$/, '');
+  return path === '';
 }

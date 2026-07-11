@@ -27,27 +27,21 @@ interface FakeOpts {
 
 function fakeGit(opts: FakeOpts): GitService {
   return {
-    getDiff: async (_hash: string) =>
-      (opts.diff ?? []).map((d) => ({
+    getDiffMeta: async (_hash: string) => ({
+      files: (opts.diff ?? []).map((d) => ({
         file: d.file,
-        status: 'modified' as const,
+        status: 'modified',
         additions: 0,
-        deletions: 0,
-        changes: ''
+        deletions: 0
       })),
+      totalLines: 0
+    }),
     getFileAtCommit: async (_h: string, file: string) => {
       if (!opts.files || !(file in opts.files)) throw new Error('missing');
       return opts.files[file];
     },
-    getCommits: async (q: { file?: string }) => ({
-      commits: q.file && opts.related?.[q.file] ? opts.related[q.file] : [],
-      total: 0,
-      page: 1,
-      pageSize: 10,
-      totalPages: 1,
-      hasNext: false,
-      hasPrevious: false
-    })
+    getCommitsForFiles: async (files: string[]) =>
+      files.flatMap((file) => opts.related?.[file] ?? [])
   } as unknown as GitService;
 }
 
@@ -134,13 +128,14 @@ describe('getCommitImpact', () => {
     expect(result.modules).toEqual(['(root)']);
   });
 
-  it('skips related lookup when getCommits rejects', async () => {
+  it('skips related lookup when getCommitsForFiles rejects', async () => {
     const svc = {
-      getDiff: async () => [
-        { file: 'src/x.ts', status: 'modified', additions: 0, deletions: 0, changes: '' }
-      ],
+      getDiffMeta: async () => ({
+        files: [{ file: 'src/x.ts', status: 'modified', additions: 0, deletions: 0 }],
+        totalLines: 0
+      }),
       getFileAtCommit: async () => '',
-      getCommits: async () => {
+      getCommitsForFiles: async () => {
         throw new Error('boom');
       }
     } as unknown as GitService;

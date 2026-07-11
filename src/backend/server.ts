@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
-import { timingSafeEqual } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 import { createServer, type Server as HttpServer } from 'http';
 import path from 'path';
 import fs from 'fs';
@@ -11,7 +11,7 @@ import { GitService, NotARepositoryError } from './gitService';
 import { parseNlQuery, runNlSearch } from './search/nlSearch';
 import { buildCommitGroups } from './grouping/prGrouping';
 import { getSnapshot } from './snapshot';
-import { getDefaultLlmService, type LlmConfig, type LlmService } from './llm';
+import { createLlmService, type LlmConfig, type LlmService } from './llm';
 import { getCommitImpact } from './impact';
 import { getFileBreakageAnalysis } from './breakage';
 import { computeInsights } from './insights';
@@ -20,9 +20,18 @@ import { AnnotationsStore } from './annotations';
 import { SqliteIndex, type IndexProgress, type IndexStats } from './cache/sqliteIndex';
 import { ResultCache } from './cache/resultCache';
 import { RefWatcher } from './refWatcher';
+import { GitQueueFullError } from './gitProcessQueue';
 import type { InsightsBundle } from './aggregations';
 import type { CommitGroup } from './grouping/prGrouping';
 import type { WrappedStats } from './wrapped';
+import { getRepositoryIdentity } from './repositoryIdentity';
+import {
+  buildCommitReport,
+  buildRangeReport,
+  formatReportMarkdown,
+  type InvestigationReport
+} from './report';
+import { parseDeepLink, serializeDeepLink } from '../deepLink';
 
 export interface ServerOptions {
   port?: number;
@@ -35,7 +44,7 @@ export interface ServerOptions {
   /** Inject a pre-built LLM service (escape hatch for tests). Overrides `llm`. */
   llmService?: LlmService;
   githubToken?: string;
-  /** Optional bearer/header/query token for protecting API routes on shared networks. */
+  /** Token protecting UI and API traffic from non-loopback clients. */
   authToken?: string;
 }
 
@@ -54,11 +63,19 @@ export async function startServer(
   options: Partial<ServerOptions> = {}
 ): Promise<BootResult> {
   const cwd = options.cwd ?? process.cwd();
+  const authToken = options.authToken ?? process.env.GIT_HISTORY_UI_TOKEN;
+  if (!isLoopbackHost(host) && !authToken) {
+    throw new Error('GIT_HISTORY_UI_TOKEN or --token is required for non-loopback hosts');
+  }
+
+  const gitService = new GitService(cwd);
+  if (!(await gitService.verifyRepository())) {
+    throw new NotARepositoryError();
+  }
 
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
-  const authToken = options.authToken ?? process.env.GIT_HISTORY_UI_TOKEN;
 
   app.use(
     helmet({
@@ -82,7 +99,7 @@ export async function startServer(
 
   app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin && !isAllowedOrigin(origin)) {
+    if (origin && !isAllowedOrigin(origin, req)) {
       res.status(403).json({ error: 'CORS not allowed' });
       return;
     }
@@ -91,11 +108,12 @@ export async function startServer(
 
   app.use(
     cors({
-      origin: (origin, cb) => cb(null, !origin || isAllowedOrigin(origin)),
+      origin: true,
       methods: ['GET', 'POST', 'DELETE'],
       allowedHeaders: ['Content-Type', 'X-Requested-With', 'Authorization', 'X-Git-History-Token']
     })
   );
+  app.use(requireAuth(authToken));
 
   app.use(
     compression({
@@ -114,12 +132,16 @@ export async function startServer(
     legacyHeaders: false
   });
   app.use('/api', apiLimiter);
-  app.use('/api', requireAuth(authToken));
 
-  const gitService = new GitService(cwd);
-  const llmConfig = options.llm ?? {};
-  const fixedLlmService = options.llmService ?? null;
-  const getLlm = (): LlmService => fixedLlmService ?? getDefaultLlmService(llmConfig);
+  const llmService = options.llmService ?? createLlmService(options.llm);
+  const aiLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: () => !llmService.isAi
+  });
+  app.use(['/api/search', '/api/summarize-diff', '/api/explain-commit'], aiLimiter);
   const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN;
   const annotations = new AnnotationsStore(cwd);
   const sqliteIndex = new SqliteIndex(
@@ -131,14 +153,13 @@ export async function startServer(
   const insightsCache = new ResultCache<InsightsBundle>(15_000);
   const groupsCache = new ResultCache<CommitGroup[]>(15_000);
   const wrappedCache = new ResultCache<WrappedStats>(30_000);
-  let shareOrigin = `http://${host}:${port}`;
-
-  const angularBuildPath = path.join(__dirname, '../../build/frontend');
-  const publicPath = path.join(__dirname, '../../public');
-  const staticDir = fs.existsSync(angularBuildPath) ? angularBuildPath : publicPath;
+  const staticDir = path.join(__dirname, '../../build/frontend');
   const indexFile = path.join(staticDir, 'index.html');
+  const hasFrontendBuild = fs.existsSync(indexFile);
 
-  app.use(express.static(staticDir, { etag: true, maxAge: '1h' }));
+  if (hasFrontendBuild) {
+    app.use(express.static(staticDir, { etag: true, maxAge: '1h' }));
+  }
 
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', uptime: process.uptime(), pid: process.pid });
@@ -148,11 +169,18 @@ export async function startServer(
     res.json({
       name: 'git-history-ui',
       version: pkgVersion(),
-      llm: { provider: getLlm().name, isAi: getLlm().isAi },
+      llm: { provider: llmService.name, isAi: llmService.isAi },
       githubEnrichment: !!githubToken,
       sqliteAvailable: SqliteIndex.isAvailable()
     });
   });
+
+  app.get(
+    '/api/repository',
+    wrap(async (_req, res) => {
+      res.json(await getRepositoryIdentity(gitService));
+    })
+  );
 
   app.get(
     '/api/index/stats',
@@ -267,6 +295,7 @@ export async function startServer(
     insightsCache.clear();
     groupsCache.clear();
     wrappedCache.clear();
+    sqliteIndex.invalidate();
     const payload = `event: new-commits\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
     for (const client of sseClients) {
       client.write(payload);
@@ -294,6 +323,28 @@ export async function startServer(
       const signal = requestAbortSignal(req);
       const result = await gitService.getCommits(commitOptionsFromQuery(req.query, 25), { signal });
       res.json(result);
+    })
+  );
+
+  app.get(
+    '/api/report/:hash',
+    wrap(async (req, res) => {
+      const report = await buildCommitReport(gitService, req.params.hash, requestAbortSignal(req));
+      sendReport(res, report, stringParam(req.query.format));
+    })
+  );
+
+  app.get(
+    '/api/report',
+    wrap(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      if (!from || !to) {
+        res.status(400).json({ error: 'from and to query params are required' });
+        return;
+      }
+      const report = await buildRangeReport(gitService, from, to, requestAbortSignal(req));
+      sendReport(res, report, stringParam(req.query.format));
     })
   );
 
@@ -373,10 +424,16 @@ export async function startServer(
       const until = stringParam(req.query.until);
       const branch = stringParam(req.query.branch);
       const file = stringParam(req.query.file);
+      const signal = requestAbortSignal(req);
       // SQLite can handle author + date filters; only branch and file need git log
       const needsGitFallback = !!(branch || file);
       const stats = await sqliteIndex.stats().catch(() => ({ available: false, total: 0 }));
-      if (!needsGitFallback && stats.available && stats.total > 0) {
+      const indexFresh =
+        !needsGitFallback &&
+        stats.available &&
+        stats.total > 0 &&
+        (await sqliteIndex.isFresh().catch(() => false));
+      if (indexFresh) {
         const filters = { author, since, until };
         const total = await sqliteIndex.searchCount(q, filters);
         const start = (page - 1) * pageSize;
@@ -395,7 +452,10 @@ export async function startServer(
         });
         return;
       }
-      const result = await runNlSearch(gitService, getLlm(), {
+      if (!needsGitFallback && stats.available && 'builtAt' in stats && stats.builtAt) {
+        void indexBuild.start(true).catch(() => undefined);
+      }
+      const result = await runNlSearch(gitService, llmService, {
         query: q,
         branch,
         file,
@@ -403,7 +463,8 @@ export async function startServer(
         since,
         until,
         page,
-        pageSize
+        pageSize,
+        signal
       });
       res.json(result);
     })
@@ -495,7 +556,7 @@ export async function startServer(
       const since = stringParam(req.query.since);
       const until = stringParam(req.query.until);
       const branch = stringParam(req.query.branch);
-      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 500), 1, 5000);
+      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 5000), 1, 20_000);
       const cacheKey = ResultCache.key({ since, until, branch, maxCommits });
       const cached = insightsCache.get(cacheKey);
       if (cached) {
@@ -554,7 +615,7 @@ export async function startServer(
         res.status(400).json({ error: 'text body field is required' });
         return;
       }
-      const llm = getLlm();
+      const llm = llmService;
       if (!llm.isAi) {
         res
           .status(503)
@@ -563,7 +624,8 @@ export async function startServer(
       }
       const summary = await llm.summarize(text, {
         hint: 'Summarize this code diff in 2-3 concise markdown bullets for a developer skimming the change.',
-        maxTokens: 500
+        maxTokens: 500,
+        signal: requestAbortSignal(req)
       });
       res.json({ summary, provider: llm.name });
     })
@@ -572,26 +634,28 @@ export async function startServer(
   app.post(
     '/api/explain-commit/:hash',
     wrap(async (req, res) => {
-      const llm = getLlm();
+      const llm = llmService;
       if (!llm.isAi) {
         res
           .status(503)
           .json({ error: 'No AI provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' });
         return;
       }
-      const commit = await gitService.getCommit(req.params.hash);
-      const diff = await gitService.getDiff(req.params.hash);
+      const signal = requestAbortSignal(req);
+      const commit = await gitService.getCommit(req.params.hash, { signal });
+      const diff = await gitService.getDiffMeta(req.params.hash, { signal });
       const text = [
         `Subject: ${commit.subject}`,
         commit.body ? `Body:\n${commit.body}` : '',
         'Changed files:',
-        ...diff.slice(0, 25).map((f) => `- ${f.file} (+${f.additions} -${f.deletions})`)
+        ...diff.files.slice(0, 25).map((f) => `- ${f.file} (+${f.additions} -${f.deletions})`)
       ]
         .filter(Boolean)
         .join('\n');
       const summary = await llm.summarize(text, {
         hint: 'Explain this commit in concise markdown. Use exactly these sections: "What changed" and "Why reviewers should care". Keep the answer under 220 words and finish with a complete sentence.',
-        maxTokens: 900
+        maxTokens: 900,
+        signal
       });
       res.json({ summary, provider: llm.name });
     })
@@ -631,15 +695,7 @@ export async function startServer(
     })
   );
 
-  /**
-   * POST /api/share — generate a shareable view-state URL.
-   *
-   * The current implementation is purely local: it echoes the supplied
-   * `viewState` back as a URL with the state encoded in the query string,
-   * so the common case ("send my colleague the link") needs no relay
-   * server. Future versions may forward to an opt-in `--share-server`
-   * (see CHANGELOG for v3.2 plans).
-   */
+  /** Generate a credential-free, clone-location-independent protocol URL. */
   app.post(
     '/api/share',
     wrap(async (req, res) => {
@@ -648,8 +704,6 @@ export async function startServer(
         res.status(400).json({ error: 'viewState body field is required' });
         return;
       }
-      // Build a query string from a flat key/value object. Nested containers are
-      // rejected instead of being coerced to "[object Object]" or array indices.
       const params = new URLSearchParams();
       for (const [k, v] of Object.entries(state as Record<string, unknown>)) {
         if (v === null || v === undefined || v === '') continue;
@@ -659,8 +713,21 @@ export async function startServer(
         }
         params.set(k, String(v));
       }
-      const url = `${shareOrigin}/?${params.toString()}`;
-      res.status(201).json({ url, expiresAt: null, mode: 'local' });
+      const repository = await getRepositoryIdentity(gitService);
+      if (!repository.remoteUrl) {
+        res.status(422).json({ error: 'A GitHub or GitLab origin remote is required' });
+        return;
+      }
+      params.set('repo', repository.remoteUrl);
+      params.set('v', '1');
+      if (!params.has('view')) params.set('view', 'history');
+      const parsed = parseDeepLink(`git-history-ui://open?${params.toString()}`);
+      if (!parsed?.repo) {
+        res.status(400).json({ error: 'Invalid portable view state' });
+        return;
+      }
+      const url = serializeDeepLink(parsed);
+      res.status(201).json({ url, expiresAt: null, mode: 'portable' });
     })
   );
 
@@ -821,15 +888,23 @@ export async function startServer(
       res.json(await gitService.getAuthors({ signal: requestAbortSignal(req) }))
     )
   );
+  app.get(
+    '/api/authors/details',
+    wrap(async (req, res) =>
+      res.json(await gitService.getAuthorIdentities({ signal: requestAbortSignal(req) }))
+    )
+  );
 
   app.all('/api/*', (_req, res) => {
     res.status(404).json({ error: 'Not Found' });
   });
 
   app.get('*', (_req, res) => {
-    res.sendFile(indexFile, (err) => {
-      if (err) res.status(404).end();
-    });
+    if (!hasFrontendBuild) {
+      res.status(404).json({ error: 'Frontend build not found. Run npm run build.' });
+      return;
+    }
+    res.sendFile(indexFile);
   });
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -865,8 +940,6 @@ export async function startServer(
   const actualPort = typeof address === 'object' && address ? address.port : port;
   const displayHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
   const url = `http://${displayHost}:${actualPort}`;
-  shareOrigin = url;
-
   const close = async (): Promise<void> => {
     refWatcher.stop();
     await indexBuild.cancel().catch(() => undefined);
@@ -894,6 +967,18 @@ export async function startServer(
   };
 
   return { server: httpServer, url, close };
+}
+
+function sendReport(res: Response, report: InvestigationReport, format: string | undefined): void {
+  if (!format || format === 'json') {
+    res.json(report);
+    return;
+  }
+  if (format === 'markdown') {
+    res.type('text/markdown').send(formatReportMarkdown(report));
+    return;
+  }
+  res.status(400).json({ error: 'format must be json or markdown' });
 }
 
 interface IndexStatus extends IndexStats {
@@ -949,43 +1034,62 @@ function wrap(handler: (req: Request, res: Response, next: NextFunction) => Prom
   };
 }
 
-function isAllowedOrigin(origin: string): boolean {
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+function isAllowedOrigin(origin: string, req: Request): boolean {
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  const host = req.get('host');
+  return !!host && origin === `${req.protocol}://${host}`;
 }
 
 function requireAuth(token: string | undefined) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (!token || isLoopbackRequest(req)) {
+    if (isLoopbackRequest(req)) {
       next();
       return;
     }
     const supplied = authTokenFromRequest(req);
-    if (supplied && safeTokenEqual(supplied, token)) {
+    if (token && supplied && safeTokenEqual(supplied, token)) {
       next();
       return;
     }
+    res.setHeader('WWW-Authenticate', 'Basic realm="git-history-ui"');
     res.status(401).json({ error: 'Unauthorized' });
   };
 }
 
 function safeTokenEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
+  const digest = (value: string) => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(a), digest(b));
 }
 
 function authTokenFromRequest(req: Request): string | undefined {
-  const bearer = req.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const authorization = req.headers.authorization;
+  const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (bearer) return bearer;
+  const basic = authorization?.match(/^Basic\s+(.+)$/i)?.[1];
+  if (basic) {
+    const decoded = Buffer.from(basic, 'base64').toString('utf8');
+    const separator = decoded.indexOf(':');
+    if (separator >= 0) return decoded.slice(separator + 1);
+  }
   const header = req.headers['x-git-history-token'];
   if (typeof header === 'string') return header;
   if (Array.isArray(header)) return header[0];
-  return stringParam(req.query.token);
+  return undefined;
 }
 
 function isLoopbackRequest(req: Request): boolean {
   const ip = req.ip || req.socket.remoteAddress || '';
   return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip === 'localhost';
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
+  return (
+    normalized === 'localhost' ||
+    normalized === '::1' ||
+    normalized === '::ffff:127.0.0.1' ||
+    /^127(?:\.\d{1,3}){3}$/.test(normalized)
+  );
 }
 
 function commitOptionsFromQuery(
@@ -1036,6 +1140,7 @@ function sanitizeAnnotationAuthor(value: unknown): string {
 }
 
 function httpStatusForError(message: string, err?: unknown): number {
+  if (err instanceof GitQueueFullError) return 503;
   const typedErr = err as { status?: unknown; statusCode?: unknown } | undefined;
   const explicitStatus =
     err && typeof err === 'object' ? Number(typedErr?.status ?? typedErr?.statusCode) : 0;
@@ -1067,8 +1172,9 @@ function requestAbortSignal(req: Request): AbortSignal {
 }
 
 function csvEscape(value: string): string {
-  if (/[,"\n\r]/.test(value)) return '"' + value.replace(/"/g, '""') + '"';
-  return value;
+  const safe = /^\s*[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  if (/[,"\n\r]/.test(safe)) return '"' + safe.replace(/"/g, '""') + '"';
+  return safe;
 }
 
 function pkgVersion(): string {

@@ -1,5 +1,7 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, catchError, map, of, switchMap } from 'rxjs';
 import { GitService } from '../../services/git.service';
 
 @Component({
@@ -8,7 +10,7 @@ import { GitService } from '../../services/git.service';
   imports: [CommonModule, DatePipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="container">
+    <div class="container" [attr.aria-busy]="loading()">
       <div class="tabs">
         <button
           class="tab"
@@ -27,7 +29,9 @@ import { GitService } from '../../services/git.service';
       </div>
 
       <div class="content" *ngIf="activeTab() === 'stash'">
-        <div class="empty" *ngIf="!stashes().length && !loading()">No stashes found.</div>
+        <div class="empty" *ngIf="!stashes().length && !loading() && !error()">
+          No stashes found.
+        </div>
         <div class="entry" *ngFor="let s of stashes()">
           <span class="hash">stash&#64;{{ '{' }}{{ s.index }}{{ '}' }}</span>
           <span class="message">{{ s.message }}</span>
@@ -36,7 +40,9 @@ import { GitService } from '../../services/git.service';
       </div>
 
       <div class="content" *ngIf="activeTab() === 'reflog'">
-        <div class="empty" *ngIf="!reflog().length && !loading()">No reflog entries.</div>
+        <div class="empty" *ngIf="!reflog().length && !loading() && !error()">
+          No reflog entries.
+        </div>
         <div class="entry" *ngFor="let r of reflog()">
           <span class="hash">{{ r.shortHash }}</span>
           <span class="action-badge">{{ r.action }}</span>
@@ -46,6 +52,9 @@ import { GitService } from '../../services/git.service';
       </div>
 
       <div class="loading-bar" *ngIf="loading()">Loading…</div>
+      <div class="empty error" *ngIf="error() as message">
+        {{ message }} <button type="button" (click)="retry()">Retry</button>
+      </div>
     </div>
   `,
   styles: [
@@ -123,6 +132,9 @@ import { GitService } from '../../services/git.service';
         color: var(--fg-muted);
         font-size: 13px;
       }
+      .error {
+        color: var(--danger);
+      }
     `,
   ],
 })
@@ -135,30 +147,52 @@ export class StashReflogComponent {
     Array<{ hash: string; shortHash: string; action: string; message: string; date: string }>
   >([]);
   loading = signal(false);
+  error = signal<string | null>(null);
+  private readonly requests = new Subject<'stash' | 'reflog'>();
 
   constructor() {
+    this.requests
+      .pipe(
+        switchMap((kind) => {
+          this.loading.set(true);
+          this.error.set(null);
+          if (kind === 'stash') {
+            return this.git.getStashes().pipe(
+              map((entries) => ({ kind, entries, error: null })),
+              catchError(() => of({ kind, entries: null, error: 'Failed to load stashes' })),
+            );
+          }
+          return this.git.getReflog().pipe(
+            map((entries) => ({ kind, entries, error: null })),
+            catchError(() => of({ kind, entries: null, error: 'Failed to load reflog' })),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe(({ kind, entries, error }) => {
+        this.loading.set(false);
+        if (error) {
+          this.error.set(error);
+          return;
+        }
+        if (kind === 'stash') {
+          this.stashes.set(entries ?? []);
+        } else {
+          this.reflog.set(entries ?? []);
+        }
+      });
     this.loadStashes();
   }
 
   loadStashes() {
-    this.loading.set(true);
-    this.git.getStashes().subscribe({
-      next: (s) => {
-        this.stashes.set(s);
-        this.loading.set(false);
-      },
-      error: () => this.loading.set(false),
-    });
+    this.requests.next('stash');
   }
 
   loadReflog() {
-    this.loading.set(true);
-    this.git.getReflog().subscribe({
-      next: (r) => {
-        this.reflog.set(r);
-        this.loading.set(false);
-      },
-      error: () => this.loading.set(false),
-    });
+    this.requests.next('reflog');
+  }
+
+  retry() {
+    this.requests.next(this.activeTab());
   }
 }

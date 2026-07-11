@@ -270,8 +270,8 @@ async function cachedDiffFiles(
   if (cached && cached.expiresAt > Date.now()) return cached.files;
   if (options.signal?.aborted) throw new Error('breakage aborted');
   const files = await gitService
-    .getDiff(hash, { signal: options.signal })
-    .then((diff) => diff.map((d) => d.file))
+    .getDiffMeta(hash, { signal: options.signal })
+    .then((diff) => diff.files.map((d) => d.file))
     .catch(() => []);
   diffCache.set(hash, { files, expiresAt: Date.now() + DIFF_CACHE_TTL_MS });
   if (diffCache.size > 200) {

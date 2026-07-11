@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Commit, DiffFile, SnapshotResponse } from '../../models/git.models';
-import { TimelineService } from '../../services/timeline.service';
+import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 
@@ -612,7 +612,7 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 })
 export class TimelineComponent {
   state = inject(UiStateService);
-  private timelineApi = inject(TimelineService);
+  private git = inject(GitService);
 
   readonly snapshot = signal<SnapshotResponse | null>(null);
   readonly diff = signal<DiffFile[] | null>(null);
@@ -700,7 +700,7 @@ export class TimelineComponent {
       if (!t) return;
       let sub: { unsubscribe(): void } | null = null;
       const timer = window.setTimeout(() => {
-        sub = this.timelineApi.snapshot(t.iso).subscribe({
+        sub = this.git.getSnapshot(t.iso).subscribe({
           next: (s) => {
             this.snapshot.set(s);
             this.loadDiff(s);
@@ -757,7 +757,7 @@ export class TimelineComponent {
     }
     this.loadingDiff.set(true);
     this.diffError.set(null);
-    this.diffSub = this.timelineApi.rangeDiff(s.ref, 'HEAD').subscribe({
+    this.diffSub = this.git.getTimelineRangeDiff(s.ref, 'HEAD').subscribe({
       next: (d) => {
         this.diff.set(d);
         this.selectedFile.set(d[0] ?? null);

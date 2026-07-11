@@ -170,6 +170,32 @@ describe('GitService — extra coverage', () => {
     expect(authors).toContain('Zed');
   });
 
+  it('keeps same-name contributors distinct by exact email', async () => {
+    require('fs').appendFileSync(path.join(repo.dir, 'beta.ts'), '\n// second tester\n');
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'Tester',
+      GIT_AUTHOR_EMAIL: 'other-tester@example.com',
+      GIT_COMMITTER_NAME: 'Tester',
+      GIT_COMMITTER_EMAIL: 'other-tester@example.com',
+      GIT_TERMINAL_PROMPT: '0',
+      LC_ALL: 'C'
+    };
+    require('child_process').execFileSync('git', ['add', 'beta.ts'], { cwd: repo.dir, env });
+    require('child_process').execFileSync('git', ['commit', '-q', '-m', 'test: second identity'], {
+      cwd: repo.dir,
+      env
+    });
+
+    const identities = await svc.getAuthorIdentities();
+    expect(identities).toEqual(
+      expect.arrayContaining([
+        { name: 'Tester', email: 'tester@example.com' },
+        { name: 'Tester', email: 'other-tester@example.com' }
+      ])
+    );
+  });
+
   it('getFileStats sorts multiple contributors for a file', async () => {
     const stats = await svc.getFileStats('beta.ts');
     expect(stats.contributors).toEqual([...stats.contributors].sort((a, b) => a.localeCompare(b)));

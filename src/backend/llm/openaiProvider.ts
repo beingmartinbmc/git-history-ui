@@ -1,4 +1,10 @@
-import type { LlmService, ScoreCandidate, ScoredCandidate } from './types';
+import type {
+  LlmCallOptions,
+  LlmService,
+  LlmSummaryOptions,
+  ScoreCandidate,
+  ScoredCandidate
+} from './types';
 
 const DEFAULT_MODEL = 'gpt-4.1-nano';
 const DEFAULT_SUMMARY_TOKENS = 700;
@@ -35,20 +41,25 @@ export class OpenAiProvider implements LlmService {
     private model: string = DEFAULT_MODEL
   ) {}
 
-  async score(query: string, candidates: ScoreCandidate[]): Promise<ScoredCandidate[]> {
+  async score(
+    query: string,
+    candidates: ScoreCandidate[],
+    opts: LlmCallOptions = {}
+  ): Promise<ScoredCandidate[]> {
     if (candidates.length === 0) return [];
     const batches: ScoreCandidate[][] = [];
     for (let offset = 0; offset < candidates.length; offset += SCORE_BATCH_SIZE) {
       batches.push(candidates.slice(offset, offset + SCORE_BATCH_SIZE));
     }
-    return runLimited(batches, SCORE_CONCURRENCY, (batch) => this.scoreBatch(query, batch)).then(
-      (parts) => parts.flat()
-    );
+    return runLimited(batches, SCORE_CONCURRENCY, (batch) =>
+      this.scoreBatch(query, batch, opts.signal)
+    ).then((parts) => parts.flat());
   }
 
   private async scoreBatch(
     query: string,
-    candidates: ScoreCandidate[]
+    candidates: ScoreCandidate[],
+    signal?: AbortSignal
   ): Promise<ScoredCandidate[]> {
     const items = candidates.map((c, i) => ({
       idx: i,
@@ -63,22 +74,32 @@ export class OpenAiProvider implements LlmService {
       ...items.map((it) => `[${it.idx}] ${it.text}`)
     ].join('\n');
 
-    const text = await this.call(prompt, 1024, true);
+    const text = await this.call(prompt, 1024, true, signal);
     const parsed = parseScores(text, items.length);
     return items.map((it) => ({ id: it.id, score: parsed[it.idx] ?? 0 }));
   }
 
-  async summarize(text: string, opts?: { hint?: string; maxTokens?: number }): Promise<string> {
+  async summarize(text: string, opts: LlmSummaryOptions = {}): Promise<string> {
     const prompt = [
       opts?.hint ?? 'Summarize the following text in one short paragraph (max 3 sentences).',
       '---',
       text.length > 8000 ? text.slice(0, 8000) + '\n[truncated]' : text
     ].join('\n');
-    const out = await this.call(prompt, opts?.maxTokens ?? DEFAULT_SUMMARY_TOKENS, false);
+    const out = await this.call(
+      prompt,
+      opts.maxTokens ?? DEFAULT_SUMMARY_TOKENS,
+      false,
+      opts.signal
+    );
     return out.trim();
   }
 
-  private async call(prompt: string, maxTokens: number, json: boolean): Promise<string> {
+  private async call(
+    prompt: string,
+    maxTokens: number,
+    json: boolean,
+    signal?: AbortSignal
+  ): Promise<string> {
     const resp = await fetch(ENDPOINT, {
       method: 'POST',
       headers: {
@@ -91,7 +112,9 @@ export class OpenAiProvider implements LlmService {
         messages: [{ role: 'user', content: prompt }],
         ...(json ? { response_format: { type: 'json_object' } } : {})
       }),
-      signal: AbortSignal.timeout(60_000)
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000)
     });
     if (!resp.ok) {
       const err = await resp.text().catch(() => '');

@@ -1,0 +1,47 @@
+name: git-history-ui PR impact
+description: Write a local Git merge-base impact report to the job summary
+inputs:
+  base:
+    description: Base ref or commit; overrides event metadata for the base side
+    required: false
+  head:
+    description: Head ref or commit; overrides event metadata for the head side
+    required: false
+  format:
+    description: markdown or json
+    required: false
+    default: markdown
+  output:
+    description: Report output path
+    required: false
+  working-directory:
+    description: Checked-out repository path
+    required: false
+    default: .
+  cli-version:
+    description: Published git-history-ui version
+    required: false
+    default: latest
+outputs:
+  report-path:
+    description: Absolute report path
+    value: ${{ steps.impact.outputs.report-path }}
+  files-changed:
+    description: Number of changed files
+    value: ${{ steps.impact.outputs.files-changed }}
+  total-churn:
+    description: Added plus deleted lines
+    value: ${{ steps.impact.outputs.total-churn }}
+runs:
+  using: composite
+  steps:
+    - id: impact
+      shell: bash
+      env:
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_HEAD: ${{ inputs.head }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_CLI_VERSION: ${{ inputs.cli-version }}
+      run: node "$GITHUB_ACTION_PATH/scripts/pr-impact-action.js"

@@ -19,7 +19,7 @@ export async function getCommitImpact(
   hash: string,
   opts: { signal?: AbortSignal } = {}
 ): Promise<CommitImpact> {
-  const diff = await gitService.getDiff(hash, opts);
+  const { files: diff } = await gitService.getDiffMeta(hash, opts);
   const files = diff.map((d) => d.file);
   const modules = Array.from(new Set(files.map(detectModule))).sort();
 
@@ -53,10 +53,7 @@ export async function getCommitImpact(
 
   // Related commits: commits that have touched any of the files modified here.
   const relatedHashes = new Map<string, { subject: string; date: string }>();
-  const related =
-    typeof gitService.getCommitsForFiles === 'function'
-      ? await gitService.getCommitsForFiles(files.slice(0, 5), 30, opts).catch(() => [])
-      : await getRelatedViaLegacyCommits(gitService, files, opts);
+  const related = await gitService.getCommitsForFiles(files.slice(0, 5), 30, opts).catch(() => []);
   for (const c of related) {
     if (c.hash === hash) continue;
     if (!relatedHashes.has(c.hash)) {
@@ -69,22 +66,6 @@ export async function getCommitImpact(
     .slice(0, RELATED_LIMIT);
 
   return { hash, files, modules, dependencyRipple, relatedCommits };
-}
-
-async function getRelatedViaLegacyCommits(
-  gitService: GitService,
-  files: string[],
-  opts: { signal?: AbortSignal } = {}
-): Promise<Awaited<ReturnType<GitService['getCommitsForFiles']>>> {
-  const related: Awaited<ReturnType<GitService['getCommitsForFiles']>> = [];
-  for (const file of files.slice(0, 5)) {
-    if (opts.signal?.aborted) throw new Error('impact aborted');
-    const page = await gitService
-      .getCommits({ file, page: 1, pageSize: 8 }, opts)
-      .catch(() => null);
-    if (page) related.push(...page.commits);
-  }
-  return related;
 }
 
 function detectModule(file: string): string {

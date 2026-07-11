@@ -29,6 +29,10 @@ export interface RiskyFile {
 export interface InsightsBundle {
   windowStart: string | null;
   windowEnd: string | null;
+  analyzedCommits: number;
+  availableCommits: number;
+  truncated: boolean;
+  /** @deprecated Use analyzedCommits. */
   totalCommits: number;
   totalAuthors: number;
   topContributors: ContributorStat[];

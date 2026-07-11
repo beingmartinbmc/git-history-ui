@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Browser (Angular 19)                     │
+│                         Browser (Angular 20)                     │
 │  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────────┐  │
 │  │ Toolbar  │  │CommitList │  │CommitGraph│  │ CommitDetail  │  │
 │  │ (search, │  │(paginated │  │ (canvas   │  │ (diff viewer, │  │
@@ -37,20 +37,22 @@
 
 ## Layer Responsibilities
 
-### Frontend (Angular 19, standalone components)
+### Frontend (Angular 20, standalone components)
 - **Rendering:** All UI — commit list, graph, diff viewer, insights charts, wrapped cards
 - **State:** Centralized in `UiStateService` (signals-based, no NgRx)
 - **Communication:** HTTP calls to `/api/*` via `GitService` and `InsightsService`
-- **Routing:** Lazy-loaded routes: `/` (home), `/timeline`, `/insights`, `/wrapped`, `/file/:path`
+- **Routing:** Lazy-loaded routes: `/` (home), `/timeline`, `/insights`,
+  `/wrapped`, `/file/:path`, `/compare`, and `/stash`
 
 ### Backend (Express + TypeScript)
 - **API Server:** REST endpoints for commits, diffs, search, insights, annotations, etc.
 - **Git Interface:** `GitService` class wraps `git` CLI via `child_process`
-- **Concurrency:** `GitProcessQueue` bounds all git subprocess spawns (default 4 concurrent), including streaming reads
+- **Concurrency:** `GitProcessQueue` bounds backend repository-query git
+  subprocesses (default 4 concurrent), including streaming reads
 - **Live updates:** `RefWatcher` watches `.git/HEAD`/`.git/refs`, debounces changes, invalidates caches, and pushes SSE `new-commits` events over `/api/events`
 - **Search:** Heuristic NL parser + optional AI re-ranking; indexed author/date filters push down into SQLite FTS5 when available
 - **LLM:** Pluggable provider system (Anthropic, OpenAI, Heuristic fallback), outbound calls bounded by a 60s timeout
-- **Index:** Optional SQLite/FTS5 index for fast full-text search and pickaxe on large repos
+- **Index:** Optional SQLite/FTS5 index for fast commit full-text search; pickaxe remains Git-backed
 - **Caching:** Short-TTL `ResultCache` for insights/groups/Wrapped, cleared on ref-watcher change events
 - **Analytics:** Pure aggregation functions for insights, wrapped, breakage, impact
 
@@ -63,7 +65,7 @@
 ```
 User types "login bug last month" → Toolbar component
   → UiStateService.patchFilters({ search: ... })
-    → GitService.searchCommits(query)
+    → GitService.naturalLanguage(query)
       → GET /api/search?q=login+bug+last+month
         → Backend: parseNlQuery() extracts structured intent
         → Backend: runNlSearch() fetches candidates from git
@@ -96,13 +98,18 @@ patch is only ever fetched for the file currently open, not the whole commit.
 
 ## Key Design Decisions
 
-1. **Local-first:** All data stays on-machine. LLM keys are optional and user-provided.
+1. **Local-first:** Git parsing, heuristic search, reports, and local storage stay
+   on-machine. Invoked AI actions send selected prompt/commit/diff data to the
+   configured Anthropic or OpenAI provider; optional PR enrichment calls GitHub
+   when `GITHUB_TOKEN` is configured.
 2. **Git CLI over libgit2:** Portability. No native bindings required for core functionality.
-3. **Signals over RxJS stores:** Angular 19 signals for state; RxJS only for async I/O.
+3. **Signals over RxJS stores:** Angular 20 signals for state; RxJS only for async I/O.
 4. **Streaming:** SSE endpoints for progressive rendering (`/api/commits/stream`) and live updates (`/api/events`).
 5. **Optional native deps:** `better-sqlite3` is in `optionalDependencies` — app works without it.
 6. **Pure aggregators:** All analytics functions (insights, wrapped, breakage) are pure and unit-testable, separated from I/O.
-7. **Bounded concurrency:** Every git subprocess — one-shot or streaming — is routed through a shared queue so UI-driven fan-out can't overwhelm the host.
+7. **Bounded concurrency:** Backend repository-query git subprocesses—one-shot
+   or streaming—use a shared queue so UI-driven fan-out cannot overwhelm the
+   host.
 8. **Lazy by default:** Diff loading, PR enrichment, and aggregate computation all defer or cache expensive work rather than doing it eagerly.
 
 ## Directory Structure
@@ -132,6 +139,5 @@ git-history-ui/
 │   └── pipes/             # Markdown pipe, etc.
 ├── src/__tests__/         # Jest test suite
 ├── docs/                  # Documentation
-├── public/                # Fallback static files
 └── scripts/               # Build helpers
 ```

@@ -1,6 +1,6 @@
 import { AnthropicProvider } from '../backend/llm/anthropicProvider';
 import { OpenAiProvider } from '../backend/llm/openaiProvider';
-import { createLlmService, _resetLlmCache, getDefaultLlmService } from '../backend/llm';
+import { createLlmService } from '../backend/llm';
 
 type FetchMock = jest.MockedFunction<typeof fetch>;
 
@@ -144,6 +144,25 @@ describe('AnthropicProvider', () => {
     await p.summarize('blob', { maxTokens: 900 });
     const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
     expect(body.max_tokens).toBe(900);
+  });
+
+  it('composes and forwards client cancellation to Anthropic fetch', async () => {
+    mockFetch.mockImplementationOnce(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal;
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        })
+    );
+    const controller = new AbortController();
+    const pending = new AnthropicProvider('k').summarize('blob', {
+      signal: controller.signal
+    });
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect((mockFetch.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
   });
 
   it('joins multiple Anthropic text blocks and ignores non-text blocks', async () => {
@@ -303,6 +322,25 @@ describe('OpenAiProvider', () => {
     expect(body.max_tokens).toBe(900);
   });
 
+  it('composes and forwards client cancellation to OpenAI fetch', async () => {
+    mockFetch.mockImplementationOnce(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal;
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        })
+    );
+    const controller = new AbortController();
+    const pending = new OpenAiProvider('k').score('query', [{ id: 'a', text: 'candidate' }], {
+      signal: controller.signal
+    });
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect((mockFetch.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
   it('returns "" when the response has no choices', async () => {
     mockFetch.mockResolvedValueOnce(ok({ choices: [] }));
     const p = new OpenAiProvider('k');
@@ -332,11 +370,9 @@ describe('createLlmService', () => {
     delete process.env.GHUI_LLM_MODEL;
     delete process.env.ANTHROPIC_MODEL;
     delete process.env.OPENAI_MODEL;
-    _resetLlmCache();
   });
   afterEach(() => {
     process.env = originalEnv;
-    _resetLlmCache();
   });
 
   it('returns the heuristic provider with no env config', () => {
@@ -407,28 +443,5 @@ describe('createLlmService', () => {
     } finally {
       global.fetch = originalFetch;
     }
-  });
-
-  it('caches the default service unless config or env changes', () => {
-    const a = getDefaultLlmService();
-    const b = getDefaultLlmService();
-    expect(a).toBe(b);
-    process.env.ANTHROPIC_API_KEY = 'k';
-    const c = getDefaultLlmService();
-    expect(c).not.toBe(a);
-    expect(c.name).toBe('anthropic');
-  });
-
-  it('refreshes the cached service when exported model changes', () => {
-    process.env.OPENAI_API_KEY = 'k';
-    process.env.GHUI_LLM_PROVIDER = 'openai';
-    process.env.OPENAI_MODEL = 'gpt-one';
-    const a = getDefaultLlmService();
-    const b = getDefaultLlmService();
-    expect(a).toBe(b);
-    process.env.OPENAI_MODEL = 'gpt-two';
-    const c = getDefaultLlmService();
-    expect(c).not.toBe(a);
-    expect(c.name).toBe('openai');
   });
 });
