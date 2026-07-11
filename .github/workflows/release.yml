@@ -53,7 +53,7 @@ jobs:
           temp="$(mktemp -d)"
           trap 'kill "${demo_pid:-}" 2>/dev/null || true; rm -rf "$temp"' EXIT
           npm install --prefix "$temp" --ignore-scripts "$package"
-          "$temp/node_modules/.bin/git-history-ui" --no-open --port 3210 demo >"$temp/demo.log" 2>&1 &
+          "$temp/node_modules/.bin/git-history-ui" --no-open --port 3210 --host 127.0.0.1 demo >"$temp/demo.log" 2>&1 &
           demo_pid=$!
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:3210/api/health >/dev/null; then
