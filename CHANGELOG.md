@@ -6,6 +6,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.4.1] - 2026-07-12
+
+### Fixed
+
+- Prevented multi-lane commit graphs from continuously rescheduling their
+  layout and freezing the UI on merge-heavy repositories.
+- Timeline now starts at the latest tick instead of eagerly computing a large
+  historical range diff.
+- Dark mode and non-critical styles now load under the production Content
+  Security Policy without allowing inline script attributes.
+- Snapshot date cutoffs are normalized before invoking Git, avoiding
+  version-dependent parsing of date-only values.
+
 ## [5.4.0] - 2026-07-11
 
 ### Added

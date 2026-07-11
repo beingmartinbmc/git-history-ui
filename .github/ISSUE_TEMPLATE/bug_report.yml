@@ -50,7 +50,7 @@ body:
     attributes:
       label: git-history-ui version
       description: Enter the installed version that exhibited the failure (run `git-history-ui --version`).
-      placeholder: '5.4.0'
+      placeholder: '5.4.1'
     validations:
       required: true
 

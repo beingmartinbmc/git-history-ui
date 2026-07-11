@@ -546,8 +546,10 @@ export class GitService {
   async revAt(ref: string, atIso: string, opts: GitStreamOptions = {}): Promise<string | null> {
     if (!isSafeRef(ref)) throw new Error('Invalid ref');
     if (!isIsoLikeDate(atIso)) throw new Error('Invalid date');
+    const cutoff = new Date(atIso);
+    if (Number.isNaN(cutoff.getTime())) throw new Error('Invalid date');
     try {
-      const out = await this.git(['rev-list', '-1', `--before=${atIso}`, ref], opts);
+      const out = await this.git(['rev-list', '-1', `--before=${cutoff.toISOString()}`, ref], opts);
       const hash = out.trim();
       return hash || null;
     } catch {

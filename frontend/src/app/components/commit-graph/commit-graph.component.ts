@@ -11,6 +11,7 @@ import {
   effect,
   inject,
   signal,
+  untracked,
 } from '@angular/core';
 import { Commit } from '../../models/git.models';
 import { ThemeService } from '../../services/theme.service';
@@ -360,7 +361,8 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
   constructor() {
     effect(() => {
       // Recompute when commits change.
-      this.scheduleLayout(this.state.commits());
+      const commits = this.state.commits();
+      untracked(() => this.scheduleLayout(commits));
     });
     effect(() => {
       // Re-draw on selection change.

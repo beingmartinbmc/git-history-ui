@@ -68,6 +68,15 @@ describe('TimelineComponent', () => {
     expect(component.tickPct()).toBe(Math.round((target / (component.ticks().length - 1)) * 100));
   });
 
+  it('starts at the latest tick instead of computing an old range diff', fakeAsync(() => {
+    fixture.detectChanges();
+
+    expect(component.tickIndex()).toBe(component.ticks().length - 1);
+    tick(181);
+
+    expect(git.getSnapshot).toHaveBeenCalledWith('2026-02-01T00:00:00.000Z');
+  }));
+
   it('loads snapshot diff and selects the first changed file', fakeAsync(() => {
     fixture.detectChanges();
     tick(181);

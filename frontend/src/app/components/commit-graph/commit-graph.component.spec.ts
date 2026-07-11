@@ -1,4 +1,4 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { Commit } from '../../models/git.models';
 import { ThemeService } from '../../services/theme.service';
 import { UiStateService } from '../../services/ui-state.service';
@@ -66,12 +66,29 @@ describe('CommitGraphComponent', () => {
     fixture.destroy();
     expect(disconnect).toHaveBeenCalled();
   });
+
+  it('does not rebuild layout when a multi-lane layout updates its lane count', fakeAsync(() => {
+    state.commits.set([
+      commit('merge111', { parents: ['left111', 'right11'], isMerge: true }),
+      commit('left111'),
+      commit('right11'),
+    ]);
+    const scheduleLayout = spyOn<any>(component, 'scheduleLayout').and.callThrough();
+
+    fixture.detectChanges();
+    tick();
+    fixture.detectChanges();
+    tick();
+
+    expect(component.graphSummary()).toContain('2 lanes');
+    expect(scheduleLayout).toHaveBeenCalledTimes(1);
+  }));
 });
 
-function commit(): Commit {
+function commit(hash = 'a111111', overrides: Partial<Commit> = {}): Commit {
   return {
-    hash: 'a111111',
-    shortHash: 'a111111',
+    hash,
+    shortHash: hash.slice(0, 7),
     author: 'Ada',
     authorEmail: 'ada@example.com',
     date: '2026-01-01T00:00:00Z',
@@ -82,5 +99,6 @@ function commit(): Commit {
     branches: ['main'],
     tags: [],
     isMerge: false,
+    ...overrides,
   };
 }

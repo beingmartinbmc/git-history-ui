@@ -621,6 +621,7 @@ export class TimelineComponent {
   readonly selectedFile = signal<DiffFile | null>(null);
   readonly tickIndex = signal(0);
   private diffSub: { unsubscribe(): void } | null = null;
+  private tickTouched = false;
 
   ngOnDestroy() {
     this.diffSub?.unsubscribe();
@@ -691,6 +692,10 @@ export class TimelineComponent {
     effect(() => {
       const t = this.ticks();
       if (t.length === 0) return;
+      if (!this.tickTouched) {
+        this.tickIndex.set(t.length - 1);
+        return;
+      }
       if (this.tickIndex() >= t.length) this.tickIndex.set(t.length - 1);
     });
 
@@ -716,6 +721,7 @@ export class TimelineComponent {
   }
 
   onTickChange(v: number) {
+    this.tickTouched = true;
     this.tickIndex.set(Math.max(0, Math.min(this.ticks().length - 1, Number(v))));
   }
 

@@ -101,20 +101,19 @@ user configured a valid http(s) instance.
 
 ## Release checklist
 
-The following checks gate the npm package and GitHub v5.4.0 release:
+The following checks gate each npm package and GitHub release:
 
-- [ ] Tag equals `package.json` version (`v5.4.0`).
+- [ ] Tag equals `v` plus the `package.json` version.
 - [ ] Backend/frontend tests, lint, typecheck, build, and both production audits pass.
 - [ ] `npm pack --dry-run` contains the CLI, protocol script, action helper, and docs.
 - [ ] Packed CLI opens the deterministic demo without using this checkout.
 - [ ] Extension node tests and checker pass.
 - [ ] Deterministic runtime-only extension ZIP and SHA-256 are attached.
-- [ ] Release body uses the curated v5.4 changelog plus generated notes.
+- [ ] Release body uses the matching curated changelog section plus generated notes.
 - [ ] Verify protocol install/status/uninstall on macOS, Linux, and Windows.
 
 The Chrome Web Store listing remains unpublished. These are manual post-release
-distribution tasks, not blockers for npm publication or the GitHub v5.4.0
-release:
+distribution tasks, not blockers for npm publication or the GitHub release:
 
 - [ ] Capture real current UI/extension screenshots; do not use mock images.
 - [ ] Submit the packaged extension and real screenshots to the Chrome Web Store.
