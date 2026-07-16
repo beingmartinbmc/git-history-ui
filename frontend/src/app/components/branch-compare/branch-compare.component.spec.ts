@@ -52,6 +52,13 @@ describe('BranchCompareComponent', () => {
   });
 
   it('compares branch and tag refs without pre-resolving them to hashes', () => {
+    fixture.detectChanges();
+    const selectors = fixture.nativeElement.querySelectorAll(
+      'select',
+    ) as NodeListOf<HTMLSelectElement>;
+    expect(selectors[0].getAttribute('aria-label')).toBe('Base ref');
+    expect(selectors[1].getAttribute('aria-label')).toBe('Head ref');
+
     component.fromRef = 'v1.0.0';
     component.toRef = 'main';
 

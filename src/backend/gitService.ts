@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process';
 import { StringDecoder } from 'string_decoder';
 import { promisify } from 'util';
+import { normalizeDateFilter } from './dateFilter';
 import { gitQueue } from './gitProcessQueue';
 
 const execFileAsync = promisify(execFile);
@@ -317,8 +318,8 @@ export class GitService {
   private buildFilterArgs(options: GitOptions): string[] {
     const args: string[] = [];
     if (options.author) args.push(`--author=${options.author}`);
-    if (options.since) args.push(`--since=${options.since}`);
-    if (options.until) args.push(`--until=${options.until}`);
+    if (options.since) args.push(`--since=${normalizeDateFilter(options.since, 'since')}`);
+    if (options.until) args.push(`--until=${normalizeDateFilter(options.until, 'until')}`);
     if (options.search) {
       args.push(`--grep=${options.search}`, '--regexp-ignore-case', '--extended-regexp');
     }

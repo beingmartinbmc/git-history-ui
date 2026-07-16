@@ -61,6 +61,9 @@ describe('TimelineComponent', () => {
 
   it('computes the custom rail percentage from the selected tick', () => {
     fixture.detectChanges();
+    const slider = fixture.nativeElement.querySelector('input[type="range"]') as HTMLInputElement;
+    expect(slider.getAttribute('aria-label')).toBe('Repository moment');
+    expect(slider.getAttribute('aria-describedby')).toBe('timeline-instructions');
     const target = Math.floor((component.ticks().length - 1) / 2);
 
     component.onTickChange(target);
@@ -85,6 +88,9 @@ describe('TimelineComponent', () => {
     expect(git.getSnapshot).toHaveBeenCalled();
     expect(git.getTimelineRangeDiff).toHaveBeenCalledWith('old-ref', 'HEAD');
     expect(component.selectedFile()?.file).toBe('src/app.ts');
+    const file = fixture.nativeElement.querySelector('.files .file') as HTMLButtonElement;
+    expect(file.tagName).toBe('BUTTON');
+    expect(file.getAttribute('aria-pressed')).toBe('true');
   }));
 
   it('formats branch, tag, and diff status entries for snapshot cards', () => {

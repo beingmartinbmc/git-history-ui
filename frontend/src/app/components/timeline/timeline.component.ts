@@ -23,8 +23,8 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
       <header class="head">
         <div>
           <h2>Time travel</h2>
-          <p class="sub">
-            Drag the slider to see repo state at any point. Diff is computed against current HEAD.
+          <p class="sub" id="timeline-instructions">
+            Use the slider to see repo state at any point. Diff is computed against current HEAD.
           </p>
         </div>
         <div class="now">{{ atDisplay() }}</div>
@@ -42,6 +42,9 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
           [max]="ticks().length - 1"
           [ngModel]="tickIndex()"
           (ngModelChange)="onTickChange($event)"
+          aria-label="Repository moment"
+          aria-describedby="timeline-instructions"
+          [attr.aria-valuetext]="selectedTick().label"
         />
         <div class="ticks">
           <span
@@ -143,16 +146,18 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
           </span>
         </div>
         <div class="files" *ngIf="(diff()?.length ?? 0) > 0">
-          <div
+          <button
+            type="button"
             class="file"
             *ngFor="let f of diff()"
             [class.selected]="f === selectedFile()"
+            [attr.aria-pressed]="f === selectedFile()"
             (click)="selectedFile.set(f)"
           >
             <span class="status status-{{ f.status }}">{{ statusLabel(f.status) }}</span>
             <span class="path">{{ f.file }}</span>
             <span class="changes">+{{ f.additions }} −{{ f.deletions }}</span>
-          </div>
+          </button>
         </div>
         <div class="diff-body" *ngIf="selectedFile() as sf">
           <app-diff-viewer [fileInput]="sf" />
@@ -214,6 +219,10 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
         padding: 1rem 1.25rem;
         margin-bottom: 1rem;
         box-shadow: var(--shadow-sm);
+      }
+      .slider-wrap:has(.slider:focus-visible) {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
       }
       .rail {
         position: relative;
@@ -548,6 +557,8 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
         border: 1px solid var(--border-soft);
         border-radius: 999px;
         background: var(--bg-surface);
+        color: inherit;
+        font-family: inherit;
         max-width: 100%;
       }
       .file:hover {

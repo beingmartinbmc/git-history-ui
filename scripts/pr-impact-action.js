@@ -11,12 +11,14 @@ function resolveRefs(inputs, event) {
   const explicitHead = cleanRef(inputs.head);
   if (explicitBase && explicitHead) return { base: explicitBase, head: explicitHead };
   const payload = event || {};
-  const derived =
-    payload.pull_request
-      ? { base: payload.pull_request.base && payload.pull_request.base.sha, head: payload.pull_request.head && payload.pull_request.head.sha }
-      : payload.merge_group
-        ? { base: payload.merge_group.base_sha, head: payload.merge_group.head_sha }
-        : { base: payload.before, head: payload.after };
+  const derived = payload.pull_request
+    ? {
+        base: payload.pull_request.base && payload.pull_request.base.sha,
+        head: payload.pull_request.head && payload.pull_request.head.sha
+      }
+    : payload.merge_group
+      ? { base: payload.merge_group.base_sha, head: payload.merge_group.head_sha }
+      : { base: payload.before, head: payload.after };
   const base = explicitBase || cleanRef(derived.base);
   const head = explicitHead || cleanRef(derived.head);
   if (!base || !head) {
@@ -64,7 +66,7 @@ function runAction(env = process.env, spawn = spawnSync) {
   const event = readEvent(env.GITHUB_EVENT_PATH);
   const refs = resolveRefs({ base: env.INPUT_BASE, head: env.INPUT_HEAD }, event);
   const format = env.INPUT_FORMAT === 'json' ? 'json' : 'markdown';
-  const version = env.INPUT_CLI_VERSION || 'latest';
+  const version = env.INPUT_CLI_VERSION || require('../package.json').version;
   if (!/^(?:latest|\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.test(version)) {
     throw new Error('cli-version must be latest or a semantic version');
   }
@@ -87,13 +89,14 @@ function runAction(env = process.env, spawn = spawnSync) {
     '--head',
     refs.head
   ];
-  runCli([...common, '--format', format, '--output', output], cwd, spawn);
+  const jsonPath =
+    format === 'json'
+      ? output
+      : path.join(env.RUNNER_TEMP || os.tmpdir(), `git-history-ui-pr-impact-${process.pid}.json`);
+  const args = [...common, '--format', format, '--output', output];
+  if (format !== 'json') args.push('--json-output', jsonPath);
+  runCli(args, cwd, spawn);
 
-  let jsonPath = output;
-  if (format !== 'json') {
-    jsonPath = path.join(env.RUNNER_TEMP || os.tmpdir(), `git-history-ui-pr-impact-${process.pid}.json`);
-    runCli([...common, '--format', 'json', '--output', jsonPath], cwd, spawn);
-  }
   const report = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
   if (jsonPath !== output) fs.rmSync(jsonPath, { force: true });
 

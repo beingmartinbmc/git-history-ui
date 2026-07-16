@@ -17,7 +17,8 @@ import { getFileBreakageAnalysis } from './breakage';
 import { computeInsights } from './insights';
 import { computeWrapped } from './wrapped';
 import { AnnotationsStore } from './annotations';
-import { SqliteIndex, type IndexProgress, type IndexStats } from './cache/sqliteIndex';
+import { SqliteIndex } from './cache/sqliteIndex';
+import { createIndexBuildController } from './indexBuildController';
 import { ResultCache } from './cache/resultCache';
 import { RefWatcher } from './refWatcher';
 import { GitQueueFullError } from './gitProcessQueue';
@@ -979,53 +980,6 @@ function sendReport(res: Response, report: InvestigationReport, format: string |
     return;
   }
   res.status(400).json({ error: 'format must be json or markdown' });
-}
-
-interface IndexStatus extends IndexStats {
-  running: boolean;
-  progress: IndexProgress;
-}
-
-function createIndexBuildController(index: SqliteIndex) {
-  let controller: AbortController | null = null;
-  let running: Promise<IndexStats> | null = null;
-
-  const status = async (): Promise<IndexStatus> => ({
-    ...(await index.stats()),
-    running: !!running,
-    progress: index.getProgress()
-  });
-
-  const start = async (force = false): Promise<IndexStatus> => {
-    if (running) return status();
-    if (force) index.invalidate();
-    controller = new AbortController();
-    running = index
-      .build({ signal: controller.signal })
-      .catch((err) => {
-        if (controller?.signal.aborted) return index.stats();
-        throw err;
-      })
-      .finally(() => {
-        running = null;
-        controller = null;
-      });
-    return status();
-  };
-
-  const buildAndWait = async (): Promise<IndexStatus> => {
-    if (!running) await start();
-    await running;
-    return status();
-  };
-
-  const cancel = async (): Promise<IndexStatus> => {
-    controller?.abort();
-    if (running) await running.catch(() => undefined);
-    return status();
-  };
-
-  return { status, start, buildAndWait, cancel };
 }
 
 function wrap(handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) {

@@ -149,31 +149,47 @@ program
   .requiredOption('--head <ref>', 'head branch or commit')
   .option('--format <format>', 'markdown | json', 'markdown')
   .option('--output <path>', 'write the report to a file instead of stdout')
-  .action(async (options: { base: string; head: string; format: string; output?: string }) => {
-    try {
-      if (options.format !== 'markdown' && options.format !== 'json') {
-        throw new Error('--format must be markdown or json');
+  .option('--json-output <path>', 'also write the report as JSON')
+  .action(
+    async (options: {
+      base: string;
+      head: string;
+      format: string;
+      output?: string;
+      jsonOutput?: string;
+    }) => {
+      try {
+        if (options.format !== 'markdown' && options.format !== 'json') {
+          throw new Error('--format must be markdown or json');
+        }
+        const { GitService } = await import('./backend/gitService');
+        const { buildPrImpactReport, formatPrImpactMarkdown } = await import('./backend/report');
+        const git = new GitService(program.opts<MainOptions>().cwd ?? process.cwd());
+        const report = await buildPrImpactReport(git, options.base, options.head);
+        const rendered =
+          options.format === 'json'
+            ? `${JSON.stringify(report, null, 2)}\n`
+            : formatPrImpactMarkdown(report);
+        if (options.jsonOutput) {
+          writeFileSync(
+            resolve(options.jsonOutput),
+            `${JSON.stringify(report, null, 2)}\n`,
+            'utf8'
+          );
+        }
+        if (options.output) {
+          const output = resolve(options.output);
+          writeFileSync(output, rendered, 'utf8');
+          console.log(output);
+        } else {
+          process.stdout.write(rendered);
+        }
+      } catch (err) {
+        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        process.exitCode = 1;
       }
-      const { GitService } = await import('./backend/gitService');
-      const { buildPrImpactReport, formatPrImpactMarkdown } = await import('./backend/report');
-      const git = new GitService(program.opts<MainOptions>().cwd ?? process.cwd());
-      const report = await buildPrImpactReport(git, options.base, options.head);
-      const rendered =
-        options.format === 'json'
-          ? `${JSON.stringify(report, null, 2)}\n`
-          : formatPrImpactMarkdown(report);
-      if (options.output) {
-        const output = resolve(options.output);
-        writeFileSync(output, rendered, 'utf8');
-        console.log(output);
-      } else {
-        process.stdout.write(rendered);
-      }
-    } catch (err) {
-      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-      process.exitCode = 1;
     }
-  });
+  );
 
 program
   .command('wrapped')
@@ -477,7 +493,7 @@ function printWrapped(s: import('./backend/wrapped').WrappedStats): void {
   }
   if (s.superlatives.busiestHour) {
     const h = String(s.superlatives.busiestHour.hour).padStart(2, '0');
-    console.log(`  ⏰ Peak hour       ${chalk.bold(h + ':00 UTC')}`);
+    console.log(`  ⏰ Peak hour       ${chalk.bold(h + ':00 author-local')}`);
   }
   if (s.topContributors.length > 0) {
     console.log(line);
