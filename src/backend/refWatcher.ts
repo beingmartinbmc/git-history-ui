@@ -3,7 +3,7 @@ import path from 'path';
 import { EventEmitter } from 'events';
 
 /**
- * Watches .git/HEAD and .git/refs/ for changes and emits 'change'
+ * Watches Git's HEAD and refs for changes and emits 'change'
  * when new commits are likely available. Debounced to avoid noise
  * from rapid git operations (rebase, fetch, etc.).
  */
@@ -23,15 +23,22 @@ export class RefWatcher extends EventEmitter {
 
   start(): void {
     if (this.closed) return;
-    const gitDir = path.join(this.repoCwd, '.git');
-    const watchTargets = [path.join(gitDir, 'HEAD'), path.join(gitDir, 'refs')];
+    const gitDir = resolveGitDir(this.repoCwd);
+    if (!gitDir) return;
+    const commonDir = resolveCommonDir(gitDir);
+    const watchTargets = new Set([
+      path.join(gitDir, 'HEAD'),
+      path.join(gitDir, 'refs'),
+      path.join(commonDir, 'refs'),
+      path.join(commonDir, 'packed-refs')
+    ]);
     for (const target of watchTargets) {
       try {
         const isDir = fs.statSync(target).isDirectory();
         const w = fs.watch(target, { recursive: isDir }, () => this.onFsEvent());
         this.watchers.push(w);
       } catch {
-        // .git dir may not exist (bare repo, submodule, etc.)
+        // A ref target may not exist yet (for example packed-only refs).
       }
     }
   }
@@ -51,4 +58,26 @@ export class RefWatcher extends EventEmitter {
       this.emit('change');
     }, this.debounceMs);
   }
+}
+
+function resolveGitDir(repoCwd: string): string | null {
+  const dotGit = path.join(repoCwd, '.git');
+  try {
+    if (fs.statSync(dotGit).isDirectory()) return dotGit;
+    const match = fs.readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+)\s*$/m);
+    if (match) return path.resolve(repoCwd, match[1]);
+  } catch {
+    if (fs.existsSync(path.join(repoCwd, 'HEAD'))) return repoCwd;
+  }
+  return null;
+}
+
+function resolveCommonDir(gitDir: string): string {
+  try {
+    const common = fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim();
+    if (common) return path.resolve(gitDir, common);
+  } catch {
+    // Normal repositories do not have a commondir file.
+  }
+  return gitDir;
 }

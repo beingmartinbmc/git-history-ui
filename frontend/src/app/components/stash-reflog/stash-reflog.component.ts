@@ -11,10 +11,11 @@ import { GitService } from '../../services/git.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="container" [attr.aria-busy]="loading()">
-      <div class="tabs">
+      <div class="tabs" role="group" aria-label="Repository recovery data">
         <button
           class="tab"
           [class.active]="activeTab() === 'stash'"
+          [attr.aria-pressed]="activeTab() === 'stash'"
           (click)="activeTab.set('stash'); loadStashes()"
         >
           Stashes
@@ -22,6 +23,7 @@ import { GitService } from '../../services/git.service';
         <button
           class="tab"
           [class.active]="activeTab() === 'reflog'"
+          [attr.aria-pressed]="activeTab() === 'reflog'"
           (click)="activeTab.set('reflog'); loadReflog()"
         >
           Reflog

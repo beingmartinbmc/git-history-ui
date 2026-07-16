@@ -63,10 +63,11 @@ interface SideLine {
         >
           {{ summarizing() ? '...' : 'Summarize' }}
         </button>
-        <div class="toggle">
+        <div class="toggle" role="group" aria-label="Diff layout">
           <button
             class="btn btn-ghost"
             [class.active]="mode() === 'unified'"
+            [attr.aria-pressed]="mode() === 'unified'"
             (click)="mode.set('unified')"
           >
             Unified
@@ -74,6 +75,7 @@ interface SideLine {
           <button
             class="btn btn-ghost"
             [class.active]="mode() === 'split'"
+            [attr.aria-pressed]="mode() === 'split'"
             (click)="mode.set('split')"
           >
             Split
@@ -85,7 +87,13 @@ interface SideLine {
     <div class="ai-summary" *ngIf="summary() as s">
       <span class="ai-pill">AI</span>
       <span class="summary-text">{{ s }}</span>
-      <button class="btn btn-ghost btn-icon close" (click)="summary.set(null)">×</button>
+      <button
+        class="btn btn-ghost btn-icon close"
+        (click)="summary.set(null)"
+        aria-label="Close AI summary"
+      >
+        ×
+      </button>
     </div>
     <div class="ai-summary error" *ngIf="summaryError() as e">{{ e }}</div>
 

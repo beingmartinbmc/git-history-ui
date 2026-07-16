@@ -12,8 +12,11 @@
 npx git-history-ui@latest demo
 ```
 
-The demo creates a stable, network-free repository in your OS temporary
-directory. To inspect a real project instead:
+The demo creates a stable, network-free repository in your OS temporary directory.
+
+![Git History UI showing the commit graph, commit list, and split diff viewer](docs/images/preview.png)
+
+To inspect a real project instead:
 
 ```bash
 cd /path/to/your/repository
@@ -317,16 +320,16 @@ steps:
       fetch-depth: 0
   - uses: beingmartinbmc/git-history-ui@v5.4.1
     with:
-      cli-version: 5.4.1
       format: markdown
 ```
 
-Set `cli-version` when pinning the Action; otherwise the Action installs
-`git-history-ui@latest`. Either `base` or `head` can be resolved independently
-from `GITHUB_EVENT_PATH`, and an explicit value overrides event metadata only
-for that side. Outputs are `report-path`, `files-changed`, and `total-churn`.
-The action writes `GITHUB_STEP_SUMMARY`; it does not use `pull_request_target`,
-post comments, execute checkout code, or call a service.
+The Action installs the exact CLI version declared by the pinned Action release.
+Set `cli-version` only to deliberately override that version. Either `base` or
+`head` can be resolved independently from `GITHUB_EVENT_PATH`, and an explicit
+value overrides event metadata only for that side. Outputs are `report-path`,
+`files-changed`, and `total-churn`. The action writes `GITHUB_STEP_SUMMARY`; it
+does not use `pull_request_target`, post comments, execute checkout code, or call
+a service.
 
 ## 📚 Docs
 

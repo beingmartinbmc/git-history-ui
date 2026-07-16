@@ -27,7 +27,8 @@ try {
   git(['add', 'feature.txt']);
   git(['commit', '-q', '-m', 'feat: smoke']);
   const refs = resolveRefs({ base: 'main', head: 'feature' }, {});
-  const output = path.join(repo, 'impact.json');
+  const output = path.join(repo, 'impact.md');
+  const jsonOutput = path.join(repo, 'impact.json');
   execFileSync(
     process.execPath,
     [
@@ -40,13 +41,18 @@ try {
       '--head',
       refs.head,
       '--format',
-      'json',
+      'markdown',
       '--output',
-      output
+      output,
+      '--json-output',
+      jsonOutput
     ],
     { cwd: repo, env, stdio: 'pipe' }
   );
-  const report = JSON.parse(fs.readFileSync(output, 'utf8'));
+  const report = JSON.parse(fs.readFileSync(jsonOutput, 'utf8'));
+  if (!fs.readFileSync(output, 'utf8').includes('git-history-ui pr-impact')) {
+    throw new Error('markdown report was not written');
+  }
   if (report.summary.files !== 1 || report.summary.commits !== 1) {
     throw new Error(`unexpected smoke report: ${JSON.stringify(report.summary)}`);
   }

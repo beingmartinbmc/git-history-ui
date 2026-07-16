@@ -34,22 +34,33 @@ type Tab = 'history' | 'blame' | 'breakage';
         </div>
       </header>
 
-      <nav class="tabs">
-        <button class="tab" [class.active]="tab() === 'history'" (click)="tab.set('history')">
+      <div class="tabs" role="group" aria-label="File details">
+        <button
+          class="tab"
+          [class.active]="tab() === 'history'"
+          [attr.aria-pressed]="tab() === 'history'"
+          (click)="tab.set('history')"
+        >
           History
         </button>
-        <button class="tab" [class.active]="tab() === 'blame'" (click)="tab.set('blame')">
+        <button
+          class="tab"
+          [class.active]="tab() === 'blame'"
+          [attr.aria-pressed]="tab() === 'blame'"
+          (click)="tab.set('blame')"
+        >
           Blame
         </button>
         <button
           class="tab"
           [class.active]="tab() === 'breakage'"
+          [attr.aria-pressed]="tab() === 'breakage'"
           (click)="onSelectBreakageTab()"
           title="Heuristic analysis of recent fixes/reverts and likely culprits."
         >
           Breakage Analysis
         </button>
-      </nav>
+      </div>
 
       <section *ngIf="tab() === 'history'" class="history" [attr.aria-busy]="loading()">
         <div class="empty" *ngIf="loading() && commits().length === 0">Loading commits…</div>

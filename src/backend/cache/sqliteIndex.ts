@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { StringDecoder } from 'string_decoder';
+import { normalizeDateFilter } from '../dateFilter';
 import type { Commit } from '../gitService';
 
 const FIELD_SEP = '\x1f';
@@ -449,11 +450,11 @@ function buildFilterClause(filters?: { author?: string; since?: string; until?: 
   }
   if (filters?.since) {
     parts.push('c.date >= ?');
-    params.push(filters.since);
+    params.push(normalizeDateFilter(filters.since, 'since'));
   }
   if (filters?.until) {
     parts.push('c.date <= ?');
-    params.push(filters.until);
+    params.push(normalizeDateFilter(filters.until, 'until'));
   }
   return {
     clause: parts.length ? ' AND ' + parts.join(' AND ') : '',

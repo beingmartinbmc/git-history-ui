@@ -48,6 +48,29 @@ describe('RefWatcher', () => {
     }, 100);
   });
 
+  it('watches shared refs when .git points at a linked-worktree git directory', (done) => {
+    const dotGit = path.join(tmpDir, '.git');
+    fs.rmSync(dotGit, { recursive: true, force: true });
+    const worktreeGitDir = path.join(tmpDir, 'git-data', 'worktrees', 'feature');
+    const commonGitDir = path.join(tmpDir, 'git-data');
+    fs.mkdirSync(path.join(commonGitDir, 'refs', 'heads'), { recursive: true });
+    fs.mkdirSync(worktreeGitDir, { recursive: true });
+    fs.writeFileSync(dotGit, `gitdir: ${worktreeGitDir}\n`);
+    fs.writeFileSync(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feature\n');
+    fs.writeFileSync(path.join(worktreeGitDir, 'commondir'), '../..\n');
+
+    const watcher = new RefWatcher(tmpDir, 30);
+    watcher.on('change', () => {
+      watcher.stop();
+      done();
+    });
+    watcher.start();
+
+    setTimeout(() => {
+      fs.writeFileSync(path.join(commonGitDir, 'refs', 'heads', 'feature'), 'a'.repeat(40));
+    }, 20);
+  });
+
   it('does not throw when .git does not exist', () => {
     const watcher = new RefWatcher('/nonexistent/path');
     expect(() => watcher.start()).not.toThrow();

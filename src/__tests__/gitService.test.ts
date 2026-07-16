@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { GitService, NotARepositoryError } from '../backend/gitService';
 
-function git(repo: string, args: string[]): string {
+function git(repo: string, args: string[], envOverrides: NodeJS.ProcessEnv = {}): string {
   return execFileSync('git', args, {
     cwd: repo,
     encoding: 'utf8',
@@ -15,7 +15,8 @@ function git(repo: string, args: string[]): string {
       GIT_COMMITTER_NAME: 'Tester',
       GIT_COMMITTER_EMAIL: 'tester@example.com',
       GIT_TERMINAL_PROMPT: '0',
-      LC_ALL: 'C'
+      LC_ALL: 'C',
+      ...envOverrides
     }
   }).toString();
 }
@@ -29,12 +30,16 @@ function makeRepo(): string {
   return dir;
 }
 
-function commit(repo: string, file: string, content: string, msg: string): string {
+function commit(repo: string, file: string, content: string, msg: string, date?: string): string {
   const full = path.join(repo, file);
   mkdirSync(path.dirname(full), { recursive: true });
   writeFileSync(full, content);
   git(repo, ['add', '-A']);
-  git(repo, ['commit', '-q', '-m', msg]);
+  git(
+    repo,
+    ['commit', '-q', '-m', msg],
+    date ? { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } : {}
+  );
   return git(repo, ['rev-parse', 'HEAD']).trim();
 }
 
@@ -103,6 +108,26 @@ describe('GitService', () => {
     const none = await svc.getCommits({ author: 'NoSuchPerson' });
     expect(none.total).toBe(0);
     expect(none.commits).toHaveLength(0);
+  });
+
+  it('includes the full boundary day for date-only filters', async () => {
+    const datedRepo = makeRepo();
+    try {
+      const hash = commit(
+        datedRepo,
+        'dated.txt',
+        'dated\n',
+        'test: dated commit',
+        '2026-04-30T12:00:00+00:00'
+      );
+      const result = await new GitService(datedRepo).getCommits({
+        since: '2026-04-30',
+        until: '2026-04-30'
+      });
+      expect(result.commits.map((entry) => entry.hash)).toEqual([hash]);
+    } finally {
+      rmSync(datedRepo, { recursive: true, force: true });
+    }
   });
 
   it('filters by file path', async () => {

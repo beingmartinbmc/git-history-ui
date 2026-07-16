@@ -28,7 +28,7 @@ const sampleRows = [
     short: 'aaaaaaa',
     author: 'Alice',
     email: 'alice@example.com',
-    date: '2026-01-15T10:00:00Z',
+    date: '2026-01-31T23:45:00Z',
     parents: '',
     subject: 'feat: implement login flow',
     body: 'full login implementation with tests'
@@ -114,7 +114,7 @@ describe('SqliteIndex — search, searchCount, filters and invalidate (static im
         expect(hits.every((h) => h.date >= '2026-02-01')).toBe(true);
 
         const jan = await idx.search('', 50, { until: '2026-01-31' });
-        expect(jan.every((h) => h.date <= '2026-01-31')).toBe(true);
+        expect(jan.map((h) => h.hash)).toEqual(['a'.repeat(40)]);
         idx.close();
       } finally {
         repo.cleanup();

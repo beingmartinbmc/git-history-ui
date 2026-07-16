@@ -19,9 +19,8 @@ inputs:
     required: false
     default: .
   cli-version:
-    description: Published git-history-ui version
+    description: Published git-history-ui version; defaults to the pinned Action release
     required: false
-    default: latest
 outputs:
   report-path:
     description: Absolute report path

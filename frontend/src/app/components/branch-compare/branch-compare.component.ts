@@ -19,13 +19,13 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
       <div class="compare-header">
         <h2>Compare</h2>
         <div class="selectors">
-          <select [(ngModel)]="fromRef" class="ref-select">
+          <select [(ngModel)]="fromRef" class="ref-select" aria-label="Base ref">
             <option value="">Select base ref…</option>
             <option *ngFor="let b of branches()" [value]="b">{{ b }}</option>
             <option *ngFor="let t of tags()" [value]="t">{{ t }}</option>
           </select>
           <span class="arrow">→</span>
-          <select [(ngModel)]="toRef" class="ref-select">
+          <select [(ngModel)]="toRef" class="ref-select" aria-label="Head ref">
             <option value="">Select head ref…</option>
             <option *ngFor="let b of branches()" [value]="b">{{ b }}</option>
             <option *ngFor="let t of tags()" [value]="t">{{ t }}</option>
