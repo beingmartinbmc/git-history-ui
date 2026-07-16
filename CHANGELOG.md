@@ -6,6 +6,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.4.2] - 2026-07-16
+
+### Fixed
+
+- Date-only Git and SQLite filters now include the complete requested final day,
+  keeping search and Git Wrapped boundaries consistent.
+- Background index failures are handled without unhandled promise rejections,
+  while callers that wait for the build still receive the failure.
+- Ref watching now follows linked-worktree metadata, shared refs, and packed refs
+  so cached views refresh reliably across Git repository layouts.
+- Timeline, compare, diff, file-history, and stash controls now expose native
+  keyboard behavior, accessible names, focus states, and pressed state.
+
+### Changed
+
+- The PR-impact Action defaults to its pinned package version and produces
+  Markdown plus JSON output from a single analysis run.
+- The npm landing page now leads with the product preview, and Wrapped labels
+  peak activity as author-local time instead of UTC.
+
 ## [5.4.1] - 2026-07-12
 
 ### Fixed
