@@ -16,6 +16,8 @@ const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8
   version: string;
 };
 
+const REPO_URL = 'https://github.com/beingmartinbmc/git-history-ui';
+
 const program = new Command();
 
 program
@@ -450,7 +452,8 @@ async function main(overrides: Partial<MainOptions> = {}): Promise<void> {
           '  • Press Ctrl+C to stop the server\n' +
           (options.savePreset
             ? `  • Resume this view next time with: git-history-ui --preset ${options.savePreset}\n`
-            : '')
+            : '') +
+          `  • Star it: ${REPO_URL}\n`
       )
     );
   } catch (err) {
@@ -513,5 +516,6 @@ function printWrapped(s: import('./backend/wrapped').WrappedStats): void {
   }
   console.log(line);
   console.log(chalk.gray('  Share it: npx git-history-ui  →  Insights → Wrapped → Export card'));
+  console.log(chalk.gray(`  Made with git-history-ui — ${REPO_URL}`));
   console.log('');
 }
