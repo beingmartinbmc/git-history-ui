@@ -109,7 +109,7 @@
     "better-sqlite3": "^12.9.0"
   },
   "devDependencies": {
-    "@commitlint/cli": "^20.5.3",
+    "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^20.5.3",
     "@eslint/js": "^9.39.4",
     "@types/compression": "^1.7.5",
