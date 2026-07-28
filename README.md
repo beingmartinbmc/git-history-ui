@@ -6,22 +6,39 @@
 [![install size](https://packagephobia.com/badge?p=git-history-ui)](https://packagephobia.com/result?p=git-history-ui)
 [![GitHub stars](https://img.shields.io/github/stars/beingmartinbmc/git-history-ui.svg)](https://github.com/beingmartinbmc/git-history-ui)
 
-**Investigate Git history locally, share the result, and automate PR impact.**
-
-```bash
-npx git-history-ui@latest demo
-```
-
-The demo creates a stable, network-free repository in your OS temporary directory.
-
-![Git History UI showing the commit graph, commit list, and split diff viewer](docs/images/preview.png)
-
-To inspect a real project instead:
+**A full Git history explorer in your browser. One command, nothing installed,
+nothing uploaded.**
 
 ```bash
 cd /path/to/your/repository
 npx git-history-ui@latest
 ```
+
+That opens a browser UI with the commit graph, searchable history, side-by-side
+diffs, blame, and per-file history for the repository you are standing in. Press
+Ctrl+C and it's gone — no global install, no account, no cloud service.
+
+![Git History UI showing the commit graph, commit list, and split diff viewer](https://raw.githubusercontent.com/beingmartinbmc/git-history-ui/main/docs/images/preview.png)
+
+Want to look around before pointing it at your own code?
+
+```bash
+npx git-history-ui@latest demo
+```
+
+The demo builds a deterministic, network-free repository in your OS temporary
+directory.
+
+## Why not `git log`, gitk, or GitLens?
+
+- **No editor required.** It's a browser UI, so it behaves identically whether
+  you work in VS Code, JetBrains, Vim, or a terminal on a remote machine.
+- **Nothing to install.** A single `npx` invocation — no extension marketplace,
+  no sign-in, no telemetry, no server you don't run.
+- **It answers questions instead of just listing commits.** Pickaxe search
+  across all of history, work grouped by pull request, hotspots and churn,
+  dependency ripple for a single commit, and a shareable
+  [Git Wrapped](#git-wrapped) recap.
 
 ## Investigate → share → automate
 
@@ -318,7 +335,7 @@ steps:
   - uses: actions/checkout@v4
     with:
       fetch-depth: 0
-  - uses: beingmartinbmc/git-history-ui@v5.4.1
+  - uses: beingmartinbmc/git-history-ui@v5.5.0
     with:
       format: markdown
 ```

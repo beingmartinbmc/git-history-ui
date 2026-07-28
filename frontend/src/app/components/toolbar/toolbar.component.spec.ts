@@ -87,4 +87,16 @@ describe('ToolbarComponent', () => {
 
     expect(state.filters().search).toBeUndefined();
   }));
+
+  it('offers a safely-targeted repository link so the project stays discoverable', () => {
+    fixture.detectChanges();
+
+    const link = fixture.nativeElement.querySelector(
+      'a[href="https://github.com/beingmartinbmc/git-history-ui"]',
+    ) as HTMLAnchorElement | null;
+
+    expect(link).withContext('toolbar must link back to the repository').not.toBeNull();
+    expect(link?.target).toBe('_blank');
+    expect(link?.rel).toContain('noopener');
+  });
 });

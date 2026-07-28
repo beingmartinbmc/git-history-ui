@@ -6,6 +6,25 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-07-28
+
+### Added
+
+- A GitHub link in the app toolbar, a repository line in the CLI startup tips,
+  and attribution on the terminal Git Wrapped card, so the project is
+  discoverable from the tool itself rather than only from the README.
+
+### Changed
+
+- The README now leads with what the tool is and how it differs from `git log`,
+  gitk, and GitLens, instead of an abstract capability summary.
+- The README preview image is referenced by absolute URL again so it renders on
+  the npm landing page, where the published tarball carries no images.
+- The preview and banner images are resized to 1280px wide and quantized,
+  reducing each from roughly 1.5 MB to under 350 KB.
+- Version references in the README Action example, wiki pages, and Chrome
+  extension privacy link now match the released version.
+
 ## [5.4.2] - 2026-07-16
 
 ### Fixed

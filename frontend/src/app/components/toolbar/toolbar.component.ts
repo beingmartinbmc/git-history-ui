@@ -207,6 +207,22 @@ import { UiStateService } from '../../services/ui-state.service';
             <path fill="currentColor" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
           </svg>
         </button>
+        <a
+          class="btn btn-ghost star-link"
+          href="https://github.com/beingmartinbmc/git-history-ui"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Star git-history-ui on GitHub"
+          aria-label="Star git-history-ui on GitHub"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-1.94c-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.24 2.76.12 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.42.36.79 1.06.79 2.14v3.17c0 .31.21.68.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z"
+            />
+          </svg>
+          Star
+        </a>
       </div>
     </header>
 
@@ -424,6 +440,13 @@ import { UiStateService } from '../../services/ui-state.service';
         text-transform: uppercase;
         padding: 0.35rem 0.6rem;
       }
+      .star-link {
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.35rem 0.6rem;
+        text-decoration: none;
+      }
       .clear-filters {
         font-size: 11px;
         color: var(--danger);
@@ -504,6 +527,9 @@ import { UiStateService } from '../../services/ui-state.service';
           order: 5;
         }
         .filters .select {
+          display: none;
+        }
+        .star-link {
           display: none;
         }
       }
