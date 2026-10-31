@@ -1,3 +1,4 @@
+import http from 'http';
 import { AddressInfo } from 'net';
 import { startServer } from '../backend/server';
 import { fetchRaw, request, requestRaw } from './helpers/http';
@@ -391,12 +392,12 @@ describe('HTTP server — full endpoint coverage', () => {
     const r = await request({
       url: `${url}/api/share`,
       method: 'POST',
-      headers: { Host: 'evil.example' },
+      headers: { Host: 'localhost:4321' },
       body: { viewState: { view: 'history', commit: firstHash } }
     });
     expect(r.status).toBe(201);
     expect(r.body.url).not.toContain(url);
-    expect(r.body.url).not.toContain('evil.example');
+    expect(r.body.url).not.toContain('4321');
   });
 
   it('POST /api/share rejects missing or non-flat viewState', async () => {
@@ -587,6 +588,7 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
   let close: () => Promise<void>;
   let hash: string;
   let lastSummarySignal: AbortSignal | undefined;
+  let abortedDuringSummary: boolean | undefined;
 
   beforeAll(async () => {
     repo = makeRepo('ghui-ai-');
@@ -601,6 +603,12 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
         opts?: { hint?: string; maxTokens?: number; signal?: AbortSignal }
       ) => {
         lastSummarySignal = opts?.signal;
+        const waitMs = text === 'hang' ? 2000 : 50;
+        await new Promise((resolve) => {
+          setTimeout(resolve, waitMs);
+          opts?.signal?.addEventListener('abort', resolve);
+        });
+        abortedDuringSummary = opts?.signal?.aborted;
         return `STUB(${(opts?.hint ?? '').slice(0, 16)}): ${text.length} chars`;
       }
     };
@@ -625,6 +633,23 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
     expect(r.body.provider).toBe('anthropic');
     expect(r.body.summary).toContain('STUB');
     expect(lastSummarySignal).toBeDefined();
+    expect(abortedDuringSummary).toBe(false);
+  });
+
+  it('aborts the LLM call when the client disconnects', async () => {
+    abortedDuringSummary = undefined;
+    const client = http.request(`${url}/api/summarize-diff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    client.on('error', () => undefined);
+    client.end(JSON.stringify({ text: 'hang' }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    client.destroy();
+    for (let i = 0; i < 50 && abortedDuringSummary === undefined; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(abortedDuringSummary).toBe(true);
   });
 
   it('explain-commit fetches the commit + diff and returns a summary', async () => {

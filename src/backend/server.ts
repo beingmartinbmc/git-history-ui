@@ -89,7 +89,7 @@ export async function startServer(
           'base-uri': ["'self'"],
           'object-src': ["'none'"],
           'frame-ancestors': ["'none'"],
-          'script-src': ["'self'", "'unsafe-inline'"],
+          'script-src': ["'self'"],
           'style-src': ["'self'", "'unsafe-inline'"],
           'img-src': ["'self'", 'data:'],
           'connect-src': ["'self'"]
@@ -236,7 +236,7 @@ export async function startServer(
 
     const controller = new AbortController();
     let cancelled = false;
-    req.on('close', () => {
+    res.on('close', () => {
       cancelled = true;
       controller.abort();
     });
@@ -996,7 +996,9 @@ function isAllowedOrigin(origin: string, req: Request): boolean {
 
 function requireAuth(token: string | undefined) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (isLoopbackRequest(req)) {
+    // A loopback socket alone is not enough: a DNS-rebound page also arrives on
+    // 127.0.0.1, but its Host header still names the attacker's domain.
+    if (isLoopbackRequest(req) && isLoopbackHost(hostHeaderName(req.get('host')))) {
       next();
       return;
     }
@@ -1008,6 +1010,10 @@ function requireAuth(token: string | undefined) {
     res.setHeader('WWW-Authenticate', 'Basic realm="git-history-ui"');
     res.status(401).json({ error: 'Unauthorized' });
   };
+}
+
+function hostHeaderName(host = ''): string {
+  return host.replace(/:\d+$/, '');
 }
 
 function safeTokenEqual(a: string, b: string): boolean {
@@ -1119,9 +1125,13 @@ function sanitizeErrorMessage(message: string): string {
   );
 }
 
+// On Node 20+ `req` emits 'close' as soon as the body is consumed, which aborted
+// every POST immediately. An unfinished response closing is the real disconnect.
 function requestAbortSignal(req: Request): AbortSignal {
   const controller = new AbortController();
-  req.on('close', () => controller.abort());
+  req.res?.on('close', () => {
+    if (!req.res?.writableFinished) controller.abort();
+  });
   return controller.signal;
 }
 
