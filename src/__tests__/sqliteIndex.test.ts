@@ -330,6 +330,45 @@ describe('SqliteIndex', () => {
     });
   });
 
+  it('drops old FTS terms and compares dates as instants on rebuild', async () => {
+    await withTempHomeAsync(async () => {
+      const { SqliteIndex } = fresh();
+      if (!SqliteIndex.isAvailable()) return;
+      let head = 'h1';
+      let subject = 'zebrafish migration';
+      const runner = async (args: string[]): Promise<string> => {
+        if (args[0] === 'rev-parse') return head;
+        if (args[0] === 'log') {
+          return fakeLog([
+            {
+              hash: '3'.repeat(40),
+              short: '3333333',
+              author: 'a',
+              email: 'a@x.com',
+              // 23:30 on Jan 1 in UTC-5 is Jan 2 04:30 UTC
+              date: '2026-01-01T23:30:00-05:00',
+              parents: '',
+              subject,
+              body: ''
+            }
+          ]);
+        }
+        return '';
+      };
+      const idx = new SqliteIndex('/tmp/ghui-fts-rebuild', runner);
+      await idx.build();
+      expect(await idx.search('zebrafish')).toHaveLength(1);
+      head = 'h2';
+      subject = 'narwhal cleanup';
+      await idx.build();
+      expect(await idx.search('zebrafish')).toHaveLength(0);
+      expect(await idx.search('narwhal')).toHaveLength(1);
+      expect(await idx.search('narwhal', 10, { since: '2026-01-02T00:00:00Z' })).toHaveLength(1);
+      expect(await idx.search('narwhal', 10, { until: '2026-01-02T00:00:00Z' })).toHaveLength(0);
+      idx.close();
+    });
+  });
+
   it('reports unavailable + empty stats when better-sqlite3 cannot load', async () => {
     // Simulate the missing-native-module case by mocking require.
     jest.resetModules();
