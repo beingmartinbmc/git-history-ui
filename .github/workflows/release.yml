@@ -71,11 +71,12 @@ jobs:
 
       # Publish last so a packaging or upload failure never leaves npm ahead of the GitHub release.
       # It ships the tarball the smoke test installed, not a fresh pack of the tree.
+      # npm trusted publishing authenticates through this job's OIDC token (id-token: write),
+      # so there is no long-lived npm token; npmjs.com must trust beingmartinbmc/git-history-ui release.yml.
       - name: Publish npm package
         run: npm publish "$PACKAGE" --provenance --access public
         env:
           PACKAGE: ${{ steps.smoke.outputs.package }}
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_TOKEN }}
 
   github-release:
     name: Create GitHub release
