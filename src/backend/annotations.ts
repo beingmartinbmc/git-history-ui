@@ -2,8 +2,10 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { isPlausibleHash } from './gitService';
 
 const LOCKFILE_STALE_MS = 30_000;
+const COMPACT_EVERY = 100;
 
 export interface AnnotationComment {
   id: string;
@@ -40,7 +42,7 @@ export class AnnotationsStore {
   private mu: Promise<void> = Promise.resolve();
   private cache: FileShape | null = null;
   private cacheSignature = '';
-  private resetJournalOnNextWrite = false;
+  private journalEntries = 0;
 
   constructor(repoCwd: string) {
     const id = crypto.createHash('sha256').update(path.resolve(repoCwd)).digest('hex').slice(0, 16);
@@ -49,11 +51,13 @@ export class AnnotationsStore {
   }
 
   async list(hash: string): Promise<AnnotationComment[]> {
+    assertHash(hash);
     const data = await this.load();
     return [...(data.byHash[hash] ?? [])];
   }
 
   async add(hash: string, input: { author: string; body: string }): Promise<AnnotationComment> {
+    assertHash(hash);
     let result!: AnnotationComment;
     await this.withLock(async () => {
       const data = await this.load();
@@ -73,6 +77,7 @@ export class AnnotationsStore {
   }
 
   async remove(hash: string, id: string): Promise<boolean> {
+    assertHash(hash);
     let removed = false;
     await this.withLock(async () => {
       const data = await this.load();
@@ -91,32 +96,31 @@ export class AnnotationsStore {
     const signature = await this.storageSignature();
     if (this.cache && signature === this.cacheSignature) return this.cache;
     let data: FileShape = { version: 1, byHash: {} };
-    let replayJournal = true;
     try {
-      const raw = await fs.promises.readFile(this.file, 'utf8');
-      const parsed = JSON.parse(raw) as FileShape;
-      if (parsed?.version === 1 && parsed.byHash) {
+      const parsed = JSON.parse(await fs.promises.readFile(this.file, 'utf8')) as FileShape;
+      if (parsed?.version === 1 && parsed.byHash && typeof parsed.byHash === 'object') {
         data = parsed;
-      } else {
-        replayJournal = false;
-        this.resetJournalOnNextWrite = true;
       }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      replayJournal = code === 'ENOENT';
-      if (!replayJournal) this.resetJournalOnNextWrite = true;
+    } catch {
+      /* missing or corrupt snapshot: the journal below is the complete log */
     }
-    if (replayJournal) {
-      try {
-        const raw = await fs.promises.readFile(this.journal, 'utf8');
-        for (const line of raw.split('\n')) {
-          if (!line.trim()) continue;
+    // Replay is idempotent, so it is always safe on top of a (possibly stale) snapshot.
+    let entries = 0;
+    try {
+      const raw = await fs.promises.readFile(this.journal, 'utf8');
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        try {
           this.applyJournal(data, JSON.parse(line) as JournalEntry);
+          entries++;
+        } catch {
+          /* skip a torn or corrupt line instead of dropping the rest */
         }
-      } catch {
-        /* missing or corrupt -> default */
       }
+    } catch {
+      /* no journal yet */
     }
+    this.journalEntries = entries;
     this.cache = data;
     this.cacheSignature = signature;
     return data;
@@ -124,14 +128,16 @@ export class AnnotationsStore {
 
   private async append(entry: JournalEntry, data: FileShape): Promise<void> {
     await fs.promises.mkdir(path.dirname(this.journal), { recursive: true });
-    if (this.resetJournalOnNextWrite) {
-      await fs.promises.writeFile(this.journal, `${JSON.stringify(entry)}\n`, 'utf8');
-      this.resetJournalOnNextWrite = false;
-    } else {
-      await fs.promises.appendFile(this.journal, `${JSON.stringify(entry)}\n`, 'utf8');
-    }
-    if (!(await this.isValidSnapshotFile())) {
+    await fs.promises.appendFile(this.journal, `${JSON.stringify(entry)}\n`, 'utf8');
+    this.journalEntries++;
+    const compact = this.journalEntries >= COMPACT_EVERY;
+    if (compact || !(await this.isValidSnapshotFile())) {
       await this.saveSnapshot(data);
+      if (compact) {
+        // Snapshot is durable (tmp + rename) before the journal is emptied.
+        await fs.promises.writeFile(this.journal, '', 'utf8');
+        this.journalEntries = 0;
+      }
     }
     this.cacheSignature = await this.storageSignature();
   }
@@ -162,7 +168,10 @@ export class AnnotationsStore {
   }
 
   private applyJournal(data: FileShape, entry: JournalEntry): void {
+    // Hashes are used as object keys; reject anything (e.g. __proto__) that isn't a hash.
+    if (!isPlausibleHash(entry?.hash)) throw new Error('invalid journal entry');
     if (entry.op === 'add') {
+      if (typeof entry.comment?.id !== 'string') throw new Error('invalid journal entry');
       const list = data.byHash[entry.hash] ?? [];
       if (!list.some((c) => c.id === entry.comment.id)) list.push(entry.comment);
       data.byHash[entry.hash] = list;
@@ -233,4 +242,8 @@ export class AnnotationsStore {
   private async releaseFileLock(): Promise<void> {
     await fs.promises.unlink(this.lockPath).catch(() => {});
   }
+}
+
+function assertHash(hash: string): void {
+  if (!isPlausibleHash(hash)) throw new Error('Invalid commit hash');
 }

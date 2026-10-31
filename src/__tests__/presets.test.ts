@@ -90,3 +90,32 @@ describe('PresetsStore', () => {
     });
   });
 });
+
+describe('PresetsStore validation', () => {
+  const load = () => {
+    jest.resetModules();
+    return require('../backend/presets') as typeof import('../backend/presets');
+  };
+
+  it('rejects bad filter types and drops unknown keys', async () => {
+    await withTempHomeAsync(async () => {
+      const { PresetsStore } = load();
+      const store = new PresetsStore();
+      await expect(store.save('x', { author: 5 } as never)).rejects.toThrow(/Invalid preset/);
+      await expect(store.save('x', { port: 99999 } as never)).rejects.toThrow(/Invalid preset/);
+      await store.save('ok', { author: 'a', evil: 1 } as never);
+      await expect(store.get('ok')).resolves.toEqual({ author: 'a' });
+    });
+  });
+
+  it('keeps every preset from concurrent saves', async () => {
+    await withTempHomeAsync(async () => {
+      const { PresetsStore } = load();
+      const store = new PresetsStore();
+      await Promise.all(
+        Array.from({ length: 8 }, (_, i) => store.save(`p${i}`, { author: `a${i}` }))
+      );
+      expect(Object.keys(await store.list())).toHaveLength(8);
+    });
+  });
+});
