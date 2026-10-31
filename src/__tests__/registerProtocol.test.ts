@@ -4,12 +4,12 @@ import path from 'path';
 
 const {
   install,
+  macPlistEdits,
   protocolPaths,
   status,
   uninstall,
   renderLinuxDesktop,
-  renderMacLauncher,
-  renderMacPlist,
+  renderMacAppleScript,
   renderPosixLauncher,
   renderWindowsLauncher,
   windowsInstallCommands,
@@ -17,6 +17,7 @@ const {
   winQuote
 } = require('../../scripts/register-protocol.js') as {
   install: (options: object) => Promise<{ installed: boolean }>;
+  macPlistEdits: (plist: string) => string[][];
   protocolPaths: (
     home: string,
     platform: string
@@ -25,9 +26,8 @@ const {
     desktop: string;
   };
   renderLinuxDesktop: (launcher: string) => string;
-  renderMacLauncher: (launcher: string) => string;
-  renderMacPlist: () => string;
-  renderPosixLauncher: () => string;
+  renderMacAppleScript: (launcher: string) => string;
+  renderPosixLauncher: (installPath?: string) => string;
   renderWindowsLauncher: () => string;
   status: (options: object) => Promise<{ installed: boolean }>;
   uninstall: (options: object) => Promise<{ removed: boolean }>;
@@ -36,20 +36,64 @@ const {
   winQuote: (value: string) => string;
 };
 
+const { version } = require('../../package.json') as { version: string };
+
 describe('register-protocol script helpers', () => {
-  it('generates a stable POSIX launcher with a durable CLI and npx fallback', () => {
-    const launcher = renderPosixLauncher();
+  it('generates a stable POSIX launcher with a durable CLI and a pinned npx fallback', () => {
+    const launcher = renderPosixLauncher("/opt/node's bin:/usr/bin");
     expect(launcher).toContain('command -v git-history-ui');
-    expect(launcher).toContain('npx --yes git-history-ui@latest --repo-from-url "$1"');
+    expect(launcher).toContain(`npx --yes git-history-ui@${version} --repo-from-url "$1"`);
+    expect(launcher).toContain(`PATH='/opt/node'\\''s bin:/usr/bin':"$PATH"`);
+    expect(launcher).not.toContain('@latest');
     expect(launcher).not.toContain('node_modules');
   });
 
-  it('generates macOS plist and app launcher pointing at the stable user launcher', () => {
-    const launcher = renderMacLauncher('/Users/Ada Project/.git-history-ui/bin/protocol-open');
-    expect(launcher).toContain('exec "/Users/Ada Project/.git-history-ui/bin/protocol-open" "$1"');
-    const plist = renderMacPlist();
-    expect(plist).toContain('<string>git-history-ui</string>');
-    expect(plist).toContain('<string>io.github.git-history-ui.protocol</string>');
+  it('generates a macOS AppleScript URL handler and plist edits for the scheme', () => {
+    const script = renderMacAppleScript('/Users/Ada "Q" Project/.git-history-ui/bin/protocol-open');
+    expect(script).toContain('on open location theURL');
+    expect(script).toContain(
+      'quoted form of "/Users/Ada \\"Q\\" Project/.git-history-ui/bin/protocol-open"'
+    );
+    expect(script).toContain('quoted form of theURL');
+    const edits = macPlistEdits('/x/Info.plist');
+    expect(edits).toContainEqual([
+      '-replace',
+      'CFBundleIdentifier',
+      '-string',
+      'io.github.git-history-ui.protocol',
+      '/x/Info.plist'
+    ]);
+    expect(edits.find((e) => e[1] === 'CFBundleURLTypes')?.[3]).toContain('"git-history-ui"');
+  });
+
+  it('builds, re-signs and registers the macOS applet, failing loudly on a broken step', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ghui-protocol-mac-'));
+    const calls: string[] = [];
+    const execFile = (
+      command: string,
+      _args: string[],
+      _options: object,
+      callback: (error: Error | null, stdout?: string) => void
+    ) => {
+      calls.push(path.basename(command));
+      callback(command === 'codesign' ? new Error('no codesign') : null, '');
+    };
+    try {
+      await expect(install({ home, platform: 'darwin', execFile })).rejects.toThrow(
+        'codesign failed'
+      );
+      expect(calls).toEqual([
+        'osacompile',
+        'plutil',
+        'plutil',
+        'plutil',
+        'plutil',
+        'plutil',
+        'codesign'
+      ]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it('quotes Linux desktop launcher paths and URL placeholders', () => {
@@ -76,7 +120,8 @@ describe('register-protocol script helpers', () => {
       'git-history-ui',
       '/f'
     ]);
-    expect(renderWindowsLauncher()).toContain('npx --yes git-history-ui@latest');
+    expect(renderWindowsLauncher()).toContain(`npx --yes git-history-ui@${version}`);
+    expect(renderWindowsLauncher()).toContain('where git-history-ui.cmd');
   });
 
   it('escapes embedded quotes in registry command values', () => {

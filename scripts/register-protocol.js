@@ -8,10 +8,19 @@ const { execFile } = require('child_process');
 
 const OWNED_MARKER = 'git-history-ui protocol artifact';
 const WINDOWS_ROOT = 'HKCU\\Software\\Classes\\git-history-ui';
+const MAC_BUNDLE_ID = 'io.github.git-history-ui.protocol';
+const LSREGISTER =
+  '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
+// Pin the npx fallback to the installing release so a URL click never runs whatever `latest` is.
+const PACKAGE_SPEC = `git-history-ui@${require('../package.json').version}`;
 
 function protocolPaths(home = os.homedir(), platform = process.platform) {
   const root = path.join(home, '.git-history-ui');
-  const launcher = path.join(root, 'bin', platform === 'win32' ? 'protocol-open.cmd' : 'protocol-open');
+  const launcher = path.join(
+    root,
+    'bin',
+    platform === 'win32' ? 'protocol-open.cmd' : 'protocol-open'
+  );
   return {
     root,
     launcher,
@@ -20,26 +29,34 @@ function protocolPaths(home = os.homedir(), platform = process.platform) {
   };
 }
 
-function renderPosixLauncher() {
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+// URL handlers start with a bare PATH (launchd, desktop sessions), so keep the
+// PATH from install time to find node, npx and a global git-history-ui.
+function renderPosixLauncher(installPath = process.env.PATH || '') {
   return `#!/bin/sh
 # ${OWNED_MARKER}
+PATH=${shQuote(installPath)}:"$PATH"
+export PATH
 candidate="$(command -v git-history-ui 2>/dev/null || true)"
 case "$candidate" in
   ""|"$0"|*/_npx/*|*/.npm/_npx/*) ;;
   *) exec "$candidate" --repo-from-url "$1" ;;
 esac
-exec npx --yes git-history-ui@latest --repo-from-url "$1"
+exec npx --yes ${PACKAGE_SPEC} --repo-from-url "$1"
 `;
 }
 
 function renderWindowsLauncher() {
   return `@echo off\r
 rem ${OWNED_MARKER}\r
-for /f "delims=" %%I in ('where git-history-ui 2^>nul') do (\r
-  "%%I" --repo-from-url "%~1"\r
+for /f "delims=" %%I in ('where git-history-ui.cmd 2^>nul') do (\r
+  call "%%I" --repo-from-url "%~1"\r
   exit /b %ERRORLEVEL%\r
 )\r
-npx --yes git-history-ui@latest --repo-from-url "%~1"\r
+npx --yes ${PACKAGE_SPEC} --repo-from-url "%~1"\r
 `;
 }
 
@@ -60,41 +77,31 @@ X-Git-History-UI-Owned=true
 `;
 }
 
-function xmlEscape(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+function appleScriptString(value) {
+  return `"${String(value).replace(/(["\\])/g, '\\$1')}"`;
 }
 
-function renderMacLauncher(launcher) {
-  const escaped = String(launcher).replace(/(["\\$`])/g, '\\$1');
-  return `#!/bin/sh
-# ${OWNED_MARKER}
-exec "${escaped}" "$1"
+// macOS delivers custom-scheme URLs as an Apple Event, never as argv, so the
+// app has to be an AppleScript applet with an `open location` handler.
+function renderMacAppleScript(launcher) {
+  return `-- ${OWNED_MARKER}
+on open location theURL
+  do shell script quoted form of ${appleScriptString(launcher)} & " " & quoted form of theURL & " >/dev/null 2>&1 &"
+end open location
 `;
 }
 
-function renderMacPlist() {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!-- ${xmlEscape(OWNED_MARKER)} -->
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key><string>git-history-ui</string>
-  <key>CFBundleIdentifier</key><string>io.github.git-history-ui.protocol</string>
-  <key>CFBundleName</key><string>git-history-ui</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleURLTypes</key>
-  <array><dict>
-    <key>CFBundleURLName</key><string>git-history-ui URL</string>
-    <key>CFBundleURLSchemes</key><array><string>git-history-ui</string></array>
-  </dict></array>
-</dict>
-</plist>
-`;
+function macPlistEdits(plist) {
+  const urlTypes = JSON.stringify([
+    { CFBundleURLName: 'git-history-ui URL', CFBundleURLSchemes: ['git-history-ui'] }
+  ]);
+  return [
+    ['-replace', 'CFBundleIdentifier', '-string', MAC_BUNDLE_ID, plist],
+    ['-replace', 'CFBundleURLTypes', '-json', urlTypes, plist],
+    ['-replace', 'LSUIElement', '-bool', 'YES', plist],
+    ['-replace', 'GitHistoryUIOwnedBy', '-string', OWNED_MARKER, plist],
+    ['-convert', 'xml1', plist]
+  ];
 }
 
 function winQuote(value) {
@@ -159,18 +166,19 @@ async function install(options = {}) {
       'x-scheme-handler/git-history-ui'
     ]);
   } else if (platform === 'darwin') {
-    const contents = path.join(paths.app, 'Contents');
-    const macos = path.join(contents, 'MacOS');
-    fileSystem.mkdirSync(macos, { recursive: true });
-    const executable = path.join(macos, 'git-history-ui');
-    fileSystem.writeFileSync(executable, renderMacLauncher(paths.launcher), 'utf8');
-    fileSystem.chmodSync(executable, 0o755);
-    fileSystem.writeFileSync(path.join(contents, 'Info.plist'), renderMacPlist(), 'utf8');
-    await run(
-      exec,
-      '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister',
-      ['-f', paths.app]
-    );
+    const source = path.join(paths.root, 'protocol-open.applescript');
+    fileSystem.writeFileSync(source, renderMacAppleScript(paths.launcher), 'utf8');
+    const plist = path.join(paths.app, 'Contents', 'Info.plist');
+    const steps = [
+      ['osacompile', ['-o', paths.app, source]],
+      ...macPlistEdits(plist).map((args) => ['plutil', args]),
+      // Editing Info.plist breaks osacompile's ad-hoc signature; re-sign so it still launches.
+      ['codesign', ['--force', '--sign', '-', paths.app]],
+      [LSREGISTER, ['-f', paths.app]]
+    ];
+    for (const [command, args] of steps) {
+      if (!(await run(exec, command, args))) throw new Error(`${path.basename(command)} failed`);
+    }
   } else if (platform === 'win32') {
     for (const args of windowsInstallCommands(paths.launcher)) await run(exec, 'reg', args);
   } else {
@@ -205,22 +213,13 @@ async function status(options = {}) {
       result.ok &&
       result.stdout.trim() === 'git-history-ui.desktop';
   } else if (platform === 'darwin') {
-    const result = await runCapture(
-      exec,
-      '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister',
-      ['-dump']
-    );
+    const result = await runCapture(exec, LSREGISTER, ['-dump']);
     registration =
       isOwned(path.join(paths.app, 'Contents', 'Info.plist'), fileSystem) &&
       result.ok &&
-      result.stdout.includes('io.github.git-history-ui.protocol');
+      result.stdout.includes(MAC_BUNDLE_ID);
   } else if (platform === 'win32') {
-    const owner = await runCapture(exec, 'reg', [
-      'query',
-      WINDOWS_ROOT,
-      '/v',
-      'OwnedBy'
-    ]);
+    const owner = await runCapture(exec, 'reg', ['query', WINDOWS_ROOT, '/v', 'OwnedBy']);
     const command = await runCapture(exec, 'reg', [
       'query',
       `${WINDOWS_ROOT}\\shell\\open\\command`,
@@ -249,7 +248,11 @@ async function uninstall(options = {}) {
     removeOwned(paths.desktop, fileSystem);
   } else if (platform === 'darwin') {
     const plist = path.join(paths.app, 'Contents', 'Info.plist');
-    if (isOwned(plist, fileSystem)) fileSystem.rmSync(paths.app, { recursive: true, force: true });
+    if (isOwned(plist, fileSystem)) {
+      await run(exec, LSREGISTER, ['-u', paths.app]);
+      fileSystem.rmSync(paths.app, { recursive: true, force: true });
+    }
+    removeOwned(path.join(paths.root, 'protocol-open.applescript'), fileSystem);
   } else if (platform === 'win32') {
     const owned = await runCapture(exec, 'reg', ['query', WINDOWS_ROOT, '/v', 'OwnedBy']);
     if (owned.ok && owned.stdout.includes('git-history-ui')) {
@@ -266,7 +269,11 @@ async function main() {
     throw new Error('Usage: register-protocol.js install|status|uninstall');
   }
   const result =
-    action === 'install' ? await install() : action === 'uninstall' ? await uninstall() : await status();
+    action === 'install'
+      ? await install()
+      : action === 'uninstall'
+        ? await uninstall()
+        : await status();
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (action === 'status' && !result.installed) process.exitCode = 1;
 }
@@ -283,10 +290,10 @@ module.exports = {
   WINDOWS_ROOT,
   desktopQuote,
   install,
+  macPlistEdits,
   protocolPaths,
   renderLinuxDesktop,
-  renderMacLauncher,
-  renderMacPlist,
+  renderMacAppleScript,
   renderPosixLauncher,
   renderWindowsLauncher,
   status,
