@@ -16,6 +16,7 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 import { GitService } from '../../services/git.service';
 import { ThemeService } from '../../services/theme.service';
 import { UiStateService } from '../../services/ui-state.service';
+import { isTyping } from '../../utils/dom';
 
 @Component({
   selector: 'app-toolbar',
@@ -51,7 +52,7 @@ import { UiStateService } from '../../services/ui-state.service';
         <a routerLink="/stash" routerLinkActive="active" ariaCurrentWhenActive="page">Stash</a>
       </nav>
 
-      <div class="filters">
+      <div class="filters" id="toolbar-filters" [class.sheet-open]="filtersOpen()">
         <label class="search" [class.search-nl]="state.searchMode() === 'nl'">
           <button
             type="button"
@@ -130,6 +131,15 @@ import { UiStateService } from '../../services/ui-state.service';
       </div>
 
       <div class="actions">
+        <button
+          type="button"
+          class="btn btn-ghost filters-toggle"
+          (click)="filtersOpen.set(!filtersOpen())"
+          [attr.aria-expanded]="filtersOpen()"
+          aria-controls="toolbar-filters"
+        >
+          Filters
+        </button>
         <button
           class="btn btn-ghost clear-filters"
           *ngIf="activeFilterCount()"
@@ -239,23 +249,53 @@ import { UiStateService } from '../../services/ui-state.service';
 
     <div class="filter-chips" *ngIf="activeFilterCount()">
       <span class="chip-label">Active filters</span>
-      <button class="chip active" *ngIf="state.filters().branch as b" (click)="onBranch('')">
-        branch: {{ shortBranch(b) }} <span>×</span>
+      <button
+        class="chip active"
+        *ngIf="state.filters().branch as b"
+        (click)="onBranch('')"
+        aria-label="Remove branch filter"
+      >
+        branch: {{ shortBranch(b) }} <span aria-hidden="true">×</span>
       </button>
-      <button class="chip active" *ngIf="state.filters().author as a" (click)="onAuthor('')">
-        author: {{ a }} <span>×</span>
+      <button
+        class="chip active"
+        *ngIf="state.filters().author as a"
+        (click)="onAuthor('')"
+        aria-label="Remove author filter"
+      >
+        author: {{ a }} <span aria-hidden="true">×</span>
       </button>
-      <button class="chip active" *ngIf="state.filters().since as s" (click)="onSince('')">
-        since: {{ s }} <span>×</span>
+      <button
+        class="chip active"
+        *ngIf="state.filters().since as s"
+        (click)="onSince('')"
+        aria-label="Remove start date filter"
+      >
+        since: {{ s }} <span aria-hidden="true">×</span>
       </button>
-      <button class="chip active" *ngIf="state.filters().until as u" (click)="onUntil('')">
-        until: {{ u }} <span>×</span>
+      <button
+        class="chip active"
+        *ngIf="state.filters().until as u"
+        (click)="onUntil('')"
+        aria-label="Remove end date filter"
+      >
+        until: {{ u }} <span aria-hidden="true">×</span>
       </button>
-      <button class="chip active" *ngIf="state.filters().file as f" (click)="onFile('')">
-        file: {{ f }} <span>×</span>
+      <button
+        class="chip active"
+        *ngIf="state.filters().file as f"
+        (click)="onFile('')"
+        aria-label="Remove file filter"
+      >
+        file: {{ f }} <span aria-hidden="true">×</span>
       </button>
-      <button class="chip active" *ngIf="state.filters().search as q" (click)="onSearchInput('')">
-        search: {{ q }} <span>×</span>
+      <button
+        class="chip active"
+        *ngIf="state.filters().search as q"
+        (click)="onSearchInput('')"
+        aria-label="Remove search filter"
+      >
+        search: {{ q }} <span aria-hidden="true">×</span>
       </button>
     </div>
   `,
@@ -504,13 +544,26 @@ import { UiStateService } from '../../services/ui-state.service';
       }
 
       /* Responsive: drop secondary controls before things wrap awkwardly. */
+      .filters-toggle {
+        display: none;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.35rem 0.6rem;
+      }
+      .filters.sheet-open {
+        flex-wrap: wrap;
+      }
       @media (max-width: 1280px) {
-        .filters .input.file {
+        .filters-toggle {
+          display: inline-flex;
+        }
+        .filters:not(.sheet-open) .input.file {
           display: none;
         }
       }
       @media (max-width: 1100px) {
-        .filters .date {
+        .filters:not(.sheet-open) .date {
           display: none;
         }
         .search {
@@ -526,8 +579,13 @@ import { UiStateService } from '../../services/ui-state.service';
           grid-column: 1 / -1;
           order: 5;
         }
-        .filters .select {
+        .filters:not(.sheet-open) .select {
           display: none;
+        }
+        .filters.sheet-open {
+          grid-column: 1 / -1;
+          order: 6;
+          justify-content: flex-start;
         }
         .star-link {
           display: none;
@@ -544,6 +602,7 @@ export class ToolbarComponent implements OnDestroy {
   @ViewChild('searchInput') searchEl?: ElementRef<HTMLInputElement>;
 
   searchValue = signal('');
+  readonly filtersOpen = signal(false);
   totalLabel = computed(() => {
     const t = this.state.total();
     if (!t) return '';
@@ -589,7 +648,7 @@ export class ToolbarComponent implements OnDestroy {
 
   @HostListener('window:keydown', ['$event'])
   onKeydown(ev: KeyboardEvent) {
-    if (ev.key === '/' && !this.isTyping(ev.target)) {
+    if (ev.key === '/' && !isTyping(ev.target)) {
       ev.preventDefault();
       queueMicrotask(() => this.searchEl?.nativeElement.focus());
     }
@@ -652,11 +711,6 @@ export class ToolbarComponent implements OnDestroy {
 
   exportCommits() {
     window.open(this.git.getExportUrl('commits', 'csv'), '_blank');
-  }
-
-  private isTyping(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
   }
 
   shortBranch(branch: string): string {

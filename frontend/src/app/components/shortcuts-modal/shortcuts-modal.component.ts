@@ -2,6 +2,7 @@ import { A11yModule } from '@angular/cdk/a11y';
 import { CommonModule, DOCUMENT } from '@angular/common';
 import { ChangeDetectionStrategy, Component, HostListener, effect, inject } from '@angular/core';
 import { UiStateService } from '../../services/ui-state.service';
+import { isTyping } from '../../utils/dom';
 
 interface Binding {
   keys: string[];
@@ -177,7 +178,7 @@ export class ShortcutsModalComponent {
 
   @HostListener('document:keydown', ['$event'])
   onKey(ev: KeyboardEvent) {
-    if (ev.key === '?' && !this.isTyping(ev.target)) {
+    if (ev.key === '?' && !isTyping(ev.target)) {
       ev.preventDefault();
       this.state.shortcutsOpen.set(true);
     }
@@ -185,10 +186,5 @@ export class ShortcutsModalComponent {
       this.state.shortcutsOpen.set(false);
       this.state.paletteOpen.set(false);
     }
-  }
-
-  private isTyping(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
   }
 }

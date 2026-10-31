@@ -6,14 +6,18 @@ import {
   ElementRef,
   HostListener,
   ViewChild,
+  DestroyRef,
   computed,
   effect,
   inject,
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Subscription } from 'rxjs';
 import { Commit } from '../../models/git.models';
+import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
+import { isTyping } from '../../utils/dom';
 
 @Component({
   selector: 'app-command-palette',
@@ -42,7 +46,7 @@ import { UiStateService } from '../../services/ui-state.service';
         role="combobox"
         aria-autocomplete="list"
         aria-controls="palette-results"
-        [attr.aria-expanded]="true"
+        [attr.aria-expanded]="results().length > 0"
         [attr.aria-activedescendant]="results().length ? 'palette-option-' + index() : null"
         [ngModel]="query()"
         (ngModelChange)="onQuery($event)"
@@ -170,7 +174,10 @@ import { UiStateService } from '../../services/ui-state.service';
 })
 export class CommandPaletteComponent {
   state = inject(UiStateService);
+  private git = inject(GitService);
   private doc = inject(DOCUMENT);
+  private lookupSub?: Subscription;
+  private remote = signal<Commit | null>(null);
   private restoreFocusTo: HTMLElement | null = null;
 
   @ViewChild('input') input?: ElementRef<HTMLInputElement>;
@@ -178,7 +185,7 @@ export class CommandPaletteComponent {
   query = signal('');
   index = signal(0);
 
-  results = computed<Commit[]>(() => {
+  private local = computed<Commit[]>(() => {
     const q = this.query().trim().toLowerCase();
     const list = this.state.commits();
     if (!q) return list.slice(0, 50);
@@ -193,7 +200,15 @@ export class CommandPaletteComponent {
       .slice(0, 50);
   });
 
+  // A pasted hash of a commit that is not loaded yet is looked up on the server.
+  results = computed<Commit[]>(() => {
+    const local = this.local();
+    const remote = this.remote();
+    return local.length || !remote ? local : [remote];
+  });
+
   constructor() {
+    inject(DestroyRef).onDestroy(() => this.lookupSub?.unsubscribe());
     let wasOpen = false;
     effect(() => {
       const open = this.state.paletteOpen();
@@ -225,6 +240,15 @@ export class CommandPaletteComponent {
   onQuery(v: string) {
     this.query.set(v);
     this.index.set(0);
+    this.lookupSub?.unsubscribe();
+    this.remote.set(null);
+    const hash = v.trim();
+    if (!this.local().length && /^[0-9a-f]{4,40}$/i.test(hash)) {
+      this.lookupSub = this.git.getCommit(hash).subscribe({
+        next: (commit) => this.remote.set(commit),
+        error: () => undefined, // not found: the list keeps showing "No matches."
+      });
+    }
   }
 
   onKey(ev: KeyboardEvent) {
@@ -245,6 +269,7 @@ export class CommandPaletteComponent {
   }
 
   pick(c: Commit) {
+    if (!this.state.commitIndex().has(c.hash)) this.state.commits.update((list) => [c, ...list]);
     this.state.selectHash(c.hash);
     this.close();
   }
@@ -255,16 +280,11 @@ export class CommandPaletteComponent {
 
   @HostListener('document:keydown', ['$event'])
   onGlobal(ev: KeyboardEvent) {
-    if (this.isTyping(ev.target)) return;
+    if (isTyping(ev.target)) return;
     const meta = ev.metaKey || ev.ctrlKey;
     if (meta && (ev.key === 'k' || ev.key === 'K')) {
       ev.preventDefault();
       this.state.paletteOpen.set(!this.state.paletteOpen());
     }
-  }
-
-  private isTyping(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
   }
 }

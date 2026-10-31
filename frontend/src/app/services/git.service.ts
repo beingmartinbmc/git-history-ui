@@ -42,7 +42,7 @@ export class GitService {
 
   /** Drop all cached entries — call after operations that mutate repo state. */
   invalidate(): void {
-    this.cache.clear();
+    for (const c of [this.cache, this.groupsCache, this.searchCache, this.timelineCache]) c.clear();
   }
 
   getGroups(
@@ -158,10 +158,14 @@ export class GitService {
         total = data.total ?? commits.length + pending.length;
         doneMeta = data;
         completed = true;
+        source.close();
         scheduleEmit();
       });
       source.addEventListener('error', (event) => {
+        // Closing after `done` makes the browser fire a trailing error; the stream already succeeded.
+        if (completed) return;
         source.close();
+        if (timer) window.clearTimeout(timer);
         if (raf) cancelAnimationFrame(raf);
         fallbackSub = this.getCommits(options).subscribe({
           next: (resp) => subscriber.next(resp),

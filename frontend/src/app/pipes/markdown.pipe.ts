@@ -1,17 +1,15 @@
 import { Pipe, PipeTransform } from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 
 @Pipe({ name: 'markdown', standalone: true })
 export class MarkdownPipe implements PipeTransform {
-  private cache = new Map<string, SafeHtml>();
+  private cache = new Map<string, string>();
 
-  constructor(private sanitizer: DomSanitizer) {}
-
-  transform(value: string | null | undefined): SafeHtml {
+  // Input is escaped before markup is added; the string is left for Angular's [innerHTML] sanitizer.
+  transform(value: string | null | undefined): string {
     if (!value) return '';
     const hit = this.cache.get(value);
     if (hit) return hit;
-    const rendered = this.sanitizer.bypassSecurityTrustHtml(renderMarkdown(value));
+    const rendered = renderMarkdown(value);
     this.cache.set(value, rendered);
     if (this.cache.size > 50) {
       const first = this.cache.keys().next().value;

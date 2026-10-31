@@ -73,8 +73,11 @@ export class UiStateService {
       until: valueOrUndefined(params.get('until')),
     };
     if (!sameFilters(this.filters(), nextFilters)) this.filters.set(nextFilters);
-    this.selectedHash.set(commit);
-    this.mobileDetailOpen.set(Boolean(commit));
+    // A URL echo of our own selection must not reopen the mobile detail pane.
+    if (commit !== this.selectedHash()) {
+      this.selectedHash.set(commit);
+      this.mobileDetailOpen.set(Boolean(commit));
+    }
     this.activeFilePath.set(valueOrNull(params.get('activeFile')));
     this.searchMode.set(params.get('searchMode') === 'nl' ? 'nl' : 'classic');
 

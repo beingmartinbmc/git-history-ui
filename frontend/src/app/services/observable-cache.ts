@@ -16,7 +16,7 @@ interface CacheEntry<T> {
  *     Defaults are intentionally per-resource (commit/diff/blame are
  *     content-addressed so live "forever"; lists like /commits, /branches
  *     can drift, so they get short TTLs).
- *   - `maxEntries`: cap on the cache size (FIFO eviction).
+ *   - `maxEntries`: cap on the cache size (least-recently-used eviction).
  */
 export class ObservableCache {
   private map = new Map<string, CacheEntry<unknown>>();
@@ -26,8 +26,11 @@ export class ObservableCache {
   get<T>(key: string, create: () => Observable<T>, ttlMs: number): Observable<T> {
     const now = Date.now();
     const hit = this.map.get(key) as CacheEntry<T> | undefined;
-    if (hit && hit.expiresAt > now) return hit.value;
     if (hit) this.map.delete(key);
+    if (hit && hit.expiresAt > now) {
+      this.map.set(key, hit); // re-insert so Map order tracks recency
+      return hit.value;
+    }
     const value = create().pipe(shareReplay({ bufferSize: 1, refCount: true }));
     this.map.set(key, { value, expiresAt: now + ttlMs });
     if (this.map.size > this.maxEntries) {

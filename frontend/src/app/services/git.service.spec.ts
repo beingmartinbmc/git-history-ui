@@ -244,6 +244,30 @@ describe('GitService', () => {
     expect(source.closed).toBeTrue();
   }));
 
+  it('closes on done and ignores the trailing error without a JSON fallback', fakeAsync(() => {
+    const source = installMockEventSource();
+    service.streamCommits({ pageSize: 2 }).subscribe();
+
+    source.dispatch('done', new MessageEvent('done', { data: JSON.stringify({ total: 0 }) }));
+    expect(source.closed).toBeTrue();
+    source.dispatch('error', new Event('error'));
+    tick(140);
+
+    http.expectNone((req) => req.url === '/api/commits');
+  }));
+
+  it('invalidate clears every cache, not just the main one', () => {
+    service.getGroups().subscribe();
+    http.expectOne('/api/groups').flush([]);
+    service.getGroups().subscribe();
+    http.expectNone('/api/groups');
+
+    service.invalidate();
+    service.getGroups().subscribe();
+    http.expectOne('/api/groups').flush([]);
+    expect().nothing();
+  });
+
   function installMockEventSource(): MockEventSource {
     let instance: MockEventSource | null = null;
     class MockEventSourceCtor extends MockEventSource {

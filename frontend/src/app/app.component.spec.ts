@@ -259,6 +259,108 @@ describe('AppComponent deep links', () => {
   }
 });
 
+describe('AppComponent URL round-trip (real router)', () => {
+  let originalEventSource: typeof EventSource;
+
+  beforeEach(() => {
+    originalEventSource = window.EventSource;
+    window.EventSource = class {
+      onerror = null;
+      addEventListener() {}
+      close() {}
+    } as unknown as typeof EventSource;
+  });
+
+  afterEach(() => {
+    window.EventSource = originalEventSource;
+  });
+
+  it('keeps all loaded rows and the closed mobile detail after selecting a commit post Load more', async () => {
+    const rows = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, i) => rowCommit(from + i));
+    const respond = (commits: Commit[], pageNo: number, hasNext: boolean): PaginatedCommits => ({
+      commits,
+      total: 200,
+      page: pageNo,
+      pageSize: 100,
+      totalPages: 2,
+      hasNext,
+      hasPrevious: pageNo > 1,
+    });
+    const git = jasmine.createSpyObj<GitService>('GitService', [
+      'streamCommits',
+      'getCommits',
+      'getCommit',
+      'getAuthors',
+      'getBranches',
+      'getTags',
+      'getIndexStatus',
+      'invalidate',
+    ]);
+    git.streamCommits.and.returnValue(of(respond(rows(0, 100), 1, true)));
+    git.getCommits.and.returnValue(of(respond(rows(100, 200), 2, false)));
+    git.getAuthors.and.returnValue(of([]));
+    git.getBranches.and.returnValue(of([]));
+    git.getTags.and.returnValue(of([]));
+    git.getIndexStatus.and.returnValue(
+      of({
+        available: true,
+        total: 0,
+        running: false,
+        progress: { phase: 'idle' as const, indexed: 0, startedAt: null, updatedAt: null },
+      }),
+    );
+
+    await TestBed.configureTestingModule({
+      imports: [AppComponent],
+      providers: [
+        provideRouter([{ path: '', component: EmptyRouteComponent }]),
+        { provide: GitService, useValue: git },
+      ],
+    }).compileComponents();
+    const router = TestBed.inject(Router);
+    const state = TestBed.inject(UiStateService);
+    await router.navigateByUrl('/');
+
+    const fixture = TestBed.createComponent(AppComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.componentInstance.loadMore();
+    expect(state.commits().length).toBe(200);
+
+    state.selectedHash.set(rowCommit(150).hash);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(router.url).toContain(`commit=${rowCommit(150).hash}`);
+    expect(state.commits().length).toBe(200);
+    expect(state.page()).toBe(2);
+    expect(state.selectedHash()).toBe(rowCommit(150).hash);
+    expect(state.mobileDetailOpen()).toBeFalse();
+    expect(git.getCommits).toHaveBeenCalledTimes(1);
+  });
+
+  function rowCommit(n: number): Commit {
+    const hash = (0x100000 + n).toString(16).padStart(40, 'a');
+    return {
+      hash,
+      shortHash: hash.slice(0, 7),
+      author: 'Ada',
+      authorEmail: 'ada@example.com',
+      date: '2026-01-01T00:00:00.000Z',
+      message: `c${n}`,
+      subject: `c${n}`,
+      body: '',
+      parents: [],
+      branches: [],
+      tags: [],
+      isMerge: false,
+    };
+  }
+});
+
 interface FakeEventSource {
   closed?: boolean;
 }

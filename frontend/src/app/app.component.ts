@@ -182,6 +182,7 @@ export class AppComponent {
     { initialValue: this.router.navigated && isHistoryUrl(this.router.url) },
   );
   private commitsResp: Signal<PaginatedCommits | null>;
+  private lastAppliedResp: PaginatedCommits | null = null;
 
   private authorsLoaded = signal(false);
   private pendingSharedCommit = signal<string | null>(null);
@@ -194,16 +195,12 @@ export class AppComponent {
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((params) => {
       this.latestQueryParams = params;
       if (!isHistoryUrl(this.router.url)) return;
-      const hash = this.state.hydrateQuery(params);
-      this.pendingSharedCommit.set(hash);
-      this.queryHydrated.set(true);
+      this.applyQuery(params);
     });
 
     effect(() => {
       if (!this.historyActive() || this.queryHydrated() || !this.latestQueryParams) return;
-      const hash = this.state.hydrateQuery(this.latestQueryParams);
-      this.pendingSharedCommit.set(hash);
-      this.queryHydrated.set(true);
+      this.applyQuery(this.latestQueryParams);
     });
 
     const request = computed(() => ({
@@ -231,6 +228,10 @@ export class AppComponent {
           return obs.pipe(
             catchError((err) => {
               this.state.error.set(this.errorMessage(err));
+              this.lastAppliedResp = null;
+              this.state.commits.set([]);
+              this.state.total.set(0);
+              this.state.hasNext.set(false);
               this.state.loading.set(false);
               return of(null);
             }),
@@ -261,24 +262,31 @@ export class AppComponent {
     effect(() => {
       const resp = this.commitsResp();
       if (!resp) return;
-      const currentSelection = untracked(() => this.state.selectedHash());
-      const pinned = currentSelection
-        ? untracked(() => findCommit(this.state.commits(), currentSelection))
-        : undefined;
-      const commits =
-        pinned && !findCommit(resp.commits, pinned.hash) ? [pinned, ...resp.commits] : resp.commits;
-      this.state.commits.set(commits);
-      this.state.total.set(resp.total);
-      this.state.page.set(resp.page);
-      this.state.pageSize.set(resp.pageSize);
-      this.state.hasNext.set(resp.hasNext);
-      this.state.loading.set(false);
-      const nl = (resp as Partial<{ parsedQuery: import('./models/git.models').NlInterpretation }>)
-        .parsedQuery;
-      this.state.nlInterpretation.set(nl ?? null);
       const pending = this.pendingSharedCommit();
+      // Re-runs caused only by `pendingSharedCommit` must not rewind to page 1 and drop loaded pages.
+      if (resp !== this.lastAppliedResp) {
+        this.lastAppliedResp = resp;
+        const currentSelection = untracked(() => this.state.selectedHash());
+        const pinned = currentSelection
+          ? untracked(() => findCommit(this.state.commits(), currentSelection))
+          : undefined;
+        this.state.commits.set(
+          pinned && !findCommit(resp.commits, pinned.hash)
+            ? [pinned, ...resp.commits]
+            : resp.commits,
+        );
+        this.state.total.set(resp.total);
+        this.state.page.set(resp.page);
+        this.state.pageSize.set(resp.pageSize);
+        this.state.hasNext.set(resp.hasNext);
+        this.state.loading.set(false);
+        const nl = (
+          resp as Partial<{ parsedQuery: import('./models/git.models').NlInterpretation }>
+        ).parsedQuery;
+        this.state.nlInterpretation.set(nl ?? null);
+      }
       if (pending) {
-        const match = findCommit(commits, pending);
+        const match = untracked(() => findCommit(this.state.commits(), pending));
         if (match) {
           this.state.selectHash(match.hash);
           this.pendingSharedCommit.set(null);
@@ -313,6 +321,14 @@ export class AppComponent {
     this.destroyRef.onDestroy(() => this.disconnectEventSource());
   }
 
+  private applyQuery(params: ParamMap) {
+    const previous = this.state.selectedHash();
+    const hash = this.state.hydrateQuery(params);
+    // Our own URL echo carries the current selection; re-resolving it would reopen the mobile detail.
+    if (hash !== previous) this.pendingSharedCommit.set(hash);
+    this.queryHydrated.set(true);
+  }
+
   private errorMessage(err: unknown): string {
     if (err && typeof err === 'object' && 'error' in err) {
       const e = (err as { error?: { error?: string } }).error;
@@ -329,6 +345,10 @@ export class AppComponent {
     const filters = this.state.filters();
     this.git.getCommits({ ...filters, page: nextPage }).subscribe({
       next: (resp) => {
+        if (this.state.filters() !== filters) {
+          this.state.loadingMore.set(false);
+          return;
+        }
         const existing = new Set(this.state.commits().map((c) => c.hash));
         const fresh = resp.commits.filter((c) => !existing.has(c.hash));
         this.state.commits.update((prev) => [...prev, ...fresh]);
@@ -337,13 +357,17 @@ export class AppComponent {
         this.state.hasNext.set(resp.hasNext);
         this.state.loadingMore.set(false);
       },
-      error: () => this.state.loadingMore.set(false),
+      error: (err) => {
+        this.state.loadingMore.set(false);
+        if (this.state.filters() === filters) this.state.error.set(this.errorMessage(err));
+      },
     });
   }
 
   refreshCommits() {
     this.newCommitsAvailable.set(false);
     this.git.invalidate();
+    this.authorsLoaded.set(false);
     this.reload.update((value) => value + 1);
   }
 

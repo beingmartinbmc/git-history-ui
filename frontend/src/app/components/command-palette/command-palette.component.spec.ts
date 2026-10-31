@@ -1,3 +1,5 @@
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed, fakeAsync, flushMicrotasks } from '@angular/core/testing';
 import { Commit } from '../../models/git.models';
 import { UiStateService } from '../../services/ui-state.service';
@@ -12,6 +14,7 @@ describe('CommandPaletteComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [CommandPaletteComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
     }).compileComponents();
 
     state = TestBed.inject(UiStateService);
@@ -46,6 +49,23 @@ describe('CommandPaletteComponent', () => {
     expect(state.paletteOpen()).toBeFalse();
     expect(document.activeElement).toBe(trigger);
   }));
+
+  it('falls back to the server for a hash that is not loaded and keeps it in the list on pick', () => {
+    const http = TestBed.inject(HttpTestingController);
+    state.paletteOpen.set(true);
+    fixture.detectChanges();
+
+    component.onQuery('c333333');
+    http.expectOne('/api/commit/c333333').flush(commit('c333333'));
+    fixture.detectChanges();
+
+    expect(component.results().map((c) => c.hash)).toEqual(['c333333']);
+    expect(fixture.nativeElement.querySelector('input').getAttribute('aria-expanded')).toBe('true');
+
+    component.pick(component.results()[0]);
+    expect(state.selected()?.hash).toBe('c333333');
+    http.verify();
+  });
 
   it('ignores the global shortcut while typing', () => {
     const input = document.createElement('input');

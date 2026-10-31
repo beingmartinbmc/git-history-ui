@@ -47,6 +47,18 @@ describe('CommitListComponent', () => {
     expect(state.selectedHash()).toBe('a111111');
   });
 
+  it('ignores shortcuts with modifiers or while the palette is open', () => {
+    state.commits.set([commit('a111111'), commit('b222222')]);
+    state.selectHash('a111111');
+
+    component.onKey(new KeyboardEvent('keydown', { key: 'j', metaKey: true }));
+    component.onKey(new KeyboardEvent('keydown', { key: 'j', ctrlKey: true }));
+    state.paletteOpen.set(true);
+    component.onKey(new KeyboardEvent('keydown', { key: 'j' }));
+
+    expect(state.selectedHash()).toBe('a111111');
+  });
+
   it('computes stable lane colors from branches or parents', () => {
     const c = commit('abc1234', { branches: ['feature/a'], parents: ['parent'] });
 
