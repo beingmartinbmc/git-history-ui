@@ -35,7 +35,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - CI tests Node 20, 22, and 24, pins actions to SHAs, checks formatting, and
   smoke-tests the packed tarball; releases publish that exact tarball.
-- Docker images use `node:24-alpine`; `better-sqlite3` is 13.0.3.
+- Docker images use `node:24-alpine`.
 - The Chrome extension version follows the package version and no longer
   requests `host_permissions`.
 

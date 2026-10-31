@@ -103,7 +103,7 @@
     "open": "^8.4.2"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^12.9.0"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.3",
