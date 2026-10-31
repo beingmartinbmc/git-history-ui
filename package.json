@@ -2,16 +2,16 @@
   "name": "git-history-ui",
   "version": "5.5.0",
   "description": "Local-first Git history investigation, portable reports, and PR impact automation.",
-  "main": "dist/cli.js",
+  "main": "dist/backend/server.js",
   "types": "dist/backend/server.d.ts",
   "exports": {
     ".": {
       "types": "./dist/backend/server.d.ts",
-      "require": "./dist/backend/server.js"
+      "default": "./dist/backend/server.js"
     },
     "./cli": {
       "types": "./dist/cli.d.ts",
-      "require": "./dist/cli.js"
+      "default": "./dist/cli.js"
     },
     "./package.json": "./package.json"
   },
@@ -22,10 +22,7 @@
     "dist/**/*",
     "build/**/*",
     "scripts/check-native.js",
-    "scripts/pr-impact-action.js",
     "scripts/register-protocol.js",
-    "action.yml",
-    "docs/**/*.md",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -49,8 +46,8 @@
     "test:watch": "jest --watch",
     "test:frontend": "npm run --prefix frontend test -- --watch=false --browsers=ChromeHeadless",
     "test:all": "npm test && npm run test:frontend",
-    "lint": "eslint \"src/**/*.ts\"",
-    "lint:fix": "eslint \"src/**/*.ts\" --fix",
+    "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.js\" \"apps/**/*.js\" \"*.js\"",
+    "lint:fix": "eslint \"src/**/*.ts\" \"scripts/**/*.js\" \"apps/**/*.js\" \"*.js\" --fix",
     "format": "prettier --write \"src/**/*.{ts,js}\" \"frontend/src/**/*.{ts,html,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js}\" \"frontend/src/**/*.{ts,html,css}\"",
     "audit:prod": "npm audit --omit=dev --audit-level=moderate --registry=https://registry.npmjs.org",
@@ -59,8 +56,8 @@
     "package:extension": "node scripts/package-extension.js",
     "smoke:action": "node scripts/smoke-pr-impact-action.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist build coverage frontend/dist frontend/.angular",
-    "copy-frontend": "rm -rf build/frontend && mkdir -p build/frontend && cp -r frontend/dist/frontend/browser/* build/frontend/",
+    "clean": "node -e \"for (const p of ['dist', 'build', 'coverage', 'frontend/dist', 'frontend/.angular']) require('fs').rmSync(p, { recursive: true, force: true })\"",
+    "copy-frontend": "node -e \"const fs = require('fs'); fs.rmSync('build/frontend', { recursive: true, force: true }); fs.cpSync('frontend/dist/frontend/browser', 'build/frontend', { recursive: true })\"",
     "prepare": "husky",
     "postinstall": "node scripts/check-native.js",
     "prepublishOnly": "npm run clean && npm run lint && npm run typecheck && npm test -- --ci && npm run audit:prod && npm run audit:frontend:prod && npm run build"
@@ -106,7 +103,7 @@
     "open": "^8.4.2"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^12.9.0"
+    "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.3",
@@ -127,7 +124,7 @@
     "prettier": "^3.3.3",
     "ts-jest": "^29.4.11",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.6.2",
+    "typescript": "~5.9.2",
     "typescript-eslint": "^8.61.0"
   },
   "engines": {

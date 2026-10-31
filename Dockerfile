@@ -1,22 +1,22 @@
 # syntax=docker/dockerfile:1.7
 
 # ----- Build stage -------------------------------------------------------
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 # Native deps for any optional builds.
 RUN apk add --no-cache git python3 make g++
 
 # Backend deps (with dev for tsc)
-# scripts/ is copied first because package.json's postinstall runs
-# scripts/check-native.js during `npm ci`.
-COPY package.json package-lock.json* ./
-COPY scripts ./scripts
-RUN npm ci --no-audit --maxsockets=1000
+# check-native.js is copied first because package.json's postinstall runs it
+# during `npm ci`; copying only that script keeps other edits from busting the cache.
+COPY package.json package-lock.json ./
+COPY scripts/check-native.js ./scripts/
+RUN npm ci --no-audit
 
 # Frontend deps (with dev for ng build)
-COPY frontend/package.json frontend/package-lock.json* ./frontend/
-RUN npm ci --prefix frontend --no-audit --maxsockets=1000 \
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN npm ci --prefix frontend --no-audit \
  && test -x frontend/node_modules/.bin/ng
 
 # Sources + build everything
@@ -29,7 +29,7 @@ RUN npm run build:backend \
  && npm prune --omit=dev
 
 # ----- Runtime stage -----------------------------------------------------
-FROM node:20-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \
