@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "git-history-ui",
-  "version": "5.5.0",
+  "version": "5.5.1",
   "description": "Adds an 'Open in git-history-ui' button to GitHub PR and commit pages.",
   "permissions": ["storage"],
   "action": {
