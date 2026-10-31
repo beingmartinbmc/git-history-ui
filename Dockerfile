@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ----- Build stage -------------------------------------------------------
-FROM node:24-alpine AS builder
+FROM node:25-alpine AS builder
 WORKDIR /app
 
 # Native deps for any optional builds.
@@ -29,7 +29,7 @@ RUN npm run build:backend \
  && npm prune --omit=dev
 
 # ----- Runtime stage -----------------------------------------------------
-FROM node:24-alpine AS runtime
+FROM node:25-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \
