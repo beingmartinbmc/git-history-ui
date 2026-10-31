@@ -108,7 +108,7 @@ export class OpenAiProvider implements LlmService {
       },
       body: JSON.stringify({
         model: this.model,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }],
         ...(json ? { response_format: { type: 'json_object' } } : {})
       }),

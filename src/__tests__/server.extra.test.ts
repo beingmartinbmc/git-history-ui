@@ -677,3 +677,48 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
     expect(status).toBe(429);
   });
 });
+
+describe('server paging and errors', () => {
+  let repo: TestRepo;
+  let url: string;
+  let close: () => Promise<void>;
+
+  beforeAll(async () => {
+    repo = makeRepo('ghui-srv-page-');
+    for (let i = 0; i < 5; i++) repo.commit(`f${i}.txt`, String(i), `commit ${i}`);
+    const result = await startServer(0, '127.0.0.1', {
+      cwd: repo.dir,
+      llm: { provider: 'heuristic' }
+    });
+    url = `http://127.0.0.1:${(result.server.address() as AddressInfo).port}`;
+    close = result.close;
+  });
+
+  afterAll(async () => {
+    await close();
+    repo.cleanup();
+  });
+
+  it('/api/commits/stream pages are contiguous', async () => {
+    const hashes = async (page: number) =>
+      [
+        ...(await fetchRaw(`${url}/api/commits/stream?page=${page}&pageSize=2`)).data.matchAll(
+          /"hash":"([0-9a-f]{40})"/g
+        )
+      ].map((m) => m[1]);
+    const all = repo.git(['log', '--format=%H']).trim().split('\n');
+    expect(await hashes(1)).toEqual(all.slice(0, 2));
+    expect(await hashes(2)).toEqual(all.slice(2, 4));
+  });
+
+  it('maps an invalid snapshot date to 400', async () => {
+    const r = await request({ url: `${url}/api/snapshot?at=not-a-date` });
+    expect(r.status).toBe(400);
+  });
+
+  it('flags a truncated commit export', async () => {
+    const r = await fetchRaw(`${url}/api/export/commits?author=Tester`);
+    expect(r.headers['x-export-truncated']).toBe('false');
+    expect(r.headers['x-total-commits']).toBe('5');
+  });
+});

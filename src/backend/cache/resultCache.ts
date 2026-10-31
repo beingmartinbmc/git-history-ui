@@ -15,6 +15,9 @@ export class ResultCache<T> {
   private store = new Map<string, CacheEntry<T>>();
   private ttl: number;
   private maxEntries: number;
+  private inflight = new Map<string, Promise<T>>();
+  // Bumped by clear() so a computation that started before it can't cache stale data.
+  private generation = 0;
 
   constructor(ttlMs = DEFAULT_TTL_MS, maxEntries = DEFAULT_MAX_ENTRIES) {
     this.ttl = ttlMs;
@@ -33,6 +36,27 @@ export class ResultCache<T> {
 
   clear(): void {
     this.store.clear();
+    this.inflight.clear();
+    this.generation++;
+  }
+
+  /** Cached value, else the in-flight computation for `key`, else start one. */
+  getOrCompute(key: string, compute: () => Promise<T>): Promise<T> {
+    const hit = this.get(key);
+    if (hit !== undefined) return Promise.resolve(hit);
+    const pending = this.inflight.get(key);
+    if (pending) return pending;
+    const generation = this.generation;
+    const p: Promise<T> = compute()
+      .then((value) => {
+        if (generation === this.generation) this.set(key, value);
+        return value;
+      })
+      .finally(() => {
+        if (this.inflight.get(key) === p) this.inflight.delete(key);
+      });
+    this.inflight.set(key, p);
+    return p;
   }
 
   set(key: string, value: T): void {

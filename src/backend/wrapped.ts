@@ -43,7 +43,11 @@ export interface WrappedStats {
   label: string;
   windowStart: string | null;
   windowEnd: string | null;
+  /** All commits matching the window; may exceed `analyzedCommits` when truncated. */
   totalCommits: number;
+  /** Commits the other stats were computed from (capped by maxCommits). */
+  analyzedCommits: number;
+  truncated: boolean;
   totalAuthors: number;
   totalAdditions: number;
   totalDeletions: number;
@@ -164,7 +168,11 @@ export async function computeWrapped(
       changes: ''
     }));
 
-  return aggregateWrapped(commits, churnFor, label, since ?? null, until ?? null);
+  return {
+    ...aggregateWrapped(commits, churnFor, label, since ?? null, until ?? null),
+    totalCommits: page.total,
+    truncated: commits.length < page.total
+  };
 }
 
 function exactEmailAuthorFilter(author?: string): string | undefined {
@@ -264,6 +272,8 @@ export function aggregateWrapped(
     windowStart,
     windowEnd,
     totalCommits: commits.length,
+    analyzedCommits: commits.length,
+    truncated: false,
     totalAuthors: contributors.size,
     totalAdditions,
     totalDeletions,

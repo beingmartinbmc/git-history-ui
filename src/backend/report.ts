@@ -110,7 +110,7 @@ export async function buildPrImpactReport(
 export function formatPrImpactMarkdown(report: PrImpactReport): string {
   return [
     `<!-- git-history-ui pr-impact: ${escapeMarkdown(report.comparison.base)}...${escapeMarkdown(report.comparison.head)} -->`,
-    `**PR range:** \`${escapeMarkdown(report.comparison.base)}\` → \`${escapeMarkdown(report.comparison.head)}\` (merge base \`${escapeMarkdown(report.comparison.mergeBase)}\`)`,
+    `**PR range:** ${codeSpan(report.comparison.base)} → ${codeSpan(report.comparison.head)} (merge base ${codeSpan(report.comparison.mergeBase)})`,
     '',
     formatReportMarkdown(report)
   ].join('\n');
@@ -119,8 +119,8 @@ export function formatPrImpactMarkdown(report: PrImpactReport): string {
 export function formatReportMarkdown(report: InvestigationReport): string {
   const target =
     report.target.type === 'commit'
-      ? `${escapeMarkdown(report.target.subject)} (\`${escapeMarkdown(report.target.hash)}\`)`
-      : `\`${escapeMarkdown(report.target.from)}\` → \`${escapeMarkdown(report.target.to)}\``;
+      ? `${escapeMarkdown(report.target.subject)} (${codeSpan(report.target.hash)})`
+      : `${codeSpan(report.target.from)} → ${codeSpan(report.target.to)}`;
   const lines = [
     `# Investigation report: ${escapeMarkdown(report.repository.name)}`,
     '',
@@ -138,21 +138,28 @@ export function formatReportMarkdown(report: InvestigationReport): string {
   ];
   if (report.files.length === 0) lines.push('_No file changes._');
   for (const file of report.files) {
-    const rename = file.oldFile
-      ? `${escapeMarkdown(file.oldFile)} → ${escapeMarkdown(file.file)}`
-      : escapeMarkdown(file.file);
+    const rename = file.oldFile ? `${file.oldFile} → ${file.file}` : file.file;
     lines.push(
-      `- \`${rename}\` (${escapeMarkdown(file.status)}, +${file.additions} / -${file.deletions})`
+      `- ${codeSpan(rename)} (${escapeMarkdown(file.status)}, +${file.additions} / -${file.deletions})`
     );
   }
   lines.push('', '## Related commits', '');
   if (report.relatedCommits.length === 0) lines.push('_No related commits._');
   for (const commit of report.relatedCommits) {
     lines.push(
-      `- \`${escapeMarkdown(commit.shortHash)}\` ${escapeMarkdown(commit.subject)} — ${escapeMarkdown(commit.author)}`
+      `- ${codeSpan(commit.shortHash)} ${escapeMarkdown(commit.subject)} — ${escapeMarkdown(commit.author)}`
     );
   }
   return `${lines.join('\n')}\n`;
+}
+
+/** Backslash escapes don't work inside code spans; use a fence longer than any backtick run instead. */
+function codeSpan(value: string): string {
+  const text = value.replace(/[\0\r\n]+/g, ' ');
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(longest + 1);
+  const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+  return `${fence}${pad}${text}${pad}${fence}`;
 }
 
 export function escapeMarkdown(value: string): string {

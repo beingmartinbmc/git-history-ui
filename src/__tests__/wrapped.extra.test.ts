@@ -240,3 +240,24 @@ describe('computeWrapped (async path)', () => {
     expect(result.label).toBe('… → 2025-12-31');
   });
 });
+
+describe('computeWrapped truncation', () => {
+  it('reports the real total and truncated when maxCommits cuts the window', async () => {
+    const { computeWrapped } = await import('../backend/wrapped');
+    const { GitService } = await import('../backend/gitService');
+    const { makeBigRepo } = await import('./helpers/repo');
+    const repo = makeBigRepo(60);
+    try {
+      const w = await computeWrapped(new GitService(repo.dir), {
+        since: '2000-01-01',
+        until: '2100-01-01',
+        maxCommits: 50
+      });
+      expect(w.totalCommits).toBe(60);
+      expect(w.analyzedCommits).toBe(50);
+      expect(w.truncated).toBe(true);
+    } finally {
+      repo.cleanup();
+    }
+  });
+});

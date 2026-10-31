@@ -62,7 +62,7 @@ export async function getCommitImpact(
   }
   const relatedCommits = Array.from(relatedHashes.entries())
     .map(([h, info]) => ({ hash: h, ...info }))
-    .sort((a, b) => b.date.localeCompare(a.date))
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
     .slice(0, RELATED_LIMIT);
 
   return { hash, files, modules, dependencyRipple, relatedCommits };

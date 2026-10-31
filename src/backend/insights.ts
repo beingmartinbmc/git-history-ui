@@ -92,7 +92,7 @@ export async function computeInsights(
   const churnByDay = computeChurnByDay(pairs);
   const risky = computeRiskyFiles(churn);
 
-  const sortedDates = commits.map((c) => c.date).sort();
+  const sortedDates = commits.map((c) => c.date).sort((a, b) => Date.parse(a) - Date.parse(b));
   const windowStart = sortedDates[0] ?? null;
   const windowEnd = sortedDates[sortedDates.length - 1] ?? null;
 

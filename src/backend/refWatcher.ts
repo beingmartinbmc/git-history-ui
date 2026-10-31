@@ -26,20 +26,31 @@ export class RefWatcher extends EventEmitter {
     const gitDir = resolveGitDir(this.repoCwd);
     if (!gitDir) return;
     const commonDir = resolveCommonDir(gitDir);
-    const watchTargets = new Set([
-      path.join(gitDir, 'HEAD'),
-      path.join(gitDir, 'refs'),
-      path.join(commonDir, 'refs'),
-      path.join(commonDir, 'packed-refs')
-    ]);
-    for (const target of watchTargets) {
-      try {
-        const isDir = fs.statSync(target).isDirectory();
-        const w = fs.watch(target, { recursive: isDir }, () => this.onFsEvent());
-        this.watchers.push(w);
-      } catch {
-        // A ref target may not exist yet (for example packed-only refs).
-      }
+    // Git replaces HEAD and packed-refs via lock-file + rename, which leaves a
+    // watcher bound to the old inode. Watch the parent dir and filter by name.
+    const files = new Map<string, Set<string>>();
+    const addFile = (dir: string, name: string) =>
+      files.set(dir, (files.get(dir) ?? new Set()).add(name));
+    addFile(gitDir, 'HEAD');
+    addFile(commonDir, 'packed-refs');
+    for (const [dir, names] of files) {
+      this.watch(dir, false, (name) => !name || names.has(name));
+    }
+    for (const dir of new Set([path.join(gitDir, 'refs'), path.join(commonDir, 'refs')])) {
+      this.watch(dir, true, () => true);
+    }
+  }
+
+  private watch(target: string, recursive: boolean, accept: (name: string) => boolean): void {
+    try {
+      const w = fs.watch(target, { recursive }, (_event, name) => {
+        if (accept(name ? String(name) : '')) this.onFsEvent();
+      });
+      // An unhandled watcher 'error' (e.g. the dir was removed) would crash the process.
+      w.on('error', () => undefined);
+      this.watchers.push(w);
+    } catch {
+      // A ref target may not exist yet (for example packed-only refs).
     }
   }
 

@@ -109,6 +109,11 @@ const REF_INDEX_TTL_MS = 5_000;
 const COUNT_CACHE_TTL_MS = 10_000;
 const AUTHORS_CACHE_TTL_MS = 5 * 60_000;
 const MAX_INTERNAL_PAGE_SIZE = 20_000;
+// Backstop for calls with no abort signal; signal-bearing callers (e.g. the
+// index build) are bounded by the caller instead.
+const GIT_TIMEOUT_MS = 120_000;
+// Keep non-ASCII paths literal instead of "caf\303\251.ts".
+const GIT_BASE_ARGS = ['-c', 'core.quotePath=false'];
 
 export class NotARepositoryError extends Error {
   constructor() {
@@ -129,6 +134,13 @@ export class GitService {
 
   constructor(repoPath: string = process.cwd()) {
     this.repoPath = repoPath;
+  }
+
+  /** Drop caches derived from refs; call when refs change. */
+  clearCaches(): void {
+    this.refIndexCache = null;
+    this.countCache.clear();
+    this.authorsCache = null;
   }
 
   async verifyRepository(): Promise<boolean> {
@@ -311,6 +323,8 @@ export class GitService {
       total = fallback ? fallback.split('\n').filter(Boolean).length : 0;
     }
 
+    // Keys are user filter strings; drop stale ones so the map can't grow forever.
+    for (const [k, v] of this.countCache) if (v.expiresAt <= now) this.countCache.delete(k);
     this.countCache.set(cacheKey, { total, expiresAt: now + COUNT_CACHE_TTL_MS });
     return total;
   }
@@ -416,20 +430,21 @@ export class GitService {
   }
 
   async getAuthorIdentities(opts: GitStreamOptions = {}): Promise<GitAuthorIdentity[]> {
-    const raw = await this.git(['log', '--all', '--no-merges', '--pretty=format:%an%x00%ae'], {
-      ...opts,
-      maxBuffer: 16 * 1024 * 1024
-    });
     const identities = new Map<string, GitAuthorIdentity>();
-    for (const line of raw.split('\n')) {
-      const [name, email] = line.split('\0');
-      const normalizedEmail = email?.trim();
-      if (!name?.trim() || !normalizedEmail) continue;
-      identities.set(normalizedEmail.toLowerCase(), {
-        name: name.trim(),
-        email: normalizedEmail
-      });
-    }
+    // Streamed: a single buffered `git log` overflows maxBuffer on huge repos.
+    await this.streamRecords(
+      ['log', '--all', '--no-merges', `--pretty=format:%an${FIELD_SEP}%ae${RECORD_SEP}`],
+      (record) => {
+        const [name, email] = record.split(FIELD_SEP);
+        const normalizedEmail = email?.trim();
+        if (!name?.trim() || !normalizedEmail) return;
+        identities.set(normalizedEmail.toLowerCase(), {
+          name: name.trim(),
+          email: normalizedEmail
+        });
+      },
+      opts
+    );
     return Array.from(identities.values()).sort(
       (a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email)
     );
@@ -443,7 +458,7 @@ export class GitService {
 
     let raw: string;
     if (parents.length === 0) {
-      raw = await this.git(['diff-tree', '--root', '-p', '-M', '--no-color', hash], {
+      raw = await this.git(['diff-tree', '--root', '-r', '-p', '-M', '--no-color', hash], {
         ...opts,
         maxBuffer: 64 * 1024 * 1024
       });
@@ -475,13 +490,13 @@ export class GitService {
     // Safer to do two fast calls than parse merged output.
     const numArgs =
       parents.length === 0
-        ? ['diff-tree', '--root', '--numstat', '-M', '--no-color', hash]
+        ? ['diff-tree', '--root', '-r', '--numstat', '-M', '--no-color', hash]
         : ['diff', '--numstat', '-M', '--no-color', `${hash}^1`, hash];
     const raw = await this.git(numArgs, opts);
 
     const statusArgs =
       parents.length === 0
-        ? ['diff-tree', '--root', '--name-status', '-M', '--no-color', hash]
+        ? ['diff-tree', '--root', '-r', '--name-status', '-M', '--no-color', hash]
         : ['diff', '--name-status', '-M', '--no-color', `${hash}^1`, hash];
     const statusRaw = await this.git(statusArgs, opts);
 
@@ -502,7 +517,7 @@ export class GitService {
 
     const args =
       parents.length === 0
-        ? ['diff-tree', '--root', '-p', '-M', '--no-color', hash, '--', filePath]
+        ? ['diff-tree', '--root', '-r', '-p', '-M', '--no-color', hash, '--', filePath]
         : ['diff', '-M', '--no-color', `${hash}^1`, hash, '--', filePath];
     const raw = await this.git(args, { ...opts, maxBuffer: 64 * 1024 * 1024 });
     const parsed = parseUnifiedDiff(raw);
@@ -578,7 +593,13 @@ export class GitService {
       ],
       { ...opts, maxBuffer: 16 * 1024 * 1024 }
     );
-    const refs: Array<{ full: string; short: string; hash: string; tipTime: number }> = [];
+    const refs: Array<{
+      full: string;
+      short: string;
+      hash: string;
+      tipTime: number;
+      createdAt: number;
+    }> = [];
     for (const line of out.split('\n')) {
       if (!line) continue;
       const [full, short, objectHash, peeledHash, commitDate, peeledCommitDate, createDate] =
@@ -586,7 +607,7 @@ export class GitService {
       const hash = peeledHash || objectHash;
       const tipTime = new Date(commitDate || peeledCommitDate || createDate || '').getTime();
       if (!full || !short || !hash) continue;
-      refs.push({ full, short, hash, tipTime });
+      refs.push({ full, short, hash, tipTime, createdAt: new Date(createDate).getTime() });
     }
     const branches: Record<string, string> = {};
     const tags: Record<string, string> = {};
@@ -596,6 +617,13 @@ export class GitService {
         while (cursor < refs.length) {
           if (opts.signal?.aborted) throw new Error('refsAt aborted');
           const ref = refs[cursor++];
+          // A tag is immutable: it either existed at the cutoff or it didn't.
+          // Rewinding it to an older commit would show a tag that wasn't there.
+          if (ref.full.startsWith('refs/tags/')) {
+            const born = Number.isFinite(ref.createdAt) ? ref.createdAt : ref.tipTime;
+            if (born <= cutoff) tags[ref.short] = ref.hash;
+            continue;
+          }
           const fastHash = Number.isFinite(ref.tipTime) && ref.tipTime <= cutoff ? ref.hash : null;
           // Slow path (per-ref `git rev-list -1 --before=`) is only paid for
           // local refs. Remote-tracking refs are usually mirrors of pushes,
@@ -606,9 +634,7 @@ export class GitService {
           const hash =
             fastHash ??
             (isRemote ? null : await this.revAt(ref.full, atIso, opts).catch(() => null));
-          if (!hash) continue;
-          if (ref.full.startsWith('refs/tags/')) tags[ref.short] = hash;
-          else branches[ref.short] = hash;
+          if (hash) branches[ref.short] = hash;
         }
       })
     );
@@ -685,8 +711,9 @@ export class GitService {
             reject(new Error('git stream aborted'));
             return;
           }
-          const child = spawn('git', args, {
+          const child = spawn('git', [...GIT_BASE_ARGS, ...args], {
             cwd: this.repoPath,
+            timeout: opts.signal ? undefined : GIT_TIMEOUT_MS,
             env: {
               ...process.env,
               GIT_PAGER: 'cat',
@@ -720,6 +747,7 @@ export class GitService {
             settled = true;
             opts.signal?.removeEventListener('abort', onAbort);
             if (code === 0) resolve();
+            else if (code === null) reject(new Error(`git ${args[0]} timed out or was killed`));
             else reject(new Error(`git ${args[0]} exited ${code}: ${stderr.trim()}`));
           });
         }),
@@ -769,11 +797,11 @@ export class GitService {
   /**
    * Stream commits one at a time via async iteration. Used by the SSE
    * endpoint to feed huge repos to the UI progressively without buffering
-   * the entire `git log` output in memory.
+   * the entire `git log` output in memory. With a pageSize it yields one
+   * extra commit so callers can detect a next page without a count.
    */
   async *streamCommits(
     options: GitOptions = {},
-    _batchSize = 200,
     opts: GitStreamOptions = {}
   ): AsyncGenerator<Commit, void, void> {
     if (!(await this.verifyRepository())) {
@@ -788,7 +816,7 @@ export class GitService {
     const page = Math.max(1, options.page || 1);
     const pageSize = options.pageSize ? clamp(options.pageSize, 1, 1000) : 0;
     const pagingArgs = pageSize
-      ? [`--max-count=${pageSize}`, `--skip=${(page - 1) * pageSize}`]
+      ? [`--max-count=${pageSize + 1}`, `--skip=${(page - 1) * pageSize}`]
       : [];
     const controller = new AbortController();
     const onAbort = () => controller.abort();
@@ -958,10 +986,11 @@ export class GitService {
   private async git(args: string[], opts: GitExecOptions = {}): Promise<string> {
     return gitQueue.run(async () => {
       try {
-        const { stdout } = await execFileAsync('git', args, {
+        const { stdout } = await execFileAsync('git', [...GIT_BASE_ARGS, ...args], {
           cwd: this.repoPath,
           maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
           signal: opts.signal,
+          timeout: opts.signal ? undefined : GIT_TIMEOUT_MS,
           env: {
             ...process.env,
             GIT_PAGER: 'cat',
@@ -972,7 +1001,8 @@ export class GitService {
         });
         return stdout;
       } catch (err) {
-        const e = err as NodeJS.ErrnoException & { stderr?: string };
+        const e = err as NodeJS.ErrnoException & { stderr?: string; killed?: boolean };
+        if (e.killed && !opts.signal?.aborted) throw new Error(`git ${args[0]} timed out`);
         const msg = e.stderr?.toString().trim() || e.message;
         throw new Error(`git ${args[0]} failed: ${msg}`);
       }
@@ -980,7 +1010,7 @@ export class GitService {
   }
 }
 
-function isPlausibleHash(hash: string): boolean {
+export function isPlausibleHash(hash: string): boolean {
   return typeof hash === 'string' && /^[0-9a-fA-F]{4,40}$/.test(hash);
 }
 

@@ -63,7 +63,7 @@ describe('portable investigation reports', () => {
       const report = await buildCommitReport(new GitService(repo.dir), hash);
       const markdown = formatReportMarkdown(report);
       expect(markdown).toContain('\\[unsafe\\]\\(x\\) \\| \\<tag\\>');
-      expect(markdown).toContain('docs/a\\_\\[x\\]\\.md');
+      expect(markdown).toContain('`docs/a_[x].md`');
       expect(markdown).not.toContain('[unsafe](x)');
       expect(escapeMarkdown('a\n# b')).toBe('a \\# b');
     } finally {
@@ -79,6 +79,22 @@ describe('portable investigation reports', () => {
       const report = await buildRangeReport(new GitService(repo.dir), from, to);
       expect(report.summary.commits).toBe(105);
       expect(report.relatedCommits).toHaveLength(100);
+    } finally {
+      repo.cleanup();
+    }
+  });
+});
+
+describe('markdown code spans', () => {
+  it('uses a longer fence instead of backslash escapes for backticks', async () => {
+    const { formatReportMarkdown: fmt } = await import('../backend/report');
+    const repo = makeRepo('ghui-report-tick-');
+    try {
+      repo.commit('a.txt', 'a', 'one');
+      const hash = repo.commit('a`b.txt', 'b', 'two');
+      const g = new GitService(repo.dir);
+      const report = await buildCommitReport(g, hash);
+      expect(fmt(report)).toContain('``a`b.txt``');
     } finally {
       repo.cleanup();
     }

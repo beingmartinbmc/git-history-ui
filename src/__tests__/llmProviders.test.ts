@@ -249,7 +249,7 @@ describe('OpenAiProvider', () => {
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body).toMatchObject({
       model: 'gpt-test',
-      max_tokens: 1024,
+      max_completion_tokens: 1024,
       messages: [{ role: 'user' }],
       response_format: { type: 'json_object' }
     });
@@ -310,7 +310,7 @@ describe('OpenAiProvider', () => {
     await expect(p.summarize('blob')).resolves.toBe('fine');
     const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
     expect(body.model).toBe('gpt-4.1-nano');
-    expect(body.max_tokens).toBe(700);
+    expect(body.max_completion_tokens).toBe(700);
     expect(body.messages[0].content).toMatch(/Summarize the following text/);
   });
 
@@ -319,7 +319,7 @@ describe('OpenAiProvider', () => {
     const p = new OpenAiProvider('k');
     await p.summarize('blob', { maxTokens: 900 });
     const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
-    expect(body.max_tokens).toBe(900);
+    expect(body.max_completion_tokens).toBe(900);
   });
 
   it('composes and forwards client cancellation to OpenAI fetch', async () => {

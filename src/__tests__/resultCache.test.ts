@@ -53,3 +53,26 @@ describe('ResultCache', () => {
     expect(k).toBe('a=one');
   });
 });
+
+describe('ResultCache.getOrCompute', () => {
+  it('shares one in-flight computation per key', async () => {
+    const cache = new ResultCache<number>();
+    let calls = 0;
+    const compute = async () => ++calls;
+    const [a, b] = await Promise.all([
+      cache.getOrCompute('k', compute),
+      cache.getOrCompute('k', compute)
+    ]);
+    expect([a, b, calls]).toEqual([1, 1, 1]);
+  });
+
+  it('does not cache a result computed before clear()', async () => {
+    const cache = new ResultCache<string>();
+    let release!: () => void;
+    const slow = cache.getOrCompute('k', () => new Promise((r) => (release = () => r('stale'))));
+    cache.clear();
+    release();
+    await expect(slow).resolves.toBe('stale');
+    expect(cache.get('k')).toBeUndefined();
+  });
+});
