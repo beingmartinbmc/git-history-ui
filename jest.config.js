@@ -1,6 +1,9 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
+  // Most suites spawn git subprocesses (up to 4 each); one worker per core
+  // oversubscribes the CPU and makes the wall-clock budgets in performance.test.ts flaky.
+  maxWorkers: '50%',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts', '**/?(*.)+(spec|test).ts'],
   testPathIgnorePatterns: [
@@ -10,7 +13,7 @@ module.exports = {
     '/__tests__/helpers/'
   ],
   transform: {
-    '^.+\\.ts$': 'ts-jest',
+    '^.+\\.ts$': 'ts-jest'
   },
   collectCoverageFrom: [
     'src/**/*.ts',
@@ -38,5 +41,5 @@ module.exports = {
   },
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
-  setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'],
+  setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts']
 };

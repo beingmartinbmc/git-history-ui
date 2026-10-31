@@ -33,5 +33,7 @@ describe('demo repository', () => {
     const commits = await service.getCommits({ pageSize: 50 });
     expect(new Set(commits.commits.map((commit) => commit.author)).size).toBeGreaterThanOrEqual(3);
     expect(commits.commits.some((commit) => commit.isMerge)).toBe(true);
-  });
+    // Builds the demo twice with ~50 sequential git spawns each; ~2s alone but
+    // several times slower when other workers saturate the CPU.
+  }, 60_000);
 });
