@@ -18,6 +18,8 @@ test('parses GitHub repository, PR, commit, and commits URLs', () => {
   });
   assert.equal(parseGitHubUrl('https://gitlab.com/acme/widgets'), null);
   assert.equal(parseGitHubUrl('https://github.com/acme/%2Fescape'), null);
+  assert.equal(parseGitHubUrl('https://github.com/settings/profile'), null);
+  assert.equal(parseGitHubUrl('https://github.com/orgs/acme/repositories'), null);
 });
 
 test('serializes encoded versioned protocol links', () => {

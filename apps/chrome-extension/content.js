@@ -75,7 +75,14 @@
   }
 
   tryInject();
+  // GitHub mutates the DOM constantly; re-check at most once per frame.
+  var scheduled = false;
   new MutationObserver(function () {
-    if (location.href !== lastUrl || !document.querySelector('#ghui-open-btn')) tryInject();
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(function () {
+      scheduled = false;
+      if (location.href !== lastUrl || !document.querySelector('#ghui-open-btn')) tryInject();
+    });
   }).observe(document.body, { childList: true, subtree: true });
 })();
