@@ -23,7 +23,7 @@ function resolveRefs(inputs, event) {
   const head = explicitHead || cleanRef(derived.head);
   if (!base || !head) {
     throw new Error(
-      'Could not resolve base/head. Set action inputs explicitly or run from pull_request, merge_group, or push.'
+      'Could not resolve base/head. Set action inputs explicitly or run from pull_request, merge_group, or push (a push that creates a branch has no base).'
     );
   }
   return { base, head };
@@ -32,7 +32,12 @@ function resolveRefs(inputs, event) {
 function cleanRef(value) {
   if (typeof value !== 'string') return '';
   const trimmed = value.trim();
-  return trimmed && trimmed.length <= 200 && !trimmed.startsWith('-') && !/[\0\r\n]/.test(trimmed)
+  // An all-zero SHA is GitHub's "no commit" marker, e.g. `before` on a branch-creating push.
+  return trimmed &&
+    trimmed.length <= 200 &&
+    !trimmed.startsWith('-') &&
+    !/[\0\r\n]/.test(trimmed) &&
+    !/^0+$/.test(trimmed)
     ? trimmed
     : '';
 }
@@ -52,6 +57,7 @@ function resolveSafePath(value, fallback) {
 
 function runCli(args, cwd, spawn = spawnSync) {
   const result = spawn('npx', args, { cwd, encoding: 'utf8' });
+  if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error((result.stderr || result.stdout || 'git-history-ui pr-impact failed').trim());
   }

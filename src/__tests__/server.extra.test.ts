@@ -1,3 +1,4 @@
+import http from 'http';
 import { AddressInfo } from 'net';
 import { startServer } from '../backend/server';
 import { fetchRaw, request, requestRaw } from './helpers/http';
@@ -391,12 +392,12 @@ describe('HTTP server — full endpoint coverage', () => {
     const r = await request({
       url: `${url}/api/share`,
       method: 'POST',
-      headers: { Host: 'evil.example' },
+      headers: { Host: 'localhost:4321' },
       body: { viewState: { view: 'history', commit: firstHash } }
     });
     expect(r.status).toBe(201);
     expect(r.body.url).not.toContain(url);
-    expect(r.body.url).not.toContain('evil.example');
+    expect(r.body.url).not.toContain('4321');
   });
 
   it('POST /api/share rejects missing or non-flat viewState', async () => {
@@ -587,6 +588,7 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
   let close: () => Promise<void>;
   let hash: string;
   let lastSummarySignal: AbortSignal | undefined;
+  let abortedDuringSummary: boolean | undefined;
 
   beforeAll(async () => {
     repo = makeRepo('ghui-ai-');
@@ -601,6 +603,12 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
         opts?: { hint?: string; maxTokens?: number; signal?: AbortSignal }
       ) => {
         lastSummarySignal = opts?.signal;
+        const waitMs = text === 'hang' ? 2000 : 50;
+        await new Promise((resolve) => {
+          setTimeout(resolve, waitMs);
+          opts?.signal?.addEventListener('abort', resolve);
+        });
+        abortedDuringSummary = opts?.signal?.aborted;
         return `STUB(${(opts?.hint ?? '').slice(0, 16)}): ${text.length} chars`;
       }
     };
@@ -625,6 +633,23 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
     expect(r.body.provider).toBe('anthropic');
     expect(r.body.summary).toContain('STUB');
     expect(lastSummarySignal).toBeDefined();
+    expect(abortedDuringSummary).toBe(false);
+  });
+
+  it('aborts the LLM call when the client disconnects', async () => {
+    abortedDuringSummary = undefined;
+    const client = http.request(`${url}/api/summarize-diff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    client.on('error', () => undefined);
+    client.end(JSON.stringify({ text: 'hang' }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    client.destroy();
+    for (let i = 0; i < 50 && abortedDuringSummary === undefined; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(abortedDuringSummary).toBe(true);
   });
 
   it('explain-commit fetches the commit + diff and returns a summary', async () => {
@@ -650,5 +675,50 @@ describe('HTTP server — AI endpoints (with stub provider)', () => {
       ).status;
     }
     expect(status).toBe(429);
+  });
+});
+
+describe('server paging and errors', () => {
+  let repo: TestRepo;
+  let url: string;
+  let close: () => Promise<void>;
+
+  beforeAll(async () => {
+    repo = makeRepo('ghui-srv-page-');
+    for (let i = 0; i < 5; i++) repo.commit(`f${i}.txt`, String(i), `commit ${i}`);
+    const result = await startServer(0, '127.0.0.1', {
+      cwd: repo.dir,
+      llm: { provider: 'heuristic' }
+    });
+    url = `http://127.0.0.1:${(result.server.address() as AddressInfo).port}`;
+    close = result.close;
+  });
+
+  afterAll(async () => {
+    await close();
+    repo.cleanup();
+  });
+
+  it('/api/commits/stream pages are contiguous', async () => {
+    const hashes = async (page: number) =>
+      [
+        ...(await fetchRaw(`${url}/api/commits/stream?page=${page}&pageSize=2`)).data.matchAll(
+          /"hash":"([0-9a-f]{40})"/g
+        )
+      ].map((m) => m[1]);
+    const all = repo.git(['log', '--format=%H']).trim().split('\n');
+    expect(await hashes(1)).toEqual(all.slice(0, 2));
+    expect(await hashes(2)).toEqual(all.slice(2, 4));
+  });
+
+  it('maps an invalid snapshot date to 400', async () => {
+    const r = await request({ url: `${url}/api/snapshot?at=not-a-date` });
+    expect(r.status).toBe(400);
+  });
+
+  it('flags a truncated commit export', async () => {
+    const r = await fetchRaw(`${url}/api/export/commits?author=Tester`);
+    expect(r.headers['x-export-truncated']).toBe('false');
+    expect(r.headers['x-total-commits']).toBe('5');
   });
 });

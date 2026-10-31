@@ -37,8 +37,15 @@ function checkExtension(directory = EXTENSION) {
   if (JSON.stringify(manifest.permissions || []) !== JSON.stringify(['storage'])) {
     throw new Error('extension permissions must be exactly ["storage"]');
   }
-  if (JSON.stringify(manifest.host_permissions || []) !== JSON.stringify(['https://github.com/*'])) {
-    throw new Error('host permissions must be limited to GitHub');
+  // Manifest-declared content scripts need no host_permissions; keep the install prompt minimal.
+  if (manifest.host_permissions) throw new Error('extension must not request host_permissions');
+  const matches = (manifest.content_scripts || []).flatMap((entry) => entry.matches || []);
+  if (!matches.length || !matches.every((match) => match.startsWith('https://github.com/'))) {
+    throw new Error('content scripts must be limited to GitHub');
+  }
+  const { version } = require(path.join(ROOT, 'package.json'));
+  if (directory === EXTENSION && manifest.version !== version) {
+    throw new Error(`manifest version ${manifest.version} must match package.json ${version}`);
   }
 
   const referenced = new Set([

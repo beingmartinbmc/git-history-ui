@@ -13,6 +13,10 @@ export interface NlInterpretation {
 }
 
 export interface NlSearchResult extends PaginatedCommits {
+  /** True when more commits matched than the ranked candidate window holds. */
+  truncated: boolean;
+  /** Commits matching the filters in git, before the candidate cap. */
+  availableTotal: number;
   parsedQuery: NlInterpretation;
   usedLlm: boolean;
   llmProvider: 'heuristic' | 'anthropic' | 'openai';
@@ -83,6 +87,24 @@ export async function runNlSearch(
   const top = parsed.expandedKeywords.slice(0, 12);
   const grep = top.length > 0 ? top.map(escapeForGrep).join('|') : undefined;
 
+  // Stopwords only ("the and of") carry no signal: don't fall through to "match everything".
+  if (top.length === 0 && !parsed.author && !parsed.since && !parsed.until) {
+    return {
+      commits: [],
+      total: 0,
+      page,
+      pageSize,
+      totalPages: 1,
+      hasNext: false,
+      hasPrevious: page > 1,
+      truncated: false,
+      availableTotal: 0,
+      parsedQuery: parsed,
+      usedLlm: llm.isAi,
+      llmProvider: llm.name
+    };
+  }
+
   // Pull candidate set. We deliberately ignore pagination here so we can re-rank.
   const candidatesPage = await gitService.getCommits(
     {
@@ -127,6 +149,8 @@ export async function runNlSearch(
     totalPages,
     hasNext: page < totalPages,
     hasPrevious: page > 1,
+    truncated: candidatesPage.total > total,
+    availableTotal: candidatesPage.total,
     parsedQuery: parsed,
     usedLlm: llm.isAi,
     llmProvider: llm.name

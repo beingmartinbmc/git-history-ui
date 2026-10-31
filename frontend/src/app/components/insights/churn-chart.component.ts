@@ -21,6 +21,8 @@ interface ChurnPoint {
   deletions: number;
 }
 
+let nextGradientId = 0;
+
 @Component({
   selector: 'app-churn-chart',
   standalone: true,
@@ -143,19 +145,19 @@ interface ChurnPoint {
         pointer-events: none;
         transform: translate(-50%, calc(-100% - 12px));
       }
-      .tooltip strong {
+      :host ::ng-deep .tooltip strong {
         display: block;
         margin-bottom: 0.25rem;
         font-size: 12px;
       }
-      .tooltip .row {
+      :host ::ng-deep .tooltip .row {
         display: flex;
         justify-content: space-between;
         gap: 1rem;
         color: var(--fg-muted);
         font-variant-numeric: tabular-nums;
       }
-      .tooltip .value {
+      :host ::ng-deep .tooltip .value {
         color: var(--fg-primary);
       }
       .accessible-data {
@@ -186,6 +188,8 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
   @Input() height = 200;
   @ViewChild('svg', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
   @ViewChild('tooltip', { static: true }) tooltipRef!: ElementRef<HTMLDivElement>;
+  // SVG ids are document-global, so each instance needs its own.
+  private readonly gradientId = `churn-area-gradient-${nextGradientId++}`;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private theme = inject(ThemeService);
   private resizeObserver: ResizeObserver | null = null;
@@ -284,7 +288,7 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
     const defs = svg.append('defs');
     const grad = defs
       .append('linearGradient')
-      .attr('id', 'churn-area-gradient')
+      .attr('id', this.gradientId)
       .attr('x1', '0%')
       .attr('x2', '0%')
       .attr('y1', '0%')
@@ -350,7 +354,7 @@ export class ChurnChartComponent implements AfterViewInit, OnChanges, OnDestroy 
       .y0(innerH)
       .y1((d) => yChurn(d.churn))
       .curve(d3.curveMonotoneX);
-    g.append('path').datum(parsed).attr('d', area).attr('fill', 'url(#churn-area-gradient)');
+    g.append('path').datum(parsed).attr('d', area).attr('fill', `url(#${this.gradientId})`);
 
     const line = d3
       .line<(typeof parsed)[number]>()

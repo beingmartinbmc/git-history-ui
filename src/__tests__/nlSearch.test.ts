@@ -65,3 +65,26 @@ describe('parseNlQuery', () => {
   // Mark NOW as referenced so eslint doesn't complain
   void NOW;
 });
+
+describe('runNlSearch', () => {
+  it('returns nothing for a stopword-only query instead of every commit', async () => {
+    const { runNlSearch } = await import('../backend/search/nlSearch');
+    const { makeRepo } = await import('./helpers/repo');
+    const { GitService } = await import('../backend/gitService');
+    const repo = makeRepo('ghui-nl-stop-');
+    try {
+      repo.commit('a.txt', 'a', 'something');
+      const r = await runNlSearch(
+        new GitService(repo.dir),
+        { name: 'heuristic', isAi: false, score: async () => [], summarize: async () => '' },
+        {
+          query: 'the and of'
+        }
+      );
+      expect(r.commits).toEqual([]);
+      expect(r.total).toBe(0);
+    } finally {
+      repo.cleanup();
+    }
+  });
+});

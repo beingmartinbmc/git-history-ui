@@ -77,3 +77,31 @@ describe('RefWatcher', () => {
     watcher.stop();
   });
 });
+
+describe('RefWatcher atomic HEAD replacement', () => {
+  it('keeps firing after HEAD is replaced by rename twice', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refwatcher-rename-'));
+    const gitDir = path.join(dir, '.git');
+    fs.mkdirSync(path.join(gitDir, 'refs'), { recursive: true });
+    fs.writeFileSync(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
+    const watcher = new RefWatcher(dir, 30);
+    let fired = 0;
+    watcher.on('change', () => fired++);
+    watcher.start();
+    // fs.watch needs a moment to arm; events written before that are lost.
+    await new Promise((r) => setTimeout(r, 200));
+    try {
+      for (let i = 0; i < 2; i++) {
+        const before = fired;
+        fs.writeFileSync(path.join(gitDir, 'HEAD.lock'), `ref: refs/heads/b${i}\n`);
+        fs.renameSync(path.join(gitDir, 'HEAD.lock'), path.join(gitDir, 'HEAD'));
+        for (let t = 0; t < 40 && fired === before; t++)
+          await new Promise((r) => setTimeout(r, 50));
+        expect(fired).toBeGreaterThan(before);
+      }
+    } finally {
+      watcher.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

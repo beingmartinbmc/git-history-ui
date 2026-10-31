@@ -135,8 +135,6 @@ export async function getFileBreakageAnalysis(
     };
   });
 
-  // Defensive: ensure newest-first ordering for the suspect walk below.
-  commits.sort((a, b) => b.date.localeCompare(a.date));
   const indexByHash = new Map<string, number>();
   commits.forEach((c, i) => indexByHash.set(c.hash, i));
 
@@ -200,7 +198,7 @@ export async function getFileBreakageAnalysis(
   }
 
   const suspects: BreakageSuspect[] = Array.from(suspectsMap.values())
-    .sort((a, b) => b.score - a.score || b.info.date.localeCompare(a.info.date))
+    .sort((a, b) => b.score - a.score || Date.parse(b.info.date) - Date.parse(a.info.date))
     .slice(0, SUSPECT_LIMIT)
     .map((s) => ({
       hash: s.info.hash,
@@ -211,7 +209,9 @@ export async function getFileBreakageAnalysis(
       churn: s.info.churn,
       score: s.score,
       reasons: Array.from(s.reasons),
-      linkedFixes: Array.from(s.fixes.values()).sort((a, b) => b.date.localeCompare(a.date))
+      linkedFixes: Array.from(s.fixes.values()).sort(
+        (a, b) => Date.parse(b.date) - Date.parse(a.date)
+      )
     }));
 
   // Co-changed files: enumerate all files in the diffs of recent fix

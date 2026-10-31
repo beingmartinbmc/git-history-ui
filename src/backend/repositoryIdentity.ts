@@ -47,9 +47,26 @@ export function canonicalizeRemoteUrl(value: string | null | undefined): string 
   return `https://${host}/${parts.map(encodeURIComponent).join('/')}`;
 }
 
-export async function getRepositoryIdentity(
+const IDENTITY_TTL_MS = 5_000;
+const identityCache = new Map<string, { at: number; value: Promise<RepositoryIdentity> }>();
+
+/** Spawns ~7 git processes, so share the result across the frequent callers (report, /api/repository). */
+export function getRepositoryIdentity(
   git: Pick<GitService, 'cwd' | 'runRaw'>,
-  runner: GitRunner = (args) => git.runRaw(args)
+  runner?: GitRunner
+): Promise<RepositoryIdentity> {
+  if (runner) return readRepositoryIdentity(git, runner);
+  const hit = identityCache.get(git.cwd);
+  if (hit && Date.now() - hit.at < IDENTITY_TTL_MS) return hit.value;
+  const value = readRepositoryIdentity(git, (args) => git.runRaw(args));
+  identityCache.set(git.cwd, { at: Date.now(), value });
+  value.catch(() => identityCache.delete(git.cwd));
+  return value;
+}
+
+async function readRepositoryIdentity(
+  git: Pick<GitService, 'cwd'>,
+  runner: GitRunner
 ): Promise<RepositoryIdentity> {
   const read = async (args: string[]): Promise<string | null> => {
     try {

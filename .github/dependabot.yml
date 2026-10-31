@@ -1,33 +1,42 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: "/"
+    directory: '/'
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
       types:
         patterns:
-          - "@types/*"
+          - '@types/*'
       eslint:
         patterns:
-          - "eslint*"
-          - "@typescript-eslint/*"
-          - "prettier"
+          - 'eslint*'
+          - '@typescript-eslint/*'
+          - 'prettier'
 
   - package-ecosystem: npm
-    directory: "/frontend"
+    directory: '/frontend'
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
       angular:
         patterns:
-          - "@angular/*"
-          - "@angular-devkit/*"
-          - "@schematics/*"
+          - '@angular/*'
+          - '@angular-devkit/*'
+          - '@schematics/*'
 
   - package-ecosystem: github-actions
-    directory: "/"
+    directory: '/'
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - '*'
+
+  - package-ecosystem: docker
+    directory: '/'
     schedule:
       interval: monthly

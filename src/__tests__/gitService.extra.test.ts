@@ -123,7 +123,7 @@ describe('GitService — extra coverage', () => {
 
   it('streamCommits yields all commits and stops at the end', async () => {
     const all: Commit[] = [];
-    for await (const c of svc.streamCommits({}, 2)) {
+    for await (const c of svc.streamCommits({})) {
       all.push(c);
     }
     expect(all.length).toBeGreaterThanOrEqual(4);
@@ -139,7 +139,7 @@ describe('GitService — extra coverage', () => {
   it('streamCommits respects an already-aborted signal', async () => {
     const ac = new AbortController();
     ac.abort();
-    const it = svc.streamCommits({}, 2, { signal: ac.signal });
+    const it = svc.streamCommits({}, { signal: ac.signal });
     await expect(it.next()).rejects.toThrow(/aborted/);
   });
 
@@ -348,5 +348,23 @@ describe('GitService — extra coverage', () => {
     const ac = new AbortController();
     ac.abort();
     await expect(svc.getNumstat({}, 10, { signal: ac.signal })).rejects.toThrow(/aborted/);
+  });
+});
+
+describe('GitService git invocation', () => {
+  it('lists non-ASCII paths unquoted, root-commit files, and author identities', async () => {
+    const repo = makeRepo('ghui-quote-');
+    try {
+      const root = repo.commit('src/caf\u00e9.txt', 'x', 'root');
+      const svc = new GitService(repo.dir);
+      const diff = await svc.getDiff(root);
+      expect(diff.map((f) => f.file)).toEqual(['src/caf\u00e9.txt']);
+      expect((await svc.getDiffMeta(root)).files.map((f) => f.file)).toEqual(['src/caf\u00e9.txt']);
+      expect(await svc.getAuthorIdentities()).toEqual([
+        expect.objectContaining({ email: 'tester@example.com' })
+      ]);
+    } finally {
+      repo.cleanup();
+    }
   });
 });

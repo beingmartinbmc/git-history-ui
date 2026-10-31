@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable no-console */
 /**
  * Verifies that the optional `better-sqlite3` native addon can be loaded
  * against the *current* Node.js ABI. If it was compiled for a different
@@ -45,11 +44,11 @@ function main() {
       'mismatch). Attempting a one-time rebuild…'
   );
 
-  const result = spawnSync(
-    process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    ['rebuild', 'better-sqlite3'],
-    { stdio: 'inherit' }
-  );
+  // Node refuses to spawn .cmd files without a shell since the CVE-2024-27980 fix.
+  const result = spawnSync('npm', ['rebuild', 'better-sqlite3'], {
+    stdio: 'inherit',
+    shell: process.platform === 'win32'
+  });
 
   if (result.status === 0 && canLoad()) {
     console.warn('[git-history-ui] better-sqlite3 rebuilt successfully.');

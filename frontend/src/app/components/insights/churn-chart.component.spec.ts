@@ -65,4 +65,19 @@ describe('ChurnChartComponent', () => {
     fixture.destroy();
     expect(disconnect).toHaveBeenCalled();
   });
+
+  it('gives each chart instance its own gradient id', () => {
+    const other = TestBed.createComponent(ChurnChartComponent);
+    other.componentInstance.data = component.data;
+    fixture.detectChanges();
+    other.detectChanges();
+
+    const id = (f: ComponentFixture<ChurnChartComponent>) =>
+      f.nativeElement.querySelector('linearGradient')?.id as string;
+    expect(id(fixture)).toBeTruthy();
+    expect(id(fixture)).not.toBe(id(other));
+    expect(
+      fixture.nativeElement.querySelector('path[fill^="url(#' + id(fixture) + ')"]'),
+    ).toBeTruthy();
+  });
 });

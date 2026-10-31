@@ -5,6 +5,28 @@
 })(typeof globalThis === 'object' ? globalThis : this, function () {
   'use strict';
 
+  // ponytail: hand-picked GitHub top-level routes that take two path segments but
+  // never name a repository; extend it when one of them shows the button.
+  var RESERVED_ROUTES = [
+    'about',
+    'account',
+    'apps',
+    'codespaces',
+    'collections',
+    'enterprises',
+    'explore',
+    'features',
+    'marketplace',
+    'notifications',
+    'organizations',
+    'orgs',
+    'search',
+    'settings',
+    'sponsors',
+    'topics',
+    'users'
+  ];
+
   function parseGitHubUrl(raw) {
     var url;
     try {
@@ -14,7 +36,7 @@
     }
     if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null;
     var parts = url.pathname.split('/').filter(Boolean);
-    if (parts.length < 2) return null;
+    if (parts.length < 2 || RESERVED_ROUTES.indexOf(parts[0].toLowerCase()) !== -1) return null;
     var owner = parts[0];
     var repo = parts[1].replace(/\.git$/i, '');
     if (!safeSegment(owner) || !safeSegment(repo)) return null;

@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { Commit, GitService } from '../gitService';
+import { canonicalizeRemoteUrl } from '../repositoryIdentity';
 
 export interface CommitGroup {
   id: string;
@@ -200,7 +201,7 @@ export async function buildCommitGroups(
   }
 
   // Sort by lastDate desc.
-  groups.sort((a, b) => b.lastDate.localeCompare(a.lastDate));
+  groups.sort((a, b) => Date.parse(b.lastDate) - Date.parse(a.lastDate));
 
   // Optional PR enrichment.
   if (opts.githubToken) {
@@ -247,7 +248,7 @@ function buildGroup(
     Partial<Pick<CommitGroup, 'prNumber' | 'scope' | 'type'>>
 ): CommitGroup {
   const cs = hashes.map((h) => byHash.get(h)).filter((c): c is Commit => !!c);
-  const dates = cs.map((c) => c.date).sort();
+  const dates = cs.map((c) => c.date).sort((a, b) => Date.parse(a) - Date.parse(b));
   const authors = Array.from(new Set(cs.map((c) => c.author)));
   // We don't have file/line counts at this layer (would need diff per commit).
   // Fill with zeros; the impact endpoint can fill these in client-side on demand.
@@ -263,11 +264,10 @@ function buildGroup(
   };
 }
 
-const GH_SLUG_RE = /github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?$/;
 function parseGithubSlug(remote: string): { owner: string; repo: string } | null {
-  const m = remote.match(GH_SLUG_RE);
-  if (!m) return null;
-  return { owner: m[1], repo: m[2] };
+  const url = canonicalizeRemoteUrl(remote);
+  const m = url?.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)$/);
+  return m ? { owner: decodeURIComponent(m[1]), repo: decodeURIComponent(m[2]) } : null;
 }
 
 async function enrichWithPrInfo(

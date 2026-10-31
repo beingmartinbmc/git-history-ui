@@ -327,11 +327,33 @@ describe('Security & edge cases — HTTP server', () => {
     expect(r.status).toBe(200);
   });
 
+  it('rejects DNS-rebound requests whose Host is not loopback', async () => {
+    const port = new URL(url).port;
+    const rebound = await request({
+      url: `${url}/api/health`,
+      headers: {
+        Host: `rebind.attacker.test:${port}`,
+        Origin: `http://rebind.attacker.test:${port}`
+      }
+    });
+    expect(rebound.status).toBe(401);
+
+    for (const host of [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]) {
+      const r = await request({ url: `${url}/api/health`, headers: { Host: host } });
+      expect(r.status).toBe(200);
+    }
+  });
+
   // === HELMET HEADERS ===
 
   it('disables X-Powered-By header', async () => {
     const r = await request({ url: `${url}/api/health` });
     expect(r.headers['x-powered-by']).toBeUndefined();
+  });
+
+  it('does not allow inline scripts in the CSP', async () => {
+    const r = await request({ url: `${url}/api/health` });
+    expect(r.headers['content-security-policy']).toMatch(/script-src 'self';/);
   });
 
   // === ERROR HANDLING ===

@@ -55,6 +55,8 @@ export interface BootResult {
   close: () => Promise<void>;
 }
 
+// Rows per commit export; larger histories are cut and flagged via X-Export-Truncated.
+const EXPORT_COMMIT_LIMIT = 20_000;
 const DEFAULT_PORT = 3000;
 const DEFAULT_HOST = 'localhost';
 
@@ -89,7 +91,7 @@ export async function startServer(
           'base-uri': ["'self'"],
           'object-src': ["'none'"],
           'frame-ancestors': ["'none'"],
-          'script-src': ["'self'", "'unsafe-inline'"],
+          'script-src': ["'self'"],
           'style-src': ["'self'", "'unsafe-inline'"],
           'img-src': ["'self'", 'data:'],
           'connect-src': ["'self'"]
@@ -236,7 +238,7 @@ export async function startServer(
 
     const controller = new AbortController();
     let cancelled = false;
-    req.on('close', () => {
+    res.on('close', () => {
       cancelled = true;
       controller.abort();
     });
@@ -247,11 +249,11 @@ export async function startServer(
         const page = Math.max(1, options.page || 1);
         const pageSize = clampNumber(options.pageSize || 100, 1, 500);
         const skip = (page - 1) * pageSize;
-        const streamOptions = { ...options, page, pageSize: pageSize + 1 };
+        const streamOptions = { ...options, page, pageSize };
 
         let emitted = 0;
         let hasNext = false;
-        for await (const commit of gitService.streamCommits(streamOptions, 200, {
+        for await (const commit of gitService.streamCommits(streamOptions, {
           signal: controller.signal
         })) {
           if (cancelled) break;
@@ -293,6 +295,7 @@ export async function startServer(
   const refWatcher = new RefWatcher(cwd);
   const sseClients = new Set<import('http').ServerResponse>();
   refWatcher.on('change', () => {
+    gitService.clearCaches();
     insightsCache.clear();
     groupsCache.clear();
     wrappedCache.clear();
@@ -480,20 +483,9 @@ export async function startServer(
       const branch = stringParam(req.query.branch);
       const maxCommits = clampNumber(numberParam(req.query.maxCommits, 1000), 1, 5000);
       const cacheKey = ResultCache.key({ since, until, author, branch, maxCommits });
-      const cached = groupsCache.get(cacheKey);
-      if (cached) {
-        res.json(cached);
-        return;
-      }
-      const groups = await buildCommitGroups(gitService, {
-        since,
-        until,
-        author,
-        branch,
-        githubToken,
-        maxCommits
-      });
-      groupsCache.set(cacheKey, groups);
+      const groups = await groupsCache.getOrCompute(cacheKey, () =>
+        buildCommitGroups(gitService, { since, until, author, branch, githubToken, maxCommits })
+      );
       res.json(groups);
     })
   );
@@ -551,60 +543,44 @@ export async function startServer(
     })
   );
 
+  // Shared by the GET and export routes. Results are shared between concurrent
+  // requests, so one client disconnecting must not abort the computation; the
+  // git timeout is the backstop.
+  const loadInsights = (query: Request['query']) => {
+    const since = stringParam(query.since);
+    const until = stringParam(query.until);
+    const branch = stringParam(query.branch);
+    const maxCommits = clampNumber(numberParam(query.maxCommits, 5000), 1, 20_000);
+    const cacheKey = ResultCache.key({ since, until, branch, maxCommits });
+    return insightsCache.getOrCompute(cacheKey, () =>
+      computeInsights(gitService, { since, until, branch, maxCommits })
+    );
+  };
+  const loadWrapped = (query: Request['query']) => {
+    const yearParam = numberParam(query.year, 0);
+    const year = yearParam > 0 ? yearParam : undefined;
+    const since = stringParam(query.since);
+    const until = stringParam(query.until);
+    const branch = stringParam(query.branch);
+    const author = stringParam(query.author);
+    const maxCommits = clampNumber(numberParam(query.maxCommits, 5000), 1, 20_000);
+    const cacheKey = ResultCache.key({ year, since, until, branch, author, maxCommits });
+    return wrappedCache.getOrCompute(cacheKey, () =>
+      computeWrapped(gitService, { year, since, until, branch, author, maxCommits })
+    );
+  };
+
   app.get(
     '/api/insights',
     wrap(async (req, res) => {
-      const since = stringParam(req.query.since);
-      const until = stringParam(req.query.until);
-      const branch = stringParam(req.query.branch);
-      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 5000), 1, 20_000);
-      const cacheKey = ResultCache.key({ since, until, branch, maxCommits });
-      const cached = insightsCache.get(cacheKey);
-      if (cached) {
-        res.json(cached);
-        return;
-      }
-      const signal = requestAbortSignal(req);
-      const bundle = await computeInsights(gitService, {
-        since,
-        until,
-        branch,
-        maxCommits,
-        signal
-      });
-      insightsCache.set(cacheKey, bundle);
-      res.json(bundle);
+      res.json(await loadInsights(req.query));
     })
   );
 
   app.get(
     '/api/wrapped',
     wrap(async (req, res) => {
-      const signal = requestAbortSignal(req);
-      const yearParam = numberParam(req.query.year, 0);
-      const year = yearParam > 0 ? yearParam : undefined;
-      const since = stringParam(req.query.since);
-      const until = stringParam(req.query.until);
-      const branch = stringParam(req.query.branch);
-      const author = stringParam(req.query.author);
-      const maxCommits = clampNumber(numberParam(req.query.maxCommits, 5000), 1, 20_000);
-      const cacheKey = ResultCache.key({ year, since, until, branch, author, maxCommits });
-      const cached = wrappedCache.get(cacheKey);
-      if (cached) {
-        res.json(cached);
-        return;
-      }
-      const wrapped = await computeWrapped(gitService, {
-        year,
-        since,
-        until,
-        branch,
-        author,
-        maxCommits,
-        signal
-      });
-      wrappedCache.set(cacheKey, wrapped);
-      res.json(wrapped);
+      res.json(await loadWrapped(req.query));
     })
   );
 
@@ -792,9 +768,12 @@ export async function startServer(
     '/api/export/commits',
     wrap(async (req, res) => {
       const format = stringParam(req.query.format) === 'csv' ? 'csv' : 'json';
-      const result = await gitService.getCommits(commitOptionsFromQuery(req.query, 500), {
-        signal: requestAbortSignal(req)
-      });
+      const result = await gitService.getCommits(
+        { ...commitOptionsFromQuery(req.query, 500), page: 1, pageSize: EXPORT_COMMIT_LIMIT },
+        { signal: requestAbortSignal(req) }
+      );
+      res.setHeader('X-Total-Commits', String(result.total));
+      res.setHeader('X-Export-Truncated', String(result.total > result.commits.length));
       if (format === 'csv') {
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', 'attachment; filename=commits.csv');
@@ -814,13 +793,7 @@ export async function startServer(
   app.get(
     '/api/export/insights',
     wrap(async (req, res) => {
-      const signal = requestAbortSignal(req);
-      const bundle = await computeInsights(gitService, {
-        since: stringParam(req.query.since),
-        until: stringParam(req.query.until),
-        branch: stringParam(req.query.branch),
-        signal
-      });
+      const bundle = await loadInsights(req.query);
       res.setHeader('Content-Disposition', 'attachment; filename=insights.json');
       res.json(bundle);
     })
@@ -829,12 +802,7 @@ export async function startServer(
   app.get(
     '/api/export/wrapped',
     wrap(async (req, res) => {
-      const signal = requestAbortSignal(req);
-      const yearParam = numberParam(req.query.year, 0);
-      const wrapped = await computeWrapped(gitService, {
-        year: yearParam > 0 ? yearParam : undefined,
-        signal
-      });
+      const wrapped = await loadWrapped(req.query);
       res.setHeader('Content-Disposition', 'attachment; filename=wrapped.json');
       res.json(wrapped);
     })
@@ -996,7 +964,9 @@ function isAllowedOrigin(origin: string, req: Request): boolean {
 
 function requireAuth(token: string | undefined) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (isLoopbackRequest(req)) {
+    // A loopback socket alone is not enough: a DNS-rebound page also arrives on
+    // 127.0.0.1, but its Host header still names the attacker's domain.
+    if (isLoopbackRequest(req) && isLoopbackHost(hostHeaderName(req.get('host')))) {
       next();
       return;
     }
@@ -1008,6 +978,10 @@ function requireAuth(token: string | undefined) {
     res.setHeader('WWW-Authenticate', 'Basic realm="git-history-ui"');
     res.status(401).json({ error: 'Unauthorized' });
   };
+}
+
+function hostHeaderName(host = ''): string {
+  return host.replace(/:\d+$/, '');
 }
 
 function safeTokenEqual(a: string, b: string): boolean {
@@ -1098,13 +1072,20 @@ function httpStatusForError(message: string, err?: unknown): number {
   const typedErr = err as { status?: unknown; statusCode?: unknown } | undefined;
   const explicitStatus =
     err && typeof err === 'object' ? Number(typedErr?.status ?? typedErr?.statusCode) : 0;
-  if (Number.isInteger(explicitStatus) && explicitStatus >= 400 && explicitStatus < 500) {
+  if (Number.isInteger(explicitStatus) && explicitStatus >= 400 && explicitStatus < 600) {
     return explicitStatus;
   }
   const m = message.toLowerCase();
-  if (/invalid (commit )?hash|invalid branch|invalid ref|invalid path/.test(m)) return 400;
+  if (/timed out/.test(m)) return 504;
+  if (/maxbuffer/.test(m)) return 413;
   if (
-    /unknown revision|bad object|not a valid object|ambiguous argument|path .+ does not exist/.test(
+    /invalid (commit )?hash|invalid branch|invalid ref|invalid path|invalid date|invalid preset/.test(
+      m
+    )
+  )
+    return 400;
+  if (
+    /unknown revision|bad object|not a valid object|ambiguous argument|path .+ does not exist|commit not found/.test(
       m
     )
   )
@@ -1119,9 +1100,13 @@ function sanitizeErrorMessage(message: string): string {
   );
 }
 
+// On Node 20+ `req` emits 'close' as soon as the body is consumed, which aborted
+// every POST immediately. An unfinished response closing is the real disconnect.
 function requestAbortSignal(req: Request): AbortSignal {
   const controller = new AbortController();
-  req.on('close', () => controller.abort());
+  req.res?.on('close', () => {
+    if (!req.res?.writableFinished) controller.abort();
+  });
   return controller.signal;
 }
 

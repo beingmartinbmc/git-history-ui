@@ -6,6 +6,39 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Security
+
+- Loopback requests must also carry a loopback `Host` header, so a
+  DNS-rebound page can no longer reach the API without the token.
+- The CSP no longer allows inline scripts, and AI markdown goes through
+  Angular's sanitizer instead of `bypassSecurityTrustHtml`.
+- The protocol handler's npx fallback runs the installed release, not `latest`.
+
+### Fixed
+
+- POST handlers such as AI summaries were aborted as soon as the request body
+  was read; only a real client disconnect aborts them now.
+- macOS protocol links open: the handler is now an AppleScript app, because
+  macOS delivers URLs as Apple Events rather than argv.
+- SQLite search no longer returns stale terms after a rebuild, and date
+  filters compare instants across UTC offsets.
+- `/api/commits/stream` no longer skips a commit between pages.
+- Annotations and presets survive torn or concurrent writes.
+- Load more keeps its pages when a commit is selected, and the mobile detail
+  pane no longer reopens on its own.
+- The PR impact Action reports a missing `npx` and handles branch-creating
+  pushes.
+- Commit exports honour the list filters and say when they are truncated;
+  Wrapped reports the real commit total.
+
+### Changed
+
+- CI tests Node 20, 22, and 24, pins actions to SHAs, checks formatting, and
+  smoke-tests the packed tarball; releases publish that exact tarball.
+- Docker images use `node:24-alpine`.
+- The Chrome extension version follows the package version and no longer
+  requests `host_permissions`.
+
 ## [5.5.0] - 2026-07-28
 
 ### Added

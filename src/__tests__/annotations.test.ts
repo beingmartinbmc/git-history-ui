@@ -12,7 +12,7 @@ describe('AnnotationsStore', () => {
     await withTempHomeAsync(async () => {
       const { AnnotationsStore } = fresh();
       const store = new AnnotationsStore('/tmp/repo-x');
-      await expect(store.list('abc')).resolves.toEqual([]);
+      await expect(store.list('abcd')).resolves.toEqual([]);
     });
   });
 
@@ -108,13 +108,47 @@ describe('AnnotationsStore', () => {
       // Pre-write a stub file with bad version BEFORE the store touches disk.
       // We don't know the per-repo hash, so just write into the right location
       // by triggering an add then overwriting.
-      await store.add('1', { author: 'x', body: 'y' });
+      await store.add('1111', { author: 'x', body: 'y' });
       const dirEntries = fs.readdirSync(path.join(home, '.git-history-ui'));
       const file = path.join(home, '.git-history-ui', dirEntries[0], 'annotations.json');
-      fs.writeFileSync(file, JSON.stringify({ version: 99, byHash: { '1': [{ id: 'leak' }] } }));
+      fs.writeFileSync(file, JSON.stringify({ version: 99, byHash: { '1111': [{ id: 'leak' }] } }));
 
-      const list = await store.list('1');
+      // The journal is the source of truth now, so drop it to isolate the snapshot check.
+      fs.rmSync(path.join(path.dirname(file), 'annotations.jsonl'));
+      const list = await store.list('1111');
       expect(list).toEqual([]);
+    });
+  });
+});
+
+describe('AnnotationsStore integrity', () => {
+  const fresh = () => {
+    jest.resetModules();
+    return require('../backend/annotations') as typeof import('../backend/annotations');
+  };
+
+  it('rejects non-hash keys such as __proto__', async () => {
+    await withTempHomeAsync(async () => {
+      const { AnnotationsStore } = fresh();
+      const store = new AnnotationsStore('/tmp/repo-proto');
+      await expect(store.add('__proto__', { author: 'a', body: 'x' })).rejects.toThrow(/hash/i);
+      await expect(store.list('constructor')).rejects.toThrow(/hash/i);
+    });
+  });
+
+  it('keeps journaled comments when the snapshot is corrupt', async () => {
+    await withTempHomeAsync(async (home) => {
+      const { AnnotationsStore } = fresh();
+      const first = new AnnotationsStore('/tmp/repo-corrupt');
+      await first.add('deadbeef', { author: 'a', body: 'kept' });
+      const dir = path.join(
+        home,
+        '.git-history-ui',
+        fs.readdirSync(path.join(home, '.git-history-ui'))[0]
+      );
+      fs.writeFileSync(path.join(dir, 'annotations.json'), '{not json');
+      const second = new AnnotationsStore('/tmp/repo-corrupt');
+      expect((await second.list('deadbeef')).map((c) => c.body)).toEqual(['kept']);
     });
   });
 });

@@ -1,7 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
-import { Subject, of } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { Commit, CommitImpact } from '../../models/git.models';
 import { AnnotationsService } from '../../services/annotations.service';
 import { GitService } from '../../services/git.service';
@@ -41,6 +41,7 @@ describe('CommitDetailComponent', () => {
     getCommitReportMarkdown: jasmine.Spy;
   };
   let insights: { impact: jasmine.Spy; explainCommit: jasmine.Spy };
+  let annotations: { list: jasmine.Spy; add: jasmine.Spy; remove: jasmine.Spy };
 
   beforeEach(async () => {
     git = {
@@ -55,7 +56,7 @@ describe('CommitDetailComponent', () => {
         .createSpy('getCommitReportMarkdown')
         .and.returnValue(of('# report')),
     };
-    const annotations = {
+    annotations = {
       list: jasmine.createSpy('list').and.returnValue(of([])),
       add: jasmine.createSpy('add'),
       remove: jasmine.createSpy('remove'),
@@ -272,4 +273,57 @@ describe('CommitDetailComponent', () => {
     expect(git.getCommitReportMarkdown).toHaveBeenCalledWith(selected.hash);
     expect(writeText).toHaveBeenCalledWith('# report');
   }));
+
+  it('drops a comment response for another commit and surfaces save failures', () => {
+    state.commits.set([makeCommit('aaa'), makeCommit('bbb')]);
+    state.selectHash('aaa');
+    fixture.detectChanges();
+
+    const pending = new Subject<any>();
+    annotations.add.and.returnValue(pending.asObservable());
+    component.commentDraft = 'note';
+    component.addComment();
+    state.selectHash('bbb');
+    fixture.detectChanges();
+    pending.next({ id: '1', author: 'me', body: 'note', createdAt: '2026-01-01T00:00:00Z' });
+    expect(component.comments()).toEqual([]);
+
+    annotations.add.and.returnValue(throwError(() => new Error('boom')));
+    component.commentDraft = 'again';
+    component.addComment();
+    expect(component.commentError()).toContain('Could not save');
+    expect(component.commentDraft).toBe('again');
+  });
+
+  it('keeps a pending report request alive when another file is selected', () => {
+    state.commits.set([makeCommit('aaa')]);
+    git.getDiffFiles.and.returnValue(
+      of({
+        files: [
+          { file: 'a.ts', status: 'modified', additions: 1, deletions: 0 },
+          { file: 'b.ts', status: 'modified', additions: 2, deletions: 0 },
+        ],
+        totalLines: 3,
+        isLarge: false,
+      }),
+    );
+    const report = new Subject<string>();
+    git.getCommitReportMarkdown.and.returnValue(report.asObservable());
+    state.selectHash('aaa');
+    fixture.detectChanges();
+
+    component.downloadReport();
+    component.selectFile({
+      file: 'b.ts',
+      status: 'modified',
+      additions: 2,
+      deletions: 0,
+      changes: '',
+    });
+    fixture.detectChanges();
+    expect(report.observed).toBeTrue();
+
+    fixture.destroy();
+    expect(report.observed).toBeFalse();
+  });
 });

@@ -551,10 +551,14 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     // "lines coming in from above" visual cue.
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    for (const node of visible) {
+    // An edge spans child..parent rows, so it can cross the viewport even when both
+    // endpoints are off-screen. ponytail: O(maxRow) scan per draw; index edges by row range if
+    // graphs with tens of thousands of rows scroll poorly.
+    for (let i = 0; i <= maxRow; i++) {
+      const node = this.nodes[i];
       for (const ph of node.commit.parents) {
         const target = this.rowByHash.get(ph);
-        if (!target) continue;
+        if (!target || target.row < minRow) continue;
         const x1 = xOf(node.lane);
         const y1 = yOf(node.row);
         const x2 = xOf(target.lane);

@@ -75,6 +75,10 @@ function loadSqlite(): SqliteCtor | null {
   } catch (err) {
     _Sqlite = null;
     _sqliteUnavailableReason = err instanceof Error ? err.message : 'better-sqlite3 not installed';
+    process.stderr.write(
+      `[git-history-ui] SQLite index disabled on Node ${process.version}: ${_sqliteUnavailableReason.split('\n')[0]}. ` +
+        `Search falls back to git. To fix, run: npm rebuild better-sqlite3\n`
+    );
   }
   return _Sqlite;
 }
@@ -219,7 +223,8 @@ export class SqliteIndex {
     try {
       this.db.exec('DELETE FROM commits');
       try {
-        this.db.exec('DELETE FROM commits_fts');
+        // external-content table: a plain DELETE leaves the old terms in the index
+        this.db.exec("INSERT INTO commits_fts(commits_fts) VALUES('delete-all')");
       } catch {
         /* no fts */
       }
@@ -380,7 +385,7 @@ export class SqliteIndex {
 
   invalidate() {
     if (!this.open()) return;
-    this.db!.prepare("DELETE FROM meta WHERE k IN ('refsSig', 'indexedHead')").run();
+    this.db!.prepare("DELETE FROM meta WHERE k = 'refsSig'").run();
     this.setProgress('idle', 0, 'index invalidated');
   }
 
@@ -449,11 +454,12 @@ function buildFilterClause(filters?: { author?: string; since?: string; until?: 
     params.push('%' + filters.author + '%', '%' + filters.author + '%');
   }
   if (filters?.since) {
-    parts.push('c.date >= ?');
+    // ISO strings carry differing UTC offsets; compare instants, not text
+    parts.push('julianday(c.date) >= julianday(?)');
     params.push(normalizeDateFilter(filters.since, 'since'));
   }
   if (filters?.until) {
-    parts.push('c.date <= ?');
+    parts.push('julianday(c.date) <= julianday(?)');
     params.push(normalizeDateFilter(filters.until, 'until'));
   }
   return {

@@ -15,6 +15,7 @@ import {
 } from '@angular/core';
 import hljs from 'highlight.js/lib/common';
 import { DiffFile } from '../../models/git.models';
+import { Subscription } from 'rxjs';
 import { InsightsService } from '../../services/insights.service';
 
 interface DiffLine {
@@ -301,7 +302,7 @@ interface SideLine {
         padding: 0;
         font-family: var(--font-mono);
         font-size: 12.5px;
-        line-height: 1.55;
+        line-height: 19px; /* keep in sync with the viewports' [itemSize] */
         color: var(--fg-primary);
         background: color-mix(in oklab, var(--bg-surface-2) 82%, transparent);
         min-height: 0;
@@ -344,7 +345,7 @@ interface SideLine {
       .line.add .gutter {
         color: var(--diff-add-gutter);
       }
-      .line.add .text :global(.word-changed) {
+      :host ::ng-deep .line.add .text .word-changed {
         background: color-mix(in oklab, var(--success) 35%, transparent);
         border-radius: 2px;
       }
@@ -355,7 +356,7 @@ interface SideLine {
       .line.del .gutter {
         color: var(--diff-del-gutter);
       }
-      .line.del .text :global(.word-changed) {
+      :host ::ng-deep .line.del .text .word-changed {
         background: color-mix(in oklab, var(--danger) 35%, transparent);
         border-radius: 2px;
       }
@@ -402,6 +403,7 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     this.file = value;
     this.highlightCache.clear();
     this.cancelStreamingParse();
+    this.summarizeSub?.unsubscribe();
     this.inHunk = false;
     this.summary.set(null);
     this.summaryError.set(null);
@@ -445,7 +447,9 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
   // viewport-worth renders quickly.
   private static readonly LARGE_DIFF_LINES = 5000;
   private static readonly PARSE_BATCH_LINES = 2000;
+  private static readonly MAX_PARSE_BATCH_LINES = 32000;
   private parseHandle: { cancelled: boolean } | null = null;
+  private summarizeSub?: Subscription;
 
   unifiedLines = computed(() => this.parsed());
 
@@ -557,6 +561,7 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     this.splitPanesSub?.unsubscribe();
     this.detachScrollSync();
     this.cancelStreamingParse();
+    this.summarizeSub?.unsubscribe();
   }
 
   private cancelStreamingParse() {
@@ -574,7 +579,9 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
    */
   private streamParse(raw: string) {
     const lines = raw.split('\n');
-    const batchSize = DiffViewerComponent.PARSE_BATCH_LINES;
+    // Each emit copies and re-derives from the whole array, so grow the batch
+    // geometrically: total work stays linear instead of quadratic.
+    let batchSize = DiffViewerComponent.PARSE_BATCH_LINES;
     const handle = { cancelled: false };
     this.parseHandle = handle;
 
@@ -594,6 +601,7 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     const step = () => {
       if (handle.cancelled) return;
       const end = Math.min(cursor + batchSize, lines.length);
+      batchSize = Math.min(batchSize * 2, DiffViewerComponent.MAX_PARSE_BATCH_LINES);
       for (; cursor < end; cursor++) {
         this.parseLineInto(lines[cursor], out, state);
       }
@@ -644,17 +652,20 @@ export class DiffViewerComponent implements AfterViewInit, OnDestroy {
     this.summaryError.set(null);
     const text =
       this.file.changes.length > 12000 ? this.file.changes.slice(0, 12000) : this.file.changes;
-    this.insightsApi.summarizeDiff(`File: ${this.file.file}\n${text}`).subscribe({
-      next: (r) => {
-        this.summary.set(r.summary);
-        this.summarizing.set(false);
-      },
-      error: (err) => {
-        this.summary.set(null);
-        this.summaryError.set(err?.error?.error ?? 'Summarize failed');
-        this.summarizing.set(false);
-      },
-    });
+    this.summarizeSub?.unsubscribe();
+    this.summarizeSub = this.insightsApi
+      .summarizeDiff(`File: ${this.file.file}\n${text}`)
+      .subscribe({
+        next: (r) => {
+          this.summary.set(r.summary);
+          this.summarizing.set(false);
+        },
+        error: (err) => {
+          this.summary.set(null);
+          this.summaryError.set(err?.error?.error ?? 'Summarize failed');
+          this.summarizing.set(false);
+        },
+      });
   }
 
   sign(l: DiffLine): string {

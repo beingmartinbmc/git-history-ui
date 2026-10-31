@@ -35,6 +35,10 @@ test('rejects option-like and newline refs', () => {
   assert.equal(cleanRef('--exec=bad'), '');
   assert.equal(cleanRef('main\nbad'), '');
   assert.throws(() => resolveRefs({}, {}), /Could not resolve base\/head/);
+  assert.throws(
+    () => resolveRefs({}, { before: '0'.repeat(40), after: 'b'.repeat(40) }),
+    /creates a branch/
+  );
   assert.throws(() => resolveSafePath('report.md\nfiles-changed=999', ''), /control characters/);
 });
 

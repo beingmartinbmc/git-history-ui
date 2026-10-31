@@ -31,7 +31,7 @@ Source lives in `src/backend/`.
 | `cache/sqliteIndex.ts` | Optional `better-sqlite3` FTS index for large repositories; supports author/date filter pushdown and true `LIMIT`/`OFFSET` paging. |
 | `cache/resultCache.ts` | Generic in-memory TTL cache for expensive aggregations (insights, PR groups, Wrapped). |
 | `gitProcessQueue.ts` | Bounds concurrent backend repository-query `git` subprocesses (default 4), including one-shot commands and long-running streams. |
-| `refWatcher.ts` | Watches `.git/HEAD` and `.git/refs` for changes; debounces and emits a `change` event used to invalidate caches and push SSE `new-commits` notifications. |
+| `refWatcher.ts` | Watches `HEAD`, `packed-refs`, and `refs/` (including a linked worktree's shared refs) for changes; debounces and emits a `change` event used to invalidate caches and push SSE `new-commits` notifications. |
 | `llm/` | Provider abstraction for heuristic, Anthropic, and OpenAI scoring/summaries. Outbound calls use a 60s request timeout. |
 | `annotations.ts` | Local per-commit notes stored under `~/.git-history-ui/`, guarded by cross-process file locking. |
 | `presets.ts` | Saved CLI filter presets, also exposed to the UI via `/api/presets`. |

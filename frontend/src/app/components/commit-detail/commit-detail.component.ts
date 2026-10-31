@@ -21,6 +21,7 @@ import { UiStateService } from '../../services/ui-state.service';
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 import { ImpactGraphComponent } from '../impact-graph/impact-graph.component';
 import { MarkdownPipe } from '../../pipes/markdown.pipe';
+import { downloadText } from '../../utils/dom';
 
 interface DiffFileMetas {
   commitHash: string | null;
@@ -192,6 +193,7 @@ interface DiffFileMetas {
                     class="btn btn-ghost btn-icon"
                     (click)="deleteComment(c.id)"
                     title="Delete"
+                    aria-label="Delete note"
                   >
                     ×
                   </button>
@@ -199,12 +201,19 @@ interface DiffFileMetas {
                 <p class="comment-body">{{ c.body }}</p>
               </div>
               <div class="comment-form">
-                <input class="input" placeholder="Your name" [(ngModel)]="commentAuthor" />
+                <input
+                  class="input"
+                  placeholder="Your name"
+                  aria-label="Your name"
+                  [(ngModel)]="commentAuthor"
+                />
                 <textarea
                   class="input"
                   placeholder="Add a note for your team…"
+                  aria-label="Note"
                   [(ngModel)]="commentDraft"
                 ></textarea>
+                <div class="comment-error" role="alert" *ngIf="commentError() as e">{{ e }}</div>
                 <button class="btn" (click)="addComment()" [disabled]="!commentDraft.trim()">
                   Post
                 </button>
@@ -338,6 +347,19 @@ interface DiffFileMetas {
         padding: 0.75rem;
         min-height: 0;
         overflow: hidden;
+      }
+      @media (max-width: 900px) {
+        .split {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: auto minmax(0, 1fr);
+          overflow: auto;
+        }
+        .files {
+          max-height: 30vh;
+        }
+        .diff {
+          min-height: 60vh;
+        }
       }
       .files {
         display: flex;
@@ -528,47 +550,47 @@ interface DiffFileMetas {
         background: color-mix(in oklab, var(--accent) 40%, transparent);
         border-radius: 999px;
       }
-      .ai-text h2,
-      .ai-text h3,
-      .ai-text h4 {
+      :host ::ng-deep .ai-text h2,
+      :host ::ng-deep .ai-text h3,
+      :host ::ng-deep .ai-text h4 {
         margin: 0.6rem 0 0.3rem;
         font-size: 0.9rem;
         font-weight: 600;
         color: var(--text-primary, #e2e8f0);
       }
-      .ai-text h2 {
+      :host ::ng-deep .ai-text h2 {
         font-size: 1rem;
       }
-      .ai-text p {
+      :host ::ng-deep .ai-text p {
         margin: 0.25rem 0;
       }
-      .ai-text ul,
-      .ai-text ol {
+      :host ::ng-deep .ai-text ul,
+      :host ::ng-deep .ai-text ol {
         margin: 0.3rem 0;
         padding-left: 1.4rem;
       }
-      .ai-text li {
+      :host ::ng-deep .ai-text li {
         margin: 0.15rem 0;
       }
-      .ai-text code {
+      :host ::ng-deep .ai-text code {
         background: rgba(139, 92, 246, 0.15);
         padding: 1px 5px;
         border-radius: 3px;
         font-size: 0.82em;
         font-family: var(--font-mono, 'JetBrains Mono', monospace);
       }
-      .ai-text pre {
+      :host ::ng-deep .ai-text pre {
         background: rgba(0, 0, 0, 0.25);
         padding: 0.5rem 0.75rem;
         border-radius: 6px;
         overflow-x: auto;
         margin: 0.4rem 0;
       }
-      .ai-text pre code {
+      :host ::ng-deep .ai-text pre code {
         background: none;
         padding: 0;
       }
-      .ai-text strong {
+      :host ::ng-deep .ai-text strong {
         color: var(--text-primary, #e2e8f0);
       }
       .ai-card .close {
@@ -735,6 +757,10 @@ interface DiffFileMetas {
         font-family: inherit;
         font-size: 12px;
       }
+      .comment-error {
+        color: var(--danger);
+        font-size: 12px;
+      }
       .comment-form textarea {
         min-height: 60px;
         resize: vertical;
@@ -776,6 +802,7 @@ export class CommitDetailComponent {
   readonly annotationsOpen = signal<boolean>(false);
   readonly shareCopied = signal<boolean>(false);
   readonly reportCopied = signal<boolean>(false);
+  readonly commentError = signal<string | null>(null);
 
   commentDraft = '';
   commentAuthor = 'me';
@@ -860,7 +887,6 @@ export class CommitDetailComponent {
       const meta = metas.files[idx];
       const c = this.commit();
       this.diffSub?.unsubscribe();
-      this.reportSub?.unsubscribe();
       if (!c || metas.commitHash !== c.hash || !meta) {
         this.activeFile.set(null);
         this.activeFileLoading.set(false);
@@ -886,6 +912,7 @@ export class CommitDetailComponent {
       this.impactSub?.unsubscribe();
       this.explainSub?.unsubscribe();
       this.diffSub?.unsubscribe();
+      this.reportSub?.unsubscribe();
     });
 
     // Whenever the selected commit changes, reset side-panel state and load annotations.
@@ -902,6 +929,7 @@ export class CommitDetailComponent {
       this.loadingImpact.set(false);
       this.shareCopied.set(false);
       this.reportCopied.set(false);
+      this.commentError.set(null);
       if (!c) {
         this.comments.set([]);
         return;
@@ -1035,21 +1063,30 @@ export class CommitDetailComponent {
   addComment() {
     const c = this.commit();
     if (!c || !this.commentDraft.trim()) return;
+    this.commentError.set(null);
     this.annotationsApi
       .add(c.hash, this.commentAuthor || 'anonymous', this.commentDraft.trim())
       .subscribe({
         next: (created) => {
+          if (this.commit()?.hash !== c.hash) return;
           this.comments.set([...this.comments(), created]);
           this.commentDraft = '';
         },
+        error: () => this.commentError.set('Could not save the note. Try again.'),
       });
   }
 
   deleteComment(id: string) {
     const c = this.commit();
     if (!c) return;
+    this.commentError.set(null);
     this.annotationsApi.remove(c.hash, id).subscribe({
-      next: () => this.comments.set(this.comments().filter((x) => x.id !== id)),
+      next: () => {
+        if (this.commit()?.hash === c.hash) {
+          this.comments.set(this.comments().filter((x) => x.id !== id));
+        }
+      },
+      error: () => this.commentError.set('Could not delete the note. Try again.'),
     });
   }
 }
@@ -1059,13 +1096,4 @@ function emptyFileMetas(
   error: string | null = null,
 ): DiffFileMetas {
   return { commitHash, files: [], totalLines: 0, isLarge: false, error };
-}
-
-function downloadText(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }

@@ -35,6 +35,8 @@ The following are in scope:
 - API key handling (Anthropic, OpenAI, GitHub tokens)
 - The local SQLite index (`~/.git-history-ui/`)
 - The Chrome extension ZIP distributed with GitHub releases
+- The GitHub Action (`action.yml`, `scripts/pr-impact-action.js`)
+- The `git-history-ui://` protocol handler (`protocol install`, `--repo-from-url`)
 
 The following are **out of scope**:
 

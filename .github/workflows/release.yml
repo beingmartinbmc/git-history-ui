@@ -13,19 +13,24 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
+      - name: Set up Node 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
 
-      - name: Verify tag matches package version
-        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
+      - name: Verify tag matches package version and is on main
+        run: |
+          test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
       - name: Install dependencies
         run: |
@@ -45,43 +50,32 @@ jobs:
           npm run --prefix frontend test -- --watch=false --browsers=ChromeHeadless
 
       - name: Build and smoke
+        id: smoke
         run: |
           npm run build
           npm run smoke:action
-          npm pack --dry-run
-          package="$(npm pack --silent)"
-          temp="$(mktemp -d)"
-          trap 'kill "${demo_pid:-}" 2>/dev/null || true; rm -rf "$temp"' EXIT
-          npm install --prefix "$temp" --ignore-scripts "$package"
-          "$temp/node_modules/.bin/git-history-ui" --no-open --port 3210 --host 127.0.0.1 demo >"$temp/demo.log" 2>&1 &
-          demo_pid=$!
-          for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:3210/api/health >/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          test "${ready:-}" = 1
-          kill "$demo_pid"
-          rm -f "$package"
-
-      - name: Publish npm package
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_TOKEN }}
+          package="$(bash scripts/smoke-pack.sh)"
+          echo "package=$package" >> "$GITHUB_OUTPUT"
 
       - name: Package Chrome extension
         run: npm run package:extension
 
       - name: Upload extension release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chrome-extension
           path: |
             dist/extension/*.zip
             dist/extension/*.sha256
           if-no-files-found: error
+
+      # Publish last so a packaging or upload failure never leaves npm ahead of the GitHub release.
+      # It ships the tarball the smoke test installed, not a fresh pack of the tree.
+      - name: Publish npm package
+        run: npm publish "$PACKAGE" --provenance --access public
+        env:
+          PACKAGE: ${{ steps.smoke.outputs.package }}
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_TOKEN }}
 
   github-release:
     name: Create GitHub release
@@ -90,8 +84,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: chrome-extension
           path: release-assets
@@ -104,7 +98,7 @@ jobs:
             capture { print }
           ' CHANGELOG.md > release-body.md
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           body_path: release-body.md
           generate_release_notes: true

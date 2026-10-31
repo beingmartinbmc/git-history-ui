@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { Commit } from '../../models/git.models';
 import { UiStateService } from '../../services/ui-state.service';
+import { isTyping } from '../../utils/dom';
 
 @Component({
   selector: 'app-commit-list',
@@ -70,7 +71,7 @@ import { UiStateService } from '../../services/ui-state.service';
       </button>
 
       <div class="empty" *ngIf="!commits().length && !state.loading()">
-        <p>No commits match your filters.</p>
+        <p>{{ state.error() ? 'Could not load commits.' : 'No commits match your filters.' }}</p>
       </div>
     </cdk-virtual-scroll-viewport>
 
@@ -409,7 +410,8 @@ export class CommitListComponent {
 
   @HostListener('window:keydown', ['$event'])
   onKey(ev: KeyboardEvent) {
-    if (this.isTyping(ev.target)) return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || this.state.paletteOpen() || isTyping(ev.target))
+      return;
     if (ev.key === 'j') {
       ev.preventDefault();
       this.state.selectByOffset(1);
@@ -445,10 +447,5 @@ export class CommitListComponent {
         this.host.nativeElement.querySelector<HTMLElement>(`[data-commit-hash="${hash}"]`)?.focus(),
       );
     }
-  }
-
-  private isTyping(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
   }
 }

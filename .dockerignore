@@ -17,3 +17,6 @@ Dockerfile
 README.md
 CHANGELOG.md
 CONTRIBUTING.md
+*.tgz
+docs
+apps

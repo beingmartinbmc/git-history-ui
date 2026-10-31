@@ -8,6 +8,7 @@ import { DiffFile } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
+import { downloadText } from '../../utils/dom';
 
 @Component({
   selector: 'app-branch-compare',
@@ -304,13 +305,4 @@ export class BranchCompareComponent {
 
 function safeName(value: string): string {
   return value.replace(/[^a-z0-9._-]+/gi, '-').slice(0, 60);
-}
-
-function downloadText(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }

@@ -1,4 +1,4 @@
-import { Observable } from 'rxjs';
+import { Observable, of } from 'rxjs';
 import { ObservableCache } from './observable-cache';
 
 describe('ObservableCache', () => {
@@ -21,5 +21,24 @@ describe('ObservableCache', () => {
 
     second.unsubscribe();
     expect(unsubscriptions).toBe(1);
+  });
+
+  it('evicts the least recently used entry, not the oldest inserted', () => {
+    const cache = new ObservableCache(2);
+    let creates = 0;
+    const make = () => {
+      creates++;
+      return of(creates);
+    };
+    cache.get('a', make, 1_000);
+    cache.get('b', make, 1_000);
+    cache.get('a', make, 1_000); // touch a
+    cache.get('c', make, 1_000); // evicts b
+    expect(creates).toBe(3);
+
+    cache.get('a', make, 1_000);
+    expect(creates).toBe(3);
+    cache.get('b', make, 1_000);
+    expect(creates).toBe(4);
   });
 });
