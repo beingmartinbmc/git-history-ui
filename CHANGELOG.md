@@ -6,6 +6,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.5.1] - 2026-10-31
+
 ### Security
 
 - Loopback requests must also carry a loopback `Host` header, so a

@@ -40,7 +40,7 @@ diff/history data are sent to that provider.
 
 ## Version
 
-Current: **v5.5.0**
+Current: **v5.5.1**
 
 ## License
 

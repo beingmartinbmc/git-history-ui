@@ -1,6 +1,6 @@
 {
   "name": "git-history-ui",
-  "version": "5.5.0",
+  "version": "5.5.1",
   "description": "Local-first Git history investigation, portable reports, and PR impact automation.",
   "main": "dist/backend/server.js",
   "types": "dist/backend/server.d.ts",
