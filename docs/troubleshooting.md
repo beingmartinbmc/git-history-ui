@@ -97,10 +97,10 @@ checkout has a matching `origin` (or any) remote configured.
 
 ## The "new commits available" toast never appears
 
-The toast relies on an SSE connection to `/api/events`, which watches
-`.git/HEAD` and `.git/refs` for changes. This only fires for commits made
-*after* the app is running — it won't retroactively detect history that
-changed while the server was down. Corporate proxies that buffer
-`text/event-stream` responses can also prevent SSE from working; try
-`--host 0.0.0.0 --token "$GIT_HISTORY_UI_TOKEN"` behind a proxy that passes
-SSE through unbuffered.
+The toast relies on an SSE connection to `/api/events`, which watches `HEAD`,
+`packed-refs`, and the `refs/` directories (including the shared refs of a
+linked worktree) for changes. This only fires for commits made *after* the app
+is running — it won't retroactively detect history that changed while the
+server was down. Corporate proxies that buffer `text/event-stream` responses
+can also prevent SSE from working; open the app directly on `localhost`, or
+configure the proxy to pass SSE through unbuffered.

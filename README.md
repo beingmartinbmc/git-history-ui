@@ -201,7 +201,7 @@ Options:
   --preset <name>          load filters from a saved preset
   --save-preset <name>     save the current flags as a preset for next time
   --repo-from-url <url>    open a repo from a git-history-ui:// protocol URL
-  --at <hash>              select a 4-40 character hexadecimal commit hash on startup
+  --at <hash>              select a 4-40 character commit hash on startup
   --pr <number>            focus a pull request number on startup
   -h, --help               display help for command
 
@@ -260,7 +260,7 @@ path. Try `npm rebuild better-sqlite3` if you want to repair indexed search.
 ### Optional: bring your own AI key
 
 ```bash
-# Anthropic (uses Claude Sonnet 4 by default)
+# Anthropic (uses Claude Sonnet 4.6 by default)
 export ANTHROPIC_API_KEY=sk-ant-...
 
 # Or OpenAI (uses GPT 4.1 Nano by default)
@@ -322,8 +322,10 @@ npx git-history-ui@latest protocol uninstall
 
 The OS handler points to `~/.git-history-ui/bin/`, not an npm cache path. Its
 launcher uses a durable installed CLI when available and otherwise runs
-`npx --yes git-history-ui@latest --repo-from-url`. Uninstall removes only
-artifacts marked as owned by git-history-ui.
+`npx --yes git-history-ui@<installed version> --repo-from-url`, so a link never
+runs a release you did not install. On macOS the handler is a small AppleScript
+app in `~/Applications`, because macOS delivers URLs to apps as Apple Events.
+Uninstall removes only artifacts marked as owned by git-history-ui.
 
 ### PR impact GitHub Action
 
