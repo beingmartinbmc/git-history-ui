@@ -48,7 +48,9 @@ interface Link extends d3.SimulationLinkDatum<Node> {
     <details class="accessible-data" *ngIf="impact">
       <summary>
         Impact data: {{ impact.files.length }} changed files, {{ impact.modules.length }} modules,
-        {{ impact.dependencyRipple.length }} import relationships
+        {{ impact.dependencyRipple.length }} import relationships{{
+          dependents.length ? ', ' + dependents.length + ' dependents' : ''
+        }}
       </summary>
       <table *ngIf="impact.files.length">
         <caption>
@@ -66,7 +68,17 @@ interface Link extends d3.SimulationLinkDatum<Node> {
           {{ relation.from }} imports {{ relation.to }}
         </li>
       </ul>
-      <p *ngIf="impact.files.length > 50 || impact.dependencyRipple.length > 30">
+      <ng-container *ngIf="dependents.length">
+        <p class="dependents-title">Could break: files that import this change</p>
+        <ul class="dependents">
+          <li *ngFor="let dep of dependents.slice(0, 30)">{{ dep.from }} → {{ dep.to }}</li>
+        </ul>
+      </ng-container>
+      <p
+        *ngIf="
+          impact.files.length > 50 || impact.dependencyRipple.length > 30 || dependents.length > 30
+        "
+      >
         Large impact output is summarized to keep this page responsive.
       </p>
     </details>
@@ -168,6 +180,10 @@ interface Link extends d3.SimulationLinkDatum<Node> {
         border-bottom: 1px solid var(--border-soft);
         font-family: var(--font-mono, monospace);
       }
+      .accessible-data .dependents-title {
+        margin: 0.6rem 0 0;
+        font-weight: 600;
+      }
       .accessible-data ul {
         max-height: 10rem;
         overflow: auto;
@@ -250,6 +266,11 @@ export class ImpactGraphComponent implements AfterViewInit, OnChanges, OnDestroy
   ngOnDestroy() {
     this.simulation?.stop();
     this.resizeObserver?.disconnect();
+  }
+
+  /** Older servers omit `dependents`. */
+  get dependents(): Array<{ from: string; to: string }> {
+    return this.impact?.dependents ?? [];
   }
 
   moduleFor(file: string): string {

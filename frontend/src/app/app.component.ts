@@ -343,7 +343,13 @@ export class AppComponent {
     this.state.loadingMore.set(true);
     const nextPage = this.state.page() + 1;
     const filters = this.state.filters();
-    this.git.getCommits({ ...filters, page: nextPage }).subscribe({
+    const search = (filters.search || '').trim();
+    // Same engine as page 1: NL pages must keep using /api/search or ranking and totals diverge.
+    const next$ =
+      this.state.searchMode() === 'nl' && search
+        ? this.git.naturalLanguage(filters.search || '', { ...filters, page: nextPage })
+        : this.git.getCommits({ ...filters, page: nextPage });
+    next$.subscribe({
       next: (resp) => {
         if (this.state.filters() !== filters) {
           this.state.loadingMore.set(false);

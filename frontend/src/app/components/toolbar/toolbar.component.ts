@@ -11,12 +11,14 @@ import {
   inject,
   signal,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { CheckoutsResponse } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 import { ThemeService } from '../../services/theme.service';
 import { UiStateService } from '../../services/ui-state.service';
-import { isTyping } from '../../utils/dom';
+import { downloadBlob, isTyping } from '../../utils/dom';
 
 @Component({
   selector: 'app-toolbar',
@@ -131,6 +133,21 @@ import { isTyping } from '../../utils/dom';
       </div>
 
       <div class="actions">
+        <select
+          #repoSelect
+          class="select repo-switch"
+          *ngIf="repos().checkouts.length > 1"
+          (change)="onRepo(repoSelect)"
+          aria-label="Switch repository"
+        >
+          <option
+            *ngFor="let c of repos().checkouts"
+            [value]="c.id"
+            [selected]="c.id === repos().current"
+          >
+            {{ c.name }}
+          </option>
+        </select>
         <button
           type="button"
           class="btn btn-ghost filters-toggle"
@@ -159,7 +176,8 @@ import { isTyping } from '../../utils/dom';
         <button
           class="btn btn-ghost view-toggle"
           (click)="exportCommits()"
-          title="Export commits as CSV"
+          [disabled]="exporting()"
+          title="Export commits matching the current filters as CSV"
         >
           Export
         </button>
@@ -298,6 +316,11 @@ import { isTyping } from '../../utils/dom';
         search: {{ q }} <span aria-hidden="true">×</span>
       </button>
     </div>
+
+    <div class="export-notice" role="status" aria-live="polite" [hidden]="!exportNotice()">
+      {{ exportNotice() }}
+      <button type="button" class="chip" (click)="exportNotice.set(null)">Dismiss</button>
+    </div>
   `,
   styles: [
     `
@@ -422,6 +445,10 @@ import { isTyping } from '../../utils/dom';
         gap: 0.3rem;
         align-items: center;
       }
+      .repo-switch {
+        font-size: 12px;
+        max-width: 9rem;
+      }
 
       .nav {
         display: flex;
@@ -542,6 +569,11 @@ import { isTyping } from '../../utils/dom';
         font-style: italic;
         color: var(--fg-subtle);
       }
+      .export-notice {
+        padding: 0 1rem 0.55rem;
+        font-size: 11px;
+        color: var(--fg-secondary);
+      }
 
       /* Responsive: drop secondary controls before things wrap awkwardly. */
       .filters-toggle {
@@ -603,6 +635,10 @@ export class ToolbarComponent implements OnDestroy {
 
   searchValue = signal('');
   readonly filtersOpen = signal(false);
+  readonly exporting = signal(false);
+  // ponytail: also carries repo-switch failures; rename to `notice` if a third use appears.
+  readonly exportNotice = signal<string | null>(null);
+  readonly repos = signal<CheckoutsResponse>({ current: '', checkouts: [] });
   totalLabel = computed(() => {
     const t = this.state.total();
     if (!t) return '';
@@ -644,6 +680,13 @@ export class ToolbarComponent implements OnDestroy {
       const f = this.state.filters();
       this.searchValue.set(f.search ?? '');
     });
+    this.git
+      .getCheckouts()
+      .pipe(takeUntilDestroyed())
+      .subscribe({
+        next: (r) => Array.isArray(r?.checkouts) && this.repos.set(r),
+        error: () => undefined, // older servers 404 this route: the switcher just stays hidden
+      });
   }
 
   @HostListener('window:keydown', ['$event'])
@@ -710,7 +753,48 @@ export class ToolbarComponent implements OnDestroy {
   }
 
   exportCommits() {
-    window.open(this.git.getExportUrl('commits', 'csv'), '_blank');
+    this.exporting.set(true);
+    this.exportNotice.set(null);
+    this.git.exportCommits(this.state.filters(), this.state.searchMode()).subscribe({
+      next: (resp) => {
+        this.exporting.set(false);
+        const blob = resp.body;
+        if (!blob) return;
+        downloadBlob('commits.csv', blob);
+        if (resp.headers.get('X-Export-Truncated') !== 'true') return;
+        const total = Number(resp.headers.get('X-Total-Commits'));
+        // ponytail: one CSV row per line (subjects are single-line), so count rows instead of
+        // needing a server header; switch to an X-Exported-Commits header if rows ever span lines.
+        void blob.text().then((csv) => {
+          const exported = csv.split('\n').length - 1;
+          this.exportNotice.set(
+            `Export truncated: exported ${exported.toLocaleString()} of ${total.toLocaleString()} commits. Narrow the filters to export the rest.`,
+          );
+        });
+      },
+      error: () => {
+        this.exporting.set(false);
+        this.exportNotice.set('Export failed. Try again.');
+      },
+    });
+  }
+
+  onRepo(select: HTMLSelectElement) {
+    const { current } = this.repos();
+    if (select.value === current) return;
+    const fail = (message?: string) => {
+      select.value = current;
+      this.exportNotice.set(message ?? 'Could not open that repository.');
+    };
+    this.git.openCheckout(select.value).subscribe({
+      next: ({ url }) => (/^https?:\/\//i.test(url) ? this.navigate(url) : fail()),
+      error: (err) => fail(err?.error?.error),
+    });
+  }
+
+  /** Seam for specs: ES module exports and `window.location` can't be spied on in the browser. */
+  navigate(url: string) {
+    window.location.assign(url);
   }
 
   shortBranch(branch: string): string {

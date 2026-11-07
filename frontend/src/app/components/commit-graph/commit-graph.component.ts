@@ -53,6 +53,7 @@ const LANE_W = 24;
 const NODE_R = 5.5;
 const PAD_X = 16;
 const PAD_Y = 16;
+const EDGE_BLOCK = 128;
 
 const LANE_COLORS = [
   '#4f46e5',
@@ -64,6 +65,37 @@ const LANE_COLORS = [
   '#ec4899',
   '#0ea5e9',
 ];
+
+/**
+ * Child→parent edges in child-row order. `rowStart[r]` is the first edge of child row r
+ * (`rowStart[n]` = edge count); `blockMaxTo[b]` is the deepest parent row in edge block b, so
+ * a draw can skip whole blocks that end above the viewport.
+ */
+interface EdgeIndex {
+  from: number[];
+  to: number[];
+  rowStart: number[];
+  blockMaxTo: number[];
+}
+
+function buildEdgeIndex(commits: Commit[]): EdgeIndex {
+  const rowOf = new Map<string, number>();
+  commits.forEach((c, row) => rowOf.set(c.hash, row));
+  const index: EdgeIndex = { from: [], to: [], rowStart: [], blockMaxTo: [] };
+  commits.forEach((c, row) => {
+    index.rowStart.push(index.from.length);
+    for (const parent of c.parents) {
+      const target = rowOf.get(parent);
+      if (target === undefined) continue;
+      const block = (index.from.length / EDGE_BLOCK) | 0;
+      index.blockMaxTo[block] = Math.max(index.blockMaxTo[block] ?? -1, target);
+      index.from.push(row);
+      index.to.push(target);
+    }
+  });
+  index.rowStart.push(index.from.length);
+  return index;
+}
 
 @Component({
   selector: 'app-commit-graph',
@@ -331,6 +363,9 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
 
   private nodes: Node[] = [];
   private rowByHash = new Map<string, Node>();
+  private edgeIndex: EdgeIndex = { from: [], to: [], rowStart: [0], blockMaxTo: [] };
+  /** Edges examined by the most recent draw; exposed so specs can assert culling. */
+  lastEdgesVisited = 0;
   private laneCount_ = signal(1);
   private get laneCount(): number {
     return this.laneCount_();
@@ -411,6 +446,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     this.cancelIdleLayout();
     this.nodes = [];
     this.rowByHash.clear();
+    this.edgeIndex = buildEdgeIndex(commits);
     this.hoverRow = -1;
     this.hoverTip.set(null);
     if (!commits.length) {
@@ -552,13 +588,20 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     // An edge spans child..parent rows, so it can cross the viewport even when both
-    // endpoints are off-screen. ponytail: O(maxRow) scan per draw; index edges by row range if
-    // graphs with tens of thousands of rows scroll poorly.
-    for (let i = 0; i <= maxRow; i++) {
-      const node = this.nodes[i];
-      for (const ph of node.commit.parents) {
-        const target = this.rowByHash.get(ph);
+    // endpoints are off-screen. The index lets us skip every block of edges that ends above
+    // the viewport instead of scanning rows 0..maxRow each frame.
+    const { from, to, rowStart, blockMaxTo } = this.edgeIndex;
+    const end = rowStart[maxRow + 1] ?? 0;
+    let visited = 0;
+    for (let block = 0; block * EDGE_BLOCK < end; block++) {
+      if (blockMaxTo[block] < minRow) continue;
+      const stop = Math.min(end, (block + 1) * EDGE_BLOCK);
+      for (let k = block * EDGE_BLOCK; k < stop; k++) {
+        visited++;
+        // Unlaid-out rows (chunked layout in progress) have no node yet.
+        const target = this.nodes[to[k]];
         if (!target || target.row < minRow) continue;
+        const node = this.nodes[from[k]];
         const x1 = xOf(node.lane);
         const y1 = yOf(node.row);
         const x2 = xOf(target.lane);
@@ -579,6 +622,7 @@ export class CommitGraphComponent implements AfterViewInit, OnDestroy {
         ctx.globalAlpha = 1;
       }
     }
+    this.lastEdgesVisited = visited;
 
     // Nodes (visible only).
     for (const node of visible) {

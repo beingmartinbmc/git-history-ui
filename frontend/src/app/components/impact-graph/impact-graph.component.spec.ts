@@ -71,6 +71,41 @@ describe('ImpactGraphComponent', () => {
     expect(fixture.nativeElement.textContent as string).toContain('No graph data');
   });
 
+  it('lists files that import the change under a "could break" heading', () => {
+    component.impact = {
+      ...impactFixture(),
+      dependents: [{ from: 'src/Caller.java', to: 'src/main/java/KafkaRetryConfig.java' }],
+    };
+
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Could break: files that import this change');
+    expect(text).toContain('src/Caller.java → src/main/java/KafkaRetryConfig.java');
+    expect(text).toContain('1 dependents');
+  });
+
+  it('hides the "could break" section when dependents are empty or absent (older servers)', () => {
+    const shown = (): boolean =>
+      (fixture.nativeElement.textContent as string).includes('Could break');
+    const dependents = [{ from: 'src/Caller.java', to: 'src/main/java/KafkaRetryConfig.java' }];
+
+    // setInput (not direct assignment) so the OnPush view re-renders between steps.
+    fixture.componentRef.setInput('impact', { ...impactFixture(), dependents });
+    fixture.detectChanges();
+    expect(shown()).toBeTrue();
+
+    fixture.componentRef.setInput('impact', { ...impactFixture(), dependents: [] });
+    fixture.detectChanges();
+    expect(shown()).toBeFalse();
+
+    fixture.componentRef.setInput('impact', { ...impactFixture(), dependents });
+    fixture.detectChanges();
+    fixture.componentRef.setInput('impact', impactFixture());
+    fixture.detectChanges();
+    expect(shown()).toBeFalse();
+  });
+
   it('redraws on host resize and disconnects its observer', () => {
     const render = spyOn<any>(component, 'render').and.callThrough();
     component.impact = impactFixture();
