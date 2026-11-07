@@ -7,8 +7,8 @@ import { createHash, timingSafeEqual } from 'crypto';
 import { createServer, type Server as HttpServer } from 'http';
 import path from 'path';
 import fs from 'fs';
-import { GitService, NotARepositoryError } from './gitService';
-import { parseNlQuery, runNlSearch } from './search/nlSearch';
+import { GitService, NotARepositoryError, type Commit } from './gitService';
+import { runNlSearch, type NlRanking, type NlSearchOptions } from './search/nlSearch';
 import { buildCommitGroups } from './grouping/prGrouping';
 import { getSnapshot } from './snapshot';
 import { createLlmService, type LlmConfig, type LlmService } from './llm';
@@ -26,6 +26,7 @@ import type { InsightsBundle } from './aggregations';
 import type { CommitGroup } from './grouping/prGrouping';
 import type { WrappedStats } from './wrapped';
 import { getRepositoryIdentity } from './repositoryIdentity';
+import { checkoutId, listCheckouts, type Checkout } from './checkoutRegistry';
 import {
   buildCommitReport,
   buildRangeReport,
@@ -58,6 +59,7 @@ export interface BootResult {
 // Rows per commit export; larger histories are cut and flagged via X-Export-Truncated.
 const EXPORT_COMMIT_LIMIT = 20_000;
 const DEFAULT_PORT = 3000;
+const MAX_CHILD_SERVERS = 8;
 const DEFAULT_HOST = 'localhost';
 
 export async function startServer(
@@ -156,6 +158,7 @@ export async function startServer(
   const insightsCache = new ResultCache<InsightsBundle>(15_000);
   const groupsCache = new ResultCache<CommitGroup[]>(15_000);
   const wrappedCache = new ResultCache<WrappedStats>(30_000);
+  const nlRankCache = new ResultCache<NlRanking>(300_000, 50);
   const staticDir = path.join(__dirname, '../../build/frontend');
   const indexFile = path.join(staticDir, 'index.html');
   const hasFrontendBuild = fs.existsSync(indexFile);
@@ -182,6 +185,60 @@ export async function startServer(
     '/api/repository',
     wrap(async (_req, res) => {
       res.json(await getRepositoryIdentity(gitService));
+    })
+  );
+
+  // Repo switcher: other remembered clones are served by child servers owned by this one, so
+  // the browser only ever gets ids and URLs, never filesystem paths.
+  const children = new Map<string, Promise<BootResult>>();
+  const currentId = checkoutId(cwd);
+  app.get('/api/checkouts', (_req, res) => {
+    const known: Array<Pick<Checkout, 'id' | 'name'> & { lastOpened?: string }> = listCheckouts();
+    if (!known.some((c) => c.id === currentId)) {
+      known.unshift({ id: currentId, name: path.basename(path.resolve(cwd)) });
+    }
+    res.json({
+      current: currentId,
+      checkouts: known.map((c) => ({
+        id: c.id,
+        name: c.name,
+        lastOpened: c.lastOpened ?? null,
+        current: c.id === currentId
+      }))
+    });
+  });
+  app.post(
+    '/api/checkouts/:id/open',
+    wrap(async (req, res) => {
+      const id = String(req.params.id);
+      const origin = `${req.protocol}://${req.get('host') ?? ''}`;
+      if (id === currentId) {
+        res.json({ url: origin });
+        return;
+      }
+      const target = listCheckouts().find((c) => c.id === id);
+      if (!target) {
+        res.status(404).json({ error: 'Unknown checkout' });
+        return;
+      }
+      let child = children.get(id);
+      if (!child) {
+        if (children.size >= MAX_CHILD_SERVERS) {
+          res.status(429).json({ error: 'Too many open checkouts' });
+          return;
+        }
+        child = startServer(0, host, {
+          cwd: target.path,
+          llm: options.llm,
+          githubToken: options.githubToken,
+          authToken
+        });
+        children.set(id, child);
+        child.catch(() => children.delete(id)); // a failed start must not be cached
+      }
+      const port = new URL((await child).url).port;
+      // Same hostname the client reached us on, different port.
+      res.json({ url: `${req.protocol}://${hostHeaderName(req.get('host'))}:${port}` });
     })
   );
 
@@ -299,6 +356,7 @@ export async function startServer(
     insightsCache.clear();
     groupsCache.clear();
     wrappedCache.clear();
+    nlRankCache.clear();
     sqliteIndex.invalidate();
     const payload = `event: new-commits\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
     for (const client of sseClients) {
@@ -386,10 +444,50 @@ export async function startServer(
   app.get(
     '/api/diff/:hash/files',
     wrap(async (req, res) => {
-      const { files, totalLines } = await gitService.getDiffMeta(req.params.hash, {
+      res.json(
+        diffFilesPayload(
+          await gitService.getDiffMeta(req.params.hash, { signal: requestAbortSignal(req) })
+        )
+      );
+    })
+  );
+
+  // Lazy range diff (Timeline / Compare): file list first, then one file's patch on demand.
+  app.get(
+    '/api/range-diff/files',
+    wrap(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      if (!from || !to) {
+        res.status(400).json({ error: 'from and to query params are required' });
+        return;
+      }
+      res.json(
+        diffFilesPayload(
+          await gitService.getRangeDiffMeta(from, to, { signal: requestAbortSignal(req) })
+        )
+      );
+    })
+  );
+
+  app.get(
+    '/api/range-diff/file',
+    wrap(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      const filePath = stringParam(req.query.path);
+      if (!from || !to || !filePath) {
+        res.status(400).json({ error: 'from, to and path query params are required' });
+        return;
+      }
+      const match = await gitService.getRangeDiffForFile(from, to, filePath, {
         signal: requestAbortSignal(req)
       });
-      res.json({ files, totalLines, isLarge: totalLines > 5000 || files.length > 50 });
+      if (!match) {
+        res.status(404).json({ error: 'file not found in diff' });
+        return;
+      }
+      res.json(match);
     })
   );
 
@@ -413,6 +511,54 @@ export async function startServer(
     })
   );
 
+  /**
+   * One NL pipeline for every caller. A fresh SQLite index only supplies candidates (author/date
+   * filters and HEAD scope included); branch/file scopes and a stale index use git, as before.
+   */
+  async function searchNl(options: Omit<NlSearchOptions, 'index' | 'rankCache'>) {
+    const needsGit = !!(options.branch || options.file);
+    const stats = await sqliteIndex.stats().catch(() => ({ available: false, total: 0 }));
+    const indexFresh =
+      !needsGit &&
+      stats.available &&
+      stats.total > 0 &&
+      (await sqliteIndex.isFresh().catch(() => false));
+    if (!indexFresh && !needsGit && stats.available && 'builtAt' in stats && stats.builtAt) {
+      void indexBuild.start(true).catch(() => undefined);
+    }
+    return runNlSearch(gitService, llmService, {
+      ...options,
+      index: indexFresh ? sqliteIndex : undefined,
+      rankCache: nlRankCache
+    });
+  }
+
+  /** Every ranked NL result (up to the candidate cap) for export; `total` counts all matches. */
+  async function exportNlCommits(
+    opts: import('./gitService').GitOptions,
+    signal: AbortSignal
+  ): Promise<{ commits: Commit[]; total: number }> {
+    const commits: Commit[] = [];
+    let total = 0;
+    for (let page = 1; ; page++) {
+      const r = await searchNl({
+        query: opts.search!,
+        branch: opts.branch,
+        file: opts.file,
+        author: opts.author,
+        since: opts.since,
+        until: opts.until,
+        page,
+        pageSize: 500,
+        candidateCap: 1000,
+        signal
+      });
+      commits.push(...r.commits);
+      total = r.availableTotal;
+      if (!r.hasNext) return { commits, total };
+    }
+  }
+
   app.get(
     '/api/search',
     wrap(async (req, res) => {
@@ -428,38 +574,7 @@ export async function startServer(
       const until = stringParam(req.query.until);
       const branch = stringParam(req.query.branch);
       const file = stringParam(req.query.file);
-      const signal = requestAbortSignal(req);
-      // SQLite can handle author + date filters; only branch and file need git log
-      const needsGitFallback = !!(branch || file);
-      const stats = await sqliteIndex.stats().catch(() => ({ available: false, total: 0 }));
-      const indexFresh =
-        !needsGitFallback &&
-        stats.available &&
-        stats.total > 0 &&
-        (await sqliteIndex.isFresh().catch(() => false));
-      if (indexFresh) {
-        const filters = { author, since, until };
-        const total = await sqliteIndex.searchCount(q, filters);
-        const start = (page - 1) * pageSize;
-        const commits = await sqliteIndex.search(q, pageSize, filters, start);
-        res.json({
-          commits,
-          total,
-          page,
-          pageSize,
-          totalPages: Math.max(1, Math.ceil(total / pageSize)),
-          hasNext: start + pageSize < total,
-          hasPrevious: page > 1,
-          parsedQuery: parseNlQuery(q),
-          usedLlm: false,
-          llmProvider: 'heuristic'
-        });
-        return;
-      }
-      if (!needsGitFallback && stats.available && 'builtAt' in stats && stats.builtAt) {
-        void indexBuild.start(true).catch(() => undefined);
-      }
-      const result = await runNlSearch(gitService, llmService, {
+      const result = await searchNl({
         query: q,
         branch,
         file,
@@ -468,7 +583,7 @@ export async function startServer(
         until,
         page,
         pageSize,
-        signal
+        signal: requestAbortSignal(req)
       });
       res.json(result);
     })
@@ -500,6 +615,25 @@ export async function startServer(
       }
       const snap = await getSnapshot(gitService, at, { signal: requestAbortSignal(req) });
       res.json(snap);
+    })
+  );
+
+  app.get(
+    '/api/file-history',
+    wrap(async (req, res) => {
+      const file = stringParam(req.query.file);
+      if (!file) {
+        res.status(400).json({ error: 'file query param is required' });
+        return;
+      }
+      res.json(
+        await gitService.getFileHistory(
+          file,
+          numberParam(req.query.page, 1),
+          numberParam(req.query.pageSize, 100),
+          { signal: requestAbortSignal(req) }
+        )
+      );
     })
   );
 
@@ -768,10 +902,16 @@ export async function startServer(
     '/api/export/commits',
     wrap(async (req, res) => {
       const format = stringParam(req.query.format) === 'csv' ? 'csv' : 'json';
-      const result = await gitService.getCommits(
-        { ...commitOptionsFromQuery(req.query, 500), page: 1, pageSize: EXPORT_COMMIT_LIMIT },
-        { signal: requestAbortSignal(req) }
-      );
+      const signal = requestAbortSignal(req);
+      const opts = commitOptionsFromQuery(req.query, 500);
+      // Export what the UI shows: NL mode exports the ranked NL results, not a git grep.
+      const result =
+        stringParam(req.query.searchMode) === 'nl' && opts.search
+          ? await exportNlCommits(opts, signal)
+          : await gitService.getCommits(
+              { ...opts, page: 1, pageSize: EXPORT_COMMIT_LIMIT },
+              { signal }
+            );
       res.setHeader('X-Total-Commits', String(result.total));
       res.setHeader('X-Export-Truncated', String(result.total > result.commits.length));
       if (format === 'csv') {
@@ -910,6 +1050,9 @@ export async function startServer(
   const displayHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
   const url = `http://${displayHost}:${actualPort}`;
   const close = async (): Promise<void> => {
+    await Promise.all(
+      [...children.values()].map((child) => child.then((c) => c.close()).catch(() => undefined))
+    );
     refWatcher.stop();
     await indexBuild.cancel().catch(() => undefined);
     sqliteIndex.close();
@@ -948,6 +1091,14 @@ function sendReport(res: Response, report: InvestigationReport, format: string |
     return;
   }
   res.status(400).json({ error: 'format must be json or markdown' });
+}
+
+function diffFilesPayload<T>(meta: { files: T[]; totalLines: number }) {
+  return {
+    files: meta.files,
+    totalLines: meta.totalLines,
+    isLarge: meta.totalLines > 5000 || meta.files.length > 50
+  };
 }
 
 function wrap(handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) {

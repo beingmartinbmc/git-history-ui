@@ -120,9 +120,7 @@ export async function buildCommitGroups(
     const m = c.subject.match(MERGE_PR_RE);
     if (!m) continue;
     const prNumber = parseInt(m[1], 10);
-    // Walk the second-parent chain until we hit a commit already on the trunk.
-    const chain = walkSecondParent(c, byHash);
-    const memberHashes = [c.hash, ...chain.map((x) => x.hash)];
+    const memberHashes = [c.hash, ...sideBranchMembers(c, commits, byHash).map((x) => x.hash)];
     for (const h of memberHashes) groupedHashes.add(h);
     const title = stripMerge(c.body) || stripMerge(c.subject) || `PR #${prNumber}`;
     groups.push(
@@ -218,20 +216,37 @@ export async function buildCommitGroups(
   return groups;
 }
 
-function walkSecondParent(merge: Commit, byHash: Map<string, Commit>): Commit[] {
-  // Heuristic: follow the second parent until we hit a commit reachable from the first parent.
-  // Without a graph traversal we approximate: take up to 30 commits down second-parent, stopping
-  // when a commit has fewer parents (root of feature branch) or we've seen a merge.
-  const out: Commit[] = [];
-  if (merge.parents.length < 2) return out;
-  let cur = byHash.get(merge.parents[1]);
-  let safety = 30;
-  while (cur && safety-- > 0) {
-    out.push(cur);
-    if (cur.parents.length === 0 || cur.isMerge) break;
-    cur = byHash.get(cur.parents[0]);
-  }
-  return out;
+/**
+ * Commits that arrived with a merge: reachable from its later parents but not from its first
+ * parent (the `git log first..second` set). Following parent[0] from the second parent instead
+ * runs through the branch point and drags in unrelated trunk history.
+ * Other PR merges are left to their own group. Newest-first, like `commits`.
+ */
+function sideBranchMembers(
+  merge: Commit,
+  commits: Commit[],
+  byHash: Map<string, Commit>
+): Commit[] {
+  if (merge.parents.length < 2) return [];
+  const walk = (starts: string[], skip: (c: Commit) => boolean): Set<string> => {
+    const seen = new Set<string>();
+    const stack = [...starts];
+    while (stack.length) {
+      const h = stack.pop()!;
+      const c = byHash.get(h);
+      if (!c || seen.has(h) || skip(c)) continue;
+      seen.add(h);
+      stack.push(...c.parents);
+    }
+    return seen;
+  };
+  // ponytail: one trunk walk per merge, O(merges × window); cache the walk if windows get huge.
+  const trunk = walk([merge.parents[0]], () => false);
+  const side = walk(
+    merge.parents.slice(1),
+    (c) => trunk.has(c.hash) || (c.isMerge && MERGE_PR_RE.test(c.subject))
+  );
+  return commits.filter((c) => side.has(c.hash));
 }
 
 function stripMerge(text: string): string {

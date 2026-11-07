@@ -80,6 +80,17 @@ export interface PaginatedCommits {
   hasPrevious: boolean;
 }
 
+/** One page of a file's history; no `total` (use file stats' totalCommits) since --follow can't count cheaply. */
+const MAX_FILE_HISTORY_WINDOW = 10_000;
+
+export interface FileHistoryPage {
+  commits: Commit[];
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
 export interface GitAuthorIdentity {
   name: string;
   email: string;
@@ -165,7 +176,8 @@ export class GitService {
 
     const out = await this.git([
       'for-each-ref',
-      '--format=%(objectname)\t%(refname:short)\t%(refname)',
+      // %(*objectname) is the peeled commit for annotated tags (empty otherwise)
+      '--format=%(objectname)\t%(refname:short)\t%(refname)\t%(*objectname)',
       'refs/heads',
       'refs/tags',
       'refs/remotes'
@@ -173,7 +185,8 @@ export class GitService {
 
     for (const line of out.split('\n')) {
       if (!line) continue;
-      const [hash, short, full] = line.split('\t');
+      const [objectHash, short, full, peeled] = line.split('\t');
+      const hash = peeled || objectHash;
       if (!hash || !short) continue;
       if (full && full.startsWith('refs/tags/')) {
         push(tagsByCommit, hash, short);
@@ -190,6 +203,16 @@ export class GitService {
       if (list) list.push(value);
       else map.set(key, [value]);
     }
+  }
+
+  /** Fill branches/tags on commits that did not come from `git log` (e.g. the SQLite index). */
+  async attachRefs(commits: Commit[]): Promise<Commit[]> {
+    const refs = await this.getRefIndex();
+    return commits.map((c) => ({
+      ...c,
+      branches: refs.branchesByCommit.get(c.hash) ?? [],
+      tags: refs.tagsByCommit.get(c.hash) ?? []
+    }));
   }
 
   async getCommits(
@@ -235,10 +258,13 @@ export class GitService {
     // it once per filter set. Estimating (skip + len + 1) caused a growing
     // total in the UI as the user paginated, so we always return an
     // accurate number here.
-    const total = hasNext
-      ? (this.getCachedTotal(cacheKey) ??
-        (await this.getTotalCount(cacheKey, filterArgs, revision, opts)))
-      : skip + commits.length;
+    // An empty page past the end (skip > 0, nothing returned) must also count:
+    // skip + 0 would report a total larger than the repo.
+    const total =
+      hasNext || (commits.length === 0 && skip > 0)
+        ? (this.getCachedTotal(cacheKey) ??
+          (await this.getTotalCount(cacheKey, filterArgs, revision, opts)))
+        : skip + commits.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     return {
@@ -535,6 +561,47 @@ export class GitService {
     return parseUnifiedDiff(raw);
   }
 
+  /** Changed-file list for a range, without patch bodies (lazy counterpart of getRangeDiff). */
+  async getRangeDiffMeta(
+    from: string,
+    to: string,
+    opts: GitStreamOptions = {}
+  ): Promise<DiffMetadata> {
+    if (!isSafeRef(from) || !isSafeRef(to)) throw new Error('Invalid ref');
+    const [raw, statusRaw] = await Promise.all([
+      this.git(['diff', '--numstat', '-M', '--no-color', from, to], opts),
+      this.git(['diff', '--name-status', '-M', '--no-color', from, to], opts)
+    ]);
+    return parseDiffMetadata(raw, statusRaw);
+  }
+
+  /** Patch for one file of a range. A rename needs both paths, or git reports a plain add. */
+  async getRangeDiffForFile(
+    from: string,
+    to: string,
+    filePath: string,
+    opts: GitStreamOptions = {}
+  ): Promise<DiffFile | null> {
+    assertSafeRepoPath(filePath);
+    const entry = (await this.getRangeDiffMeta(from, to, opts)).files.find(
+      (f) => f.file === filePath
+    );
+    if (!entry) return null;
+    const raw = await this.git(
+      [
+        'diff',
+        '-M',
+        '--no-color',
+        from,
+        to,
+        '--',
+        ...(entry.oldFile ? [entry.oldFile, filePath] : [filePath])
+      ],
+      { ...opts, maxBuffer: 64 * 1024 * 1024 }
+    );
+    return parseUnifiedDiff(raw)[0] ?? null;
+  }
+
   async getRangeMetadata(
     from: string,
     to: string,
@@ -646,6 +713,42 @@ export class GitService {
   async getRemoteUrl(name: string = 'origin'): Promise<string> {
     const out = await this.git(['remote', 'get-url', name]);
     return out.trim();
+  }
+
+  /** A file's history across renames (`--follow`), one page at a time. */
+  async getFileHistory(
+    filePath: string,
+    page = 1,
+    pageSize = 100,
+    opts: GitStreamOptions = {}
+  ): Promise<FileHistoryPage> {
+    assertSafeRepoPath(filePath);
+    const size = clamp(pageSize, 1, 500);
+    const current = clamp(page, 1, 100_000);
+    const refs = await this.getRefIndex();
+    const end = current * size;
+    // ponytail: `--skip` with `--follow` counts commits before rename tracking (pages come back
+    // shifted or empty), so re-read from the top. Cost grows with depth; the window is capped.
+    const out = await this.git(
+      [
+        'log',
+        '--follow',
+        `--max-count=${Math.min(end, MAX_FILE_HISTORY_WINDOW) + 1}`, // +1 row: is there a next page?
+        `--pretty=format:${LOG_FORMAT}${RECORD_SEP}`,
+        'HEAD',
+        '--',
+        filePath
+      ],
+      opts
+    );
+    const rows = this.parseLog(out, refs);
+    return {
+      commits: rows.slice(end - size, end),
+      page: current,
+      pageSize: size,
+      hasNext: rows.length > end,
+      hasPrevious: current > 1
+    };
   }
 
   async getFileStats(filePath: string): Promise<{

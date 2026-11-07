@@ -63,4 +63,69 @@ describe('Lazy diff endpoints', () => {
     const r = await request({ url: `${url}/api/diff/${hash}/file` });
     expect(r.status).toBe(400);
   });
+
+  describe('range diff', () => {
+    const parent = () => repo.git(['rev-parse', `${hash}~1`]).trim();
+    const q = (from: string, to: string, extra = '') =>
+      `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${extra}`;
+
+    it('lists changed files without patch bodies, then fetches one file', async () => {
+      const files = await request({ url: `${url}/api/range-diff/files?${q(parent(), hash)}` });
+      expect(files.status).toBe(200);
+      expect(files.body.files.map((f: { file: string }) => f.file).sort()).toEqual([
+        'file-a.ts',
+        'file-b.ts'
+      ]);
+      expect(files.body.files.every((f: { changes?: string }) => f.changes === undefined)).toBe(
+        true
+      );
+      expect(files.body.isLarge).toBe(false);
+
+      const one = await request({
+        url: `${url}/api/range-diff/file?${q(parent(), hash, '&path=file-a.ts')}`
+      });
+      expect(one.status).toBe(200);
+      expect(one.body.file).toBe('file-a.ts');
+      expect(one.body.changes).toContain('const a = 11');
+      expect(one.body.changes).not.toContain('const b');
+    });
+
+    it('returns a renamed file as a rename, not a fresh add', async () => {
+      repo.git(['mv', 'file-b.ts', 'file-c.ts']);
+      writeFileSync(path.join(repo.dir, 'file-c.ts'), 'export const b = 2;\nexport const c = 3;\n');
+      repo.git(['add', '-A']);
+      repo.git(['commit', '-q', '-m', 'rename b to c']);
+      const head = repo.git(['rev-parse', 'HEAD']).trim();
+
+      const files = await request({ url: `${url}/api/range-diff/files?${q(hash, head)}` });
+      expect(files.body.files).toEqual([
+        expect.objectContaining({ file: 'file-c.ts', oldFile: 'file-b.ts', status: 'renamed' })
+      ]);
+      const one = await request({
+        url: `${url}/api/range-diff/file?${q(hash, head, '&path=file-c.ts')}`
+      });
+      expect(one.status).toBe(200);
+      expect(one.body.changes).toContain('+export const c = 3;');
+      expect(one.body.changes).not.toContain('+export const b = 2;'); // unchanged line, not re-added
+    });
+
+    it('validates input', async () => {
+      expect((await request({ url: `${url}/api/range-diff/files?from=main` })).status).toBe(400);
+      expect(
+        (await request({ url: `${url}/api/range-diff/file?${q(parent(), hash)}` })).status
+      ).toBe(400);
+      expect(
+        (
+          await request({
+            url: `${url}/api/range-diff/file?${q(parent(), hash, '&path=nope.ts')}`
+          })
+        ).status
+      ).toBe(404);
+      const unsafe = await request({
+        url: `${url}/api/range-diff/files?${q('--output=x', 'HEAD')}`
+      });
+      expect(unsafe.status).toBeGreaterThanOrEqual(400);
+      expect(unsafe.status).toBeLessThan(500);
+    });
+  });
 });

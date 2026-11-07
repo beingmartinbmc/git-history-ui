@@ -69,10 +69,11 @@ export class ResultCache<T> {
 
   /** Build a cache key from a flat object of filter params. */
   static key(params: Record<string, string | number | boolean | undefined | null>): string {
-    return Object.entries(params)
-      .filter(([, v]) => v != null && v !== '')
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k}=${v}`)
-      .join('&');
+    // JSON (not `k=v&k=v`) so a value containing `&`/`=` can't forge another key.
+    return JSON.stringify(
+      Object.entries(params)
+        .filter(([, v]) => v != null && v !== '')
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    );
   }
 }
