@@ -4,7 +4,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Subject, catchError, map, of, switchMap } from 'rxjs';
-import { DiffFile } from '../../models/git.models';
+import { DiffFile, DiffFileMeta } from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
@@ -56,8 +56,8 @@ import { downloadText } from '../../utils/dom';
           <button
             *ngFor="let f of files()"
             class="file"
-            [class.selected]="f === activeFile()"
-            (click)="activeFile.set(f)"
+            [class.selected]="f.file === activePath()"
+            (click)="selectFile(f)"
           >
             <span class="status-dot" [attr.data-status]="f.status"></span>
             <span class="path">{{ f.file }}</span>
@@ -67,6 +67,8 @@ import { downloadText } from '../../utils/dom';
             </span>
           </button>
         </div>
+        <div class="file-status" role="status" *ngIf="loadingFile()">Loading diff…</div>
+        <div class="error" *ngIf="fileError() as err">{{ err }}</div>
         <app-diff-viewer [fileInput]="activeFile()" />
       </div>
 
@@ -127,6 +129,11 @@ import { downloadText } from '../../utils/dom';
       }
       .del {
         color: var(--danger);
+      }
+      .file-status {
+        padding: 0.4rem 0;
+        font-size: 12px;
+        color: var(--fg-muted);
       }
       .file-list {
         display: flex;
@@ -199,8 +206,12 @@ export class BranchCompareComponent {
 
   fromRef = '';
   toRef = '';
-  files = signal<DiffFile[]>([]);
+  files = signal<DiffFileMeta[]>([]);
+  activePath = signal<string | null>(null);
+  /** Full patch of `activePath`, fetched on selection. */
   activeFile = signal<DiffFile | null>(null);
+  loadingFile = signal(false);
+  fileError = signal<string | null>(null);
   loading = signal(false);
   error = signal<string | null>(null);
   compared = signal(false);
@@ -210,6 +221,8 @@ export class BranchCompareComponent {
   private readonly requests = new Subject<{ from: string; to: string }>();
   private pendingActiveFile = '';
   private reportSub?: { unsubscribe(): void };
+  private fileSub?: { unsubscribe(): void };
+  private range: { from: string; to: string } | null = null;
 
   constructor() {
     this.requests
@@ -217,16 +230,17 @@ export class BranchCompareComponent {
         switchMap(({ from, to }) => {
           this.loading.set(true);
           this.error.set(null);
-          return this.git.getRangeDiff(from, to).pipe(
-            map((files) => ({ files, error: null })),
+          this.fileSub?.unsubscribe();
+          return this.git.getRangeDiffFiles(from, to).pipe(
+            map(({ files }) => ({ files, from, to, error: null })),
             catchError((error) =>
-              of({ files: null, error: error?.error?.error ?? 'Failed to compare' }),
+              of({ files: null, from, to, error: error?.error?.error ?? 'Failed to compare' }),
             ),
           );
         }),
         takeUntilDestroyed(),
       )
-      .subscribe(({ files, error }) => {
+      .subscribe(({ files, from, to, error }) => {
         this.loading.set(false);
         this.compared.set(true);
         if (error) {
@@ -234,8 +248,9 @@ export class BranchCompareComponent {
           return;
         }
         const next = files ?? [];
+        this.range = { from, to };
         this.files.set(next);
-        this.activeFile.set(
+        this.selectFile(
           next.find((file) => file.file === this.pendingActiveFile) ?? next[0] ?? null,
         );
         this.totalAdditions.set(next.reduce((sum, file) => sum + file.additions, 0));
@@ -250,7 +265,33 @@ export class BranchCompareComponent {
       this.toRef = to;
       this.compare();
     });
-    this.destroyRef.onDestroy(() => this.reportSub?.unsubscribe());
+    this.destroyRef.onDestroy(() => {
+      this.reportSub?.unsubscribe();
+      this.fileSub?.unsubscribe();
+    });
+  }
+
+  /** Lazy flow: the list carries no patches, so fetch just the picked file. */
+  selectFile(meta: DiffFileMeta | null) {
+    this.fileSub?.unsubscribe();
+    this.activePath.set(meta?.file ?? null);
+    this.activeFile.set(null);
+    this.fileError.set(null);
+    if (!meta || !this.range) {
+      this.loadingFile.set(false);
+      return;
+    }
+    this.loadingFile.set(true);
+    this.fileSub = this.git.getRangeDiffFile(this.range.from, this.range.to, meta.file).subscribe({
+      next: (file) => {
+        this.activeFile.set(file);
+        this.loadingFile.set(false);
+      },
+      error: (err) => {
+        this.fileError.set(err?.error?.error ?? `Failed to load ${meta.file}`);
+        this.loadingFile.set(false);
+      },
+    });
   }
 
   compare() {
@@ -276,7 +317,7 @@ export class BranchCompareComponent {
         view: 'compare',
         from: this.fromRef,
         to: this.toRef,
-        activeFile: this.activeFile()?.file,
+        activeFile: this.activePath() ?? undefined,
       })
       .subscribe(({ url }) => void navigator.clipboard.writeText(url));
   }

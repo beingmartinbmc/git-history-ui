@@ -8,7 +8,14 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Commit, DiffFile, SnapshotResponse } from '../../models/git.models';
+import { ActivatedRoute } from '@angular/router';
+import {
+  Commit,
+  DiffFile,
+  DiffFileMeta,
+  GitOptions,
+  SnapshotResponse,
+} from '../../models/git.models';
 import { GitService } from '../../services/git.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
@@ -30,6 +37,9 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
         <div class="now">{{ atDisplay() }}</div>
       </header>
 
+      <p class="sub" role="status" aria-live="polite" *ngIf="loadingCommits()">Loading commits…</p>
+      <p class="sub" role="alert" *ngIf="commitsError() as e">{{ e }}</p>
+
       <div class="slider-wrap">
         <div class="rail">
           <div class="rail-fill" [style.width.%]="tickPct()"></div>
@@ -44,7 +54,7 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
           (ngModelChange)="onTickChange($event)"
           aria-label="Repository moment"
           aria-describedby="timeline-instructions"
-          [attr.aria-valuetext]="selectedTick().label"
+          [attr.aria-valuetext]="selectedTick()?.label"
         />
         <div class="ticks">
           <span
@@ -137,6 +147,7 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
         <div class="diff-head">
           <h3>Diff vs HEAD</h3>
           <span class="diff-status" *ngIf="loadingDiff()">Computing diff…</span>
+          <span class="diff-status" *ngIf="loadingFile()">Loading file…</span>
           <span class="diff-status" *ngIf="diffError() as e">{{ e }}</span>
           <span
             class="diff-status muted"
@@ -150,9 +161,9 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
             type="button"
             class="file"
             *ngFor="let f of diff()"
-            [class.selected]="f === selectedFile()"
-            [attr.aria-pressed]="f === selectedFile()"
-            (click)="selectedFile.set(f)"
+            [class.selected]="f.file === selectedPath()"
+            [attr.aria-pressed]="f.file === selectedPath()"
+            (click)="selectFile(f)"
           >
             <span class="status status-{{ f.status }}">{{ statusLabel(f.status) }}</span>
             <span class="path">{{ f.file }}</span>
@@ -624,18 +635,29 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 export class TimelineComponent {
   state = inject(UiStateService);
   private git = inject(GitService);
+  private route = inject(ActivatedRoute);
 
+  readonly loadingCommits = signal(false);
+  readonly commitsError = signal<string | null>(null);
   readonly snapshot = signal<SnapshotResponse | null>(null);
-  readonly diff = signal<DiffFile[] | null>(null);
+  readonly diff = signal<DiffFileMeta[] | null>(null);
   readonly loadingDiff = signal(false);
   readonly diffError = signal<string | null>(null);
+  readonly selectedPath = signal<string | null>(null);
+  /** Full patch of `selectedPath`, fetched on selection. */
   readonly selectedFile = signal<DiffFile | null>(null);
+  readonly loadingFile = signal(false);
   readonly tickIndex = signal(0);
   private diffSub: { unsubscribe(): void } | null = null;
+  private fileSub: { unsubscribe(): void } | null = null;
+  private diffRef: string | null = null;
+  private commitsSub: { unsubscribe(): void } | null = null;
   private tickTouched = false;
 
   ngOnDestroy() {
     this.diffSub?.unsubscribe();
+    this.fileSub?.unsubscribe();
+    this.commitsSub?.unsubscribe();
   }
 
   readonly timelineCommits = computed(() =>
@@ -646,7 +668,7 @@ export class TimelineComponent {
       .sort((a, b) => a.time - b.time),
   );
   readonly ticks = computed(() => buildTicks(this.timelineCommits()));
-  readonly selectedTick = computed(() => this.ticks()[this.tickIndex()] ?? null);
+  readonly selectedTick = computed<Tick | null>(() => this.ticks()[this.tickIndex()] ?? null);
   readonly headCommit = computed(() => {
     const ref = this.snapshot()?.ref;
     if (!ref) return null;
@@ -699,6 +721,8 @@ export class TimelineComponent {
   });
 
   constructor() {
+    this.loadCommitsIfCold();
+
     // Default to the latest tick (most recent).
     effect(() => {
       const t = this.ticks();
@@ -765,24 +789,80 @@ export class TimelineComponent {
     this.state.selectHash(commit.hash);
   }
 
+  /**
+   * History owns commit loading only on `/`, so a direct `/timeline` visit starts empty.
+   * Warm path (commits already in state) must not refetch.
+   */
+  private loadCommitsIfCold() {
+    if (this.state.commits().length) return;
+    const query = this.route.snapshot.queryParamMap;
+    const fromUrl: GitOptions = {};
+    for (const key of ['since', 'until', 'branch', 'author', 'file'] as const) {
+      const value = query.get(key);
+      if (value) fromUrl[key] = value;
+    }
+    if (Object.keys(fromUrl).length) this.state.patchFilters(fromUrl);
+    const { since, until, branch, author, file, pageSize } = this.state.filters();
+    this.loadingCommits.set(true);
+    this.commitsError.set(null);
+    this.commitsSub = this.git
+      .getCommits({ since, until, branch, author, file, pageSize, page: 1 })
+      .subscribe({
+        next: (resp) => {
+          this.state.commits.set(resp.commits);
+          this.state.total.set(resp.total);
+          this.state.page.set(resp.page);
+          this.state.hasNext.set(resp.hasNext);
+          this.loadingCommits.set(false);
+        },
+        error: (err) => {
+          this.commitsError.set(err?.error?.error ?? 'Failed to load commits');
+          this.loadingCommits.set(false);
+        },
+      });
+  }
+
   private loadDiff(s: SnapshotResponse) {
     this.diffSub?.unsubscribe();
+    this.diffRef = s.ref;
     if (!s.ref) {
       this.diff.set([]);
-      this.selectedFile.set(null);
+      this.selectFile(null);
       return;
     }
     this.loadingDiff.set(true);
     this.diffError.set(null);
-    this.diffSub = this.git.getTimelineRangeDiff(s.ref, 'HEAD').subscribe({
-      next: (d) => {
-        this.diff.set(d);
-        this.selectedFile.set(d[0] ?? null);
+    this.diffSub = this.git.getRangeDiffFiles(s.ref, 'HEAD').subscribe({
+      next: ({ files }) => {
+        this.diff.set(files);
         this.loadingDiff.set(false);
+        this.selectFile(files[0] ?? null);
       },
       error: (err) => {
         this.diffError.set(err?.error?.error ?? 'Failed to compute diff');
         this.loadingDiff.set(false);
+      },
+    });
+  }
+
+  /** Lazy flow: the list carries no patches, so fetch just the picked file. */
+  selectFile(meta: DiffFileMeta | null) {
+    this.fileSub?.unsubscribe();
+    this.selectedPath.set(meta?.file ?? null);
+    this.selectedFile.set(null);
+    if (!meta || !this.diffRef) {
+      this.loadingFile.set(false);
+      return;
+    }
+    this.loadingFile.set(true);
+    this.fileSub = this.git.getRangeDiffFile(this.diffRef, 'HEAD', meta.file).subscribe({
+      next: (file) => {
+        this.selectedFile.set(file);
+        this.loadingFile.set(false);
+      },
+      error: (err) => {
+        this.diffError.set(err?.error?.error ?? `Failed to load ${meta.file}`);
+        this.loadingFile.set(false);
       },
     });
   }

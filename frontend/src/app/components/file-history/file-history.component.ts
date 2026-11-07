@@ -11,6 +11,8 @@ import { BlameComponent } from '../blame/blame.component';
 
 type Tab = 'history' | 'blame' | 'breakage';
 
+const HISTORY_PAGE_SIZE = 100;
+
 @Component({
   selector: 'app-file-history',
   standalone: true,
@@ -86,6 +88,17 @@ type Tab = 'history' | 'blame' | 'breakage';
             </button>
           </li>
         </ul>
+        <div class="empty error" *ngIf="moreError() as e">{{ e }}</div>
+        <div class="more" *ngIf="hasNext()">
+          <button
+            type="button"
+            class="btn btn-ghost load-more"
+            [disabled]="loadingMore()"
+            (click)="loadMore()"
+          >
+            {{ loadingMore() ? 'Loading…' : 'Load more' }}
+          </button>
+        </div>
       </section>
 
       <section *ngIf="tab() === 'blame'" class="blame-tab">
@@ -329,6 +342,11 @@ type Tab = 'history' | 'blame' | 'breakage';
       }
       .empty button {
         margin-left: 0.4rem;
+      }
+      .more {
+        display: flex;
+        justify-content: center;
+        margin-top: 0.5rem;
       }
       .commits {
         list-style: none;
@@ -635,6 +653,10 @@ export class FileHistoryComponent {
   readonly filePath = signal<string>('');
   readonly stats = signal<FileStats | null>(null);
   readonly commits = signal<Commit[]>([]);
+  readonly hasNext = signal<boolean>(false);
+  readonly loadingMore = signal<boolean>(false);
+  readonly moreError = signal<string | null>(null);
+  private readonly page = signal<number>(1);
   readonly loading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
   readonly tab = signal<Tab>('history');
@@ -643,6 +665,7 @@ export class FileHistoryComponent {
   readonly breakageLoading = signal<boolean>(false);
   readonly breakageError = signal<string | null>(null);
   private readonly historyRequests = new Subject<string>();
+  private readonly moreRequests = new Subject<{ file: string; page: number }>();
   private readonly breakageRequests = new Subject<string>();
   readonly riskLevel = computed<'low' | 'moderate' | 'high'>(() => {
     const score = this.breakage()?.riskScore ?? 0;
@@ -659,7 +682,7 @@ export class FileHistoryComponent {
           this.error.set(null);
           return forkJoin({
             stats: this.insightsApi.fileStats(file).pipe(catchError(() => of(null))),
-            page: this.git.getCommits({ file, page: 1, pageSize: 200 }),
+            page: this.git.getFileHistory(file, 1, HISTORY_PAGE_SIZE),
           }).pipe(
             map((result) => ({ result, error: null })),
             catchError((error) =>
@@ -680,6 +703,38 @@ export class FileHistoryComponent {
         }
         this.stats.set(result?.stats ?? null);
         this.commits.set(result?.page.commits ?? []);
+        this.page.set(result?.page.page ?? 1);
+        this.hasNext.set(result?.page.hasNext ?? false);
+      });
+
+    this.moreRequests
+      .pipe(
+        switchMap(({ file, page }) =>
+          this.git.getFileHistory(file, page, HISTORY_PAGE_SIZE).pipe(
+            map((next) => ({ file, next, error: null })),
+            catchError((error) =>
+              of({
+                file,
+                next: null,
+                error: error?.error?.error ?? 'Failed to load more commits',
+              }),
+            ),
+          ),
+        ),
+        takeUntilDestroyed(),
+      )
+      .subscribe(({ file, next, error }) => {
+        // A response for the previous file can land after navigation; drop it.
+        if (file !== this.filePath()) return;
+        this.loadingMore.set(false);
+        if (!next) {
+          this.moreError.set(error);
+          return;
+        }
+        const seen = new Set(this.commits().map((c) => c.hash));
+        this.commits.update((list) => [...list, ...next.commits.filter((c) => !seen.has(c.hash))]);
+        this.page.set(next.page);
+        this.hasNext.set(next.hasNext);
       });
 
     this.breakageRequests
@@ -720,6 +775,9 @@ export class FileHistoryComponent {
         this.filePath.set(file);
         this.stats.set(null);
         this.commits.set([]);
+        this.hasNext.set(false);
+        this.loadingMore.set(false);
+        this.moreError.set(null);
         this.breakage.set(null);
         this.breakageError.set(null);
         if (file) {
@@ -753,6 +811,13 @@ export class FileHistoryComponent {
     if (!this.breakage() && !this.breakageLoading()) {
       this.breakageRequests.next(this.filePath());
     }
+  }
+
+  loadMore() {
+    if (!this.hasNext() || this.loadingMore()) return;
+    this.loadingMore.set(true);
+    this.moreError.set(null);
+    this.moreRequests.next({ file: this.filePath(), page: this.page() + 1 });
   }
 
   retryHistory() {

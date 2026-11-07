@@ -122,6 +122,20 @@ describe('GitService', () => {
     range.flush([]);
   });
 
+  it('requests lazy range diffs: cached file list, uncached single file', () => {
+    const sha = 'a'.repeat(40);
+    service.getRangeDiffFiles(sha, 'HEAD').subscribe();
+    service.getRangeDiffFiles(sha, 'HEAD').subscribe();
+    const list = http.expectOne(`/api/range-diff/files?from=${sha}&to=HEAD`);
+    list.flush({ files: [], totalLines: 0, isLarge: false });
+
+    service.getRangeDiffFile(sha, 'HEAD', 'src/a b.ts').subscribe();
+    const file = http.expectOne((r) => r.url === '/api/range-diff/file');
+    expect(file.request.params.get('path')).toBe('src/a b.ts');
+    expect(file.request.params.get('from')).toBe(sha);
+    file.flush({ file: 'src/a b.ts', status: 'modified', additions: 0, deletions: 0, changes: '' });
+  });
+
   it('surfaces server-sent stream error messages', fakeAsync(() => {
     const source = installMockEventSource();
     let error: unknown;
@@ -266,6 +280,37 @@ describe('GitService', () => {
     service.getGroups().subscribe();
     http.expectOne('/api/groups').flush([]);
     expect().nothing();
+  });
+
+  it('requests rename-aware file history by page and caches repeat calls', () => {
+    const body = { commits: [], page: 2, pageSize: 100, hasNext: false, hasPrevious: true };
+    service.getFileHistory('src/a b.ts', 2, 100).subscribe();
+    service.getFileHistory('src/a b.ts', 2, 100).subscribe();
+    const req = http.expectOne((r) => r.url === '/api/file-history');
+    expect(req.request.params.get('file')).toBe('src/a b.ts');
+    expect(req.request.params.get('page')).toBe('2');
+    expect(req.request.params.get('pageSize')).toBe('100');
+    req.flush(body);
+
+    service.getFileHistory('src/a b.ts').subscribe();
+    const first = http.expectOne((r) => r.url === '/api/file-history');
+    expect(first.request.params.get('page')).toBe('1');
+    expect(first.request.params.get('pageSize')).toBe('100');
+    first.flush(body);
+  });
+
+  it('lists checkouts uncached and opens one with a body-less POST', () => {
+    service.getCheckouts().subscribe();
+    service.getCheckouts().subscribe();
+    const lists = http.match('/api/checkouts');
+    expect(lists.length).toBe(2);
+    lists.forEach((r) => r.flush({ current: 'a', checkouts: [] }));
+
+    service.openCheckout('id/with space').subscribe((r) => expect(r.url).toBe('http://x:1'));
+    const open = http.expectOne('/api/checkouts/id%2Fwith%20space/open');
+    expect(open.request.method).toBe('POST');
+    expect(open.request.body).toBeNull();
+    open.flush({ url: 'http://x:1' });
   });
 
   function installMockEventSource(): MockEventSource {

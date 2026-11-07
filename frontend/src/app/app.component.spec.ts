@@ -39,6 +39,7 @@ describe('AppComponent deep links', () => {
       'getAuthors',
       'getBranches',
       'getTags',
+      'getCheckouts',
       'getIndexStatus',
       'buildIndex',
       'rebuildIndex',
@@ -50,6 +51,7 @@ describe('AppComponent deep links', () => {
     git.getAuthors.and.returnValue(of([]));
     git.getBranches.and.returnValue(of([]));
     git.getTags.and.returnValue(of([]));
+    git.getCheckouts.and.returnValue(of({ current: '', checkouts: [] }));
     git.getIndexStatus.and.returnValue(of(indexStatus()));
     git.buildIndex.and.returnValue(of(indexStatus()));
     git.rebuildIndex.and.returnValue(of(indexStatus()));
@@ -202,6 +204,52 @@ describe('AppComponent deep links', () => {
     expect(state.commits()[0].hash).toBe(shared.hash);
   }));
 
+  it('pages natural-language results through /api/search on Load more', fakeAsync(() => {
+    git.naturalLanguage.and.callFake((_q, opts) =>
+      of({
+        ...nlPage([commit(`nl-${opts?.page ?? 1}`, 'nl hit')]),
+        page: opts?.page ?? 1,
+        hasNext: (opts?.page ?? 1) === 1,
+      }),
+    );
+    queryParams.next(convertToParamMap({ searchMode: 'nl', search: 'login bug', author: 'Ada' }));
+
+    fixture = TestBed.createComponent(AppComponent);
+    fixture.detectChanges();
+    tick();
+    expect(state.hasNext()).toBeTrue();
+
+    fixture.componentInstance.loadMore();
+    tick();
+
+    expect(git.naturalLanguage).toHaveBeenCalledWith(
+      'login bug',
+      jasmine.objectContaining({ page: 2, author: 'Ada' }),
+    );
+    expect(git.getCommits).not.toHaveBeenCalled();
+    expect(state.commits().map((c) => c.hash)).toEqual(['nl-1', 'nl-2']);
+    expect(state.page()).toBe(2);
+  }));
+
+  it('pages classic results through /api/commits on Load more', fakeAsync(() => {
+    git.streamCommits.and.returnValue(of({ ...page([commit('c1', 'one')]), hasNext: true }));
+    git.getCommits.and.returnValue(of({ ...page([commit('c2', 'two')]), page: 2 }));
+    queryParams.next(convertToParamMap({ search: 'login bug' }));
+
+    fixture = TestBed.createComponent(AppComponent);
+    fixture.detectChanges();
+    tick();
+
+    fixture.componentInstance.loadMore();
+    tick();
+
+    expect(git.getCommits).toHaveBeenCalledWith(
+      jasmine.objectContaining({ page: 2, search: 'login bug' }),
+    );
+    expect(git.naturalLanguage).not.toHaveBeenCalled();
+    expect(state.commits().map((c) => c.hash)).toEqual(['c1', 'c2']);
+  }));
+
   function page(commits: Commit[]): PaginatedCommits {
     return {
       commits,
@@ -217,6 +265,8 @@ describe('AppComponent deep links', () => {
   function nlPage(commits: Commit[]): NlSearchResponse {
     return {
       ...page(commits),
+      truncated: false,
+      availableTotal: commits.length,
       parsedQuery: {
         keywords: [],
         expandedKeywords: [],
@@ -294,6 +344,7 @@ describe('AppComponent URL round-trip (real router)', () => {
       'getAuthors',
       'getBranches',
       'getTags',
+      'getCheckouts',
       'getIndexStatus',
       'invalidate',
     ]);
@@ -302,6 +353,7 @@ describe('AppComponent URL round-trip (real router)', () => {
     git.getAuthors.and.returnValue(of([]));
     git.getBranches.and.returnValue(of([]));
     git.getTags.and.returnValue(of([]));
+    git.getCheckouts.and.returnValue(of({ current: '', checkouts: [] }));
     git.getIndexStatus.and.returnValue(
       of({
         available: true,

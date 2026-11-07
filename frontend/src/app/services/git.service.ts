@@ -1,11 +1,14 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   BlameLine,
+  CheckoutsResponse,
   Commit,
   CommitGroup,
   DiffFile,
+  DiffFilesResponse,
+  FileHistoryPage,
   GitAuthorIdentity,
   GitOptions,
   IndexStatus,
@@ -37,6 +40,18 @@ export class GitService {
       `commits:${params.toString()}`,
       () => this.http.get<PaginatedCommits>(`${this.base}/commits`, { params }),
       TTL.VOLATILE,
+    );
+  }
+
+  getFileHistory(file: string, page = 1, pageSize = 100): Observable<FileHistoryPage> {
+    const params = new HttpParams()
+      .set('file', file)
+      .set('page', String(page))
+      .set('pageSize', String(pageSize));
+    return this.cache.get(
+      `file-history:${params.toString()}`,
+      () => this.http.get<FileHistoryPage>(`${this.base}/file-history`, { params }),
+      TTL.SHORT,
     );
   }
 
@@ -199,6 +214,18 @@ export class GitService {
     );
   }
 
+  // Not cached: the toolbar loads it once, and opening a checkout must not replay a stale answer.
+  getCheckouts(): Observable<CheckoutsResponse> {
+    return this.http.get<CheckoutsResponse>(`${this.base}/checkouts`);
+  }
+
+  openCheckout(id: string): Observable<{ url: string }> {
+    return this.http.post<{ url: string }>(
+      `${this.base}/checkouts/${encodeURIComponent(id)}/open`,
+      null,
+    );
+  }
+
   getAuthorIdentities(): Observable<GitAuthorIdentity[]> {
     return this.cache.get(
       'author-identities',
@@ -310,6 +337,24 @@ export class GitService {
     });
   }
 
+  // Lazy range diff: file list only. Cached like the timeline diff; only a pinned range
+  // (full SHAs / HEAD) stays fresh for IMMUTABLE, branch and tag names can move.
+  getRangeDiffFiles(from: string, to: string): Observable<DiffFilesResponse> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    const pinned = /^([0-9a-f]{40}|HEAD)$/i;
+    return this.timelineCache.get(
+      `range-files:${from}:${to}`,
+      () => this.http.get<DiffFilesResponse>(`${this.base}/range-diff/files`, { params }),
+      pinned.test(from) && pinned.test(to) ? TTL.IMMUTABLE : TTL.SHORT,
+    );
+  }
+
+  // Lazy range diff: single file body
+  getRangeDiffFile(from: string, to: string, path: string): Observable<DiffFile> {
+    const params = new HttpParams().set('from', from).set('to', to).set('path', path);
+    return this.http.get<DiffFile>(`${this.base}/range-diff/file`, { params });
+  }
+
   // Lazy diff: file list only (no change bodies)
   getDiffFiles(hash: string): Observable<{
     files: Array<{
@@ -344,9 +389,26 @@ export class GitService {
     );
   }
 
-  // Export
-  getExportUrl(type: 'commits' | 'insights' | 'wrapped', format = 'json'): string {
-    return `${this.base}/export/${type}?format=${format}`;
+  /**
+   * Export commits matching the active filters. The server caps rows and reports it via
+   * `X-Total-Commits` / `X-Export-Truncated` response headers.
+   */
+  exportCommits(
+    options: GitOptions,
+    searchMode: 'classic' | 'nl',
+    format: 'json' | 'csv' = 'csv',
+  ): Observable<HttpResponse<Blob>> {
+    let params = new HttpParams().set('format', format);
+    for (const key of ['search', 'author', 'branch', 'file', 'since', 'until'] as const) {
+      const value = options[key];
+      if (value) params = params.set(key, value);
+    }
+    if (searchMode === 'nl' && options.search?.trim()) params = params.set('searchMode', 'nl');
+    return this.http.get(`${this.base}/export/commits`, {
+      params,
+      observe: 'response',
+      responseType: 'blob',
+    });
   }
 }
 

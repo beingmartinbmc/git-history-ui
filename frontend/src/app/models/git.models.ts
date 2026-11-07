@@ -24,6 +24,15 @@ export interface DiffFile {
   changes: string;
 }
 
+/** File entry without its patch body; the body is fetched per file on demand. */
+export type DiffFileMeta = Omit<DiffFile, 'changes'>;
+
+export interface DiffFilesResponse {
+  files: DiffFileMeta[];
+  totalLines: number;
+  isLarge: boolean;
+}
+
 export interface BlameLine {
   line: number;
   hash: string;
@@ -51,6 +60,27 @@ export interface PaginatedCommits {
   totalPages: number;
   hasNext: boolean;
   hasPrevious: boolean;
+}
+
+/** `/api/file-history` page: rename-aware, newest first. */
+export interface FileHistoryPage {
+  commits: Commit[];
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
+export interface Checkout {
+  id: string;
+  name: string;
+  lastOpened: string | null;
+  current: boolean;
+}
+
+export interface CheckoutsResponse {
+  current: string;
+  checkouts: Checkout[];
 }
 
 export interface RepositoryIdentity {
@@ -114,6 +144,10 @@ export interface NlInterpretation {
 }
 
 export interface NlSearchResponse extends PaginatedCommits {
+  /** More commits matched than the ranked candidate window holds. */
+  truncated: boolean;
+  /** Commits matching the filters in git, before the candidate cap. */
+  availableTotal: number;
   parsedQuery: NlInterpretation;
   usedLlm: boolean;
   llmProvider: 'heuristic' | 'anthropic' | 'openai';
@@ -165,6 +199,8 @@ export interface CommitImpact {
   files: string[];
   modules: string[];
   dependencyRipple: Array<{ from: string; to: string }>;
+  /** `from` imports `to`; `to` was changed by this commit. Absent on older servers. */
+  dependents?: Array<{ from: string; to: string }>;
   relatedCommits: Array<{ hash: string; subject: string; date: string }>;
 }
 

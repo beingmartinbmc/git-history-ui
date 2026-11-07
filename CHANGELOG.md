@@ -6,6 +6,38 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [5.6.0] - 2026-11-07
+
+### Added
+
+- File history is rename-aware and paginated (`/api/file-history`), with Load
+  more in the file history view.
+- The impact view lists the files that import the changed ones ("Could break");
+  relative imports only, capped at 50.
+- The CLI remembers each clone it serves. `git-history-ui checkouts
+  list|add|forget` manage them, the toolbar switcher (`/api/checkouts`) opens
+  any of them, and portable links resolve to a remembered clone.
+- Timeline and Branch compare fetch per-file diffs on demand
+  (`/api/range-diff/files`, `/api/range-diff/file`).
+- `--file`, `--author` and `--since` (and presets) now open the UI already
+  filtered.
+
+### Fixed
+
+- Indexed natural-language search parses the query once and applies the same
+  dates, authors, ranking and HEAD scope as git; Load more stays in
+  natural-language mode.
+- PR groups no longer include trunk history.
+- The UI export keeps the active filters and says when it is truncated.
+- Annotated tags are peeled, empty pages report the real total, and cache keys
+  can no longer collide on filter values.
+- Remotes behind an ssh_config alias resolve to a repository identity.
+
+### Performance
+
+- The SQLite index ingests new commits incrementally and compares dates on a
+  numeric timestamp column.
+
 ## [5.5.1] - 2026-10-31
 
 ### Security
