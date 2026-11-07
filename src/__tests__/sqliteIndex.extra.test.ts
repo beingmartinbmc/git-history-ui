@@ -372,7 +372,8 @@ describe('SqliteIndex — search, searchCount, filters and invalidate (static im
         };
 
         let streamCalls = 0;
-        const streamer = async (_args: string[], onChunk: (c: Buffer) => void): Promise<void> => {
+        const streamer = async (args: string[], onChunk: (c: Buffer) => void): Promise<void> => {
+          if (args[0] !== 'log') return; // rev-list (HEAD scope) streams nothing in this fake
           streamCalls++;
           const buf = Buffer.from(buffered, 'utf8');
           const marker = Buffer.from(accented, 'utf8');

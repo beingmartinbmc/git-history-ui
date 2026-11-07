@@ -2,6 +2,7 @@ import { expandKeywords, tokenize } from '../llm/heuristicProvider';
 import type { LlmService } from '../llm/types';
 import type { Commit, GitService, PaginatedCommits } from '../gitService';
 import { parseDatePhrase, stripDatePhrase } from './datePhrase';
+import { ResultCache } from '../cache/resultCache';
 
 export interface NlInterpretation {
   rawQuery: string;
@@ -50,6 +51,21 @@ export function parseNlQuery(query: string): NlInterpretation {
   };
 }
 
+/** Candidate source that replaces `git log --grep` (the SQLite index). Must scope to HEAD. */
+export interface NlCandidateIndex {
+  candidates(
+    terms: string[],
+    filters: { author?: string; since?: string; until?: string },
+    limit: number
+  ): Promise<{ commits: Commit[]; total: number }>;
+}
+
+/** The full ranked candidate list, cached so every page slices the same ranking. */
+export interface NlRanking {
+  ranked: Commit[];
+  availableTotal: number;
+}
+
 export interface NlSearchOptions {
   query: string;
   author?: string;
@@ -61,6 +77,10 @@ export interface NlSearchOptions {
   pageSize?: number;
   /** Cap on candidates pulled from git for LLM rerank. */
   candidateCap?: number;
+  /** Retrieve candidates here instead of `git log` (only valid without branch/file scope). */
+  index?: NlCandidateIndex;
+  /** Keeps ranking (and any paid LLM call) stable across pages of one query. */
+  rankCache?: ResultCache<NlRanking>;
   signal?: AbortSignal;
 }
 
@@ -105,40 +125,69 @@ export async function runNlSearch(
     };
   }
 
-  // Pull candidate set. We deliberately ignore pagination here so we can re-rank.
-  const candidatesPage = await gitService.getCommits(
-    {
+  // Candidates are pulled and ranked once per query; pages are slices of that ranking.
+  const rank = async (signal?: AbortSignal): Promise<NlRanking> => {
+    const filters = {
       author: parsed.author ?? options.author,
       since: parsed.since ?? options.since,
-      until: parsed.until ?? options.until,
-      branch: options.branch,
-      file: options.file,
-      search: grep,
-      page: 1,
-      pageSize: candidateCap
-    },
-    { signal: options.signal }
-  );
+      until: parsed.until ?? options.until
+    };
+    let candidates: { commits: Commit[]; total: number };
+    if (options.index) {
+      const found = await options.index.candidates(top, filters, candidateCap);
+      candidates = { commits: await gitService.attachRefs(found.commits), total: found.total };
+    } else {
+      // We deliberately ignore pagination here so we can re-rank.
+      const page1 = await gitService.getCommits(
+        {
+          ...filters,
+          branch: options.branch,
+          file: options.file,
+          search: grep,
+          page: 1,
+          pageSize: candidateCap
+        },
+        { signal }
+      );
+      candidates = { commits: page1.commits, total: page1.total };
+    }
 
-  const scored = await llm.score(
-    options.query,
-    candidatesPage.commits.map((c) => ({
-      id: c.hash,
-      text: textForScoring(c)
-    })),
-    { signal: options.signal }
-  );
+    const scored = await llm.score(
+      options.query,
+      candidates.commits.map((c) => ({ id: c.hash, text: textForScoring(c) })),
+      { signal }
+    );
 
-  // Map back to commits, sort by score (desc).
-  const byHash = new Map(candidatesPage.commits.map((c) => [c.hash, c]));
-  const ranked = scored
-    .map((s) => ({ score: s.score, commit: byHash.get(s.id) }))
-    .filter((r): r is { score: number; commit: Commit } => !!r.commit)
-    .sort((a, b) => b.score - a.score);
+    // Map back to commits, sort by score (desc).
+    const byHash = new Map(candidates.commits.map((c) => [c.hash, c]));
+    const ranked = scored
+      .map((s) => ({ score: s.score, commit: byHash.get(s.id) }))
+      .filter((r): r is { score: number; commit: Commit } => !!r.commit)
+      .sort((a, b) => b.score - a.score)
+      .map((r) => r.commit);
+    return { ranked, availableTotal: candidates.total };
+  };
+
+  // A shared (cached) computation must not die with one client's abort.
+  const { ranked, availableTotal } = options.rankCache
+    ? await options.rankCache.getOrCompute(
+        ResultCache.key({
+          q: options.query,
+          author: options.author,
+          since: options.since,
+          until: options.until,
+          branch: options.branch,
+          file: options.file,
+          cap: candidateCap,
+          llm: llm.name
+        }),
+        () => rank()
+      )
+    : await rank(options.signal);
 
   const total = ranked.length;
   const start = (page - 1) * pageSize;
-  const slice = ranked.slice(start, start + pageSize).map((r) => r.commit);
+  const slice = ranked.slice(start, start + pageSize);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return {
@@ -149,8 +198,8 @@ export async function runNlSearch(
     totalPages,
     hasNext: page < totalPages,
     hasPrevious: page > 1,
-    truncated: candidatesPage.total > total,
-    availableTotal: candidatesPage.total,
+    truncated: availableTotal > total,
+    availableTotal,
     parsedQuery: parsed,
     usedLlm: llm.isAi,
     llmProvider: llm.name

@@ -10,6 +10,7 @@ import { homedir } from 'os';
 import { startServer } from './backend/server';
 import { PresetsStore, type PresetFilters } from './backend/presets';
 import { createDemoRepository } from './backend/demoRepo';
+import { forgetCheckout, listCheckouts, rememberCheckout } from './backend/checkoutRegistry';
 import { deepLinkBrowserTarget, parseDeepLink, type DeepLink } from './deepLink';
 
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')) as {
@@ -89,6 +90,51 @@ program
       return;
     }
     console.error(chalk.red(`Unknown presets action: ${action}. Use list or delete.`));
+    process.exit(1);
+  });
+
+program
+  .command('checkouts')
+  .description('manage remembered clones used by portable links and the repo switcher')
+  .argument('<action>', 'list | add | forget')
+  .argument('[path]', 'clone path (add) or id/path (forget)')
+  .action((action: string, target?: string) => {
+    if (action === 'list') {
+      const all = listCheckouts();
+      if (all.length === 0) {
+        console.log(
+          chalk.gray(
+            'No checkouts remembered yet. Run git-history-ui in a repo or use `checkouts add <path>`.'
+          )
+        );
+        return;
+      }
+      for (const c of all) console.log(`  ${chalk.bold(c.id)}  ${c.name}  ${chalk.gray(c.path)}`);
+      return;
+    }
+    if (action === 'forget' && !target) {
+      console.error(chalk.red('Usage: git-history-ui checkouts forget <id|path>'));
+      process.exit(1);
+    }
+    try {
+      if (action === 'add') {
+        const c = rememberCheckout(target ?? process.cwd());
+        console.log(chalk.green(`Remembered ${c.name} (${c.id}) at ${c.path}`));
+        return;
+      }
+      if (action === 'forget') {
+        if (forgetCheckout(target as string)) console.log(chalk.green(`Forgot ${target}`));
+        else {
+          console.error(chalk.yellow(`No such checkout: ${target}`));
+          process.exit(1);
+        }
+        return;
+      }
+    } catch (err) {
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+      process.exit(1);
+    }
+    console.error(chalk.red(`Unknown checkouts action: ${action}. Use list, add or forget.`));
     process.exit(1);
   });
 
@@ -259,6 +305,26 @@ interface MainOptions {
   pr?: string;
 }
 
+/**
+ * URL the browser opens: the CLI's --file/--author/--since (and a saved preset's) seed the UI's
+ * URL-driven filter state. Params already set by a protocol deep link win.
+ */
+export function browserUrl(
+  base: string,
+  target: { path: string; query: URLSearchParams },
+  opts: { at?: string; pr?: string; file?: string; since?: string; author?: string }
+): string {
+  const query = target.query;
+  if (opts.at) query.set('commit', opts.at);
+  if (opts.pr) query.set('pr', opts.pr);
+  for (const key of ['file', 'since', 'author'] as const) {
+    const value = opts[key];
+    if (value && !query.has(key)) query.set(key, value);
+  }
+  const suffix = query.toString();
+  return `${base}${target.path}${suffix ? `?${suffix}` : ''}`;
+}
+
 export function parseProtocolUrl(raw: string): { repo?: string; at?: string; pr?: string } {
   const link = parseDeepLink(raw);
   return link ? { repo: link.repo, at: link.at ?? link.commit, pr: link.pr } : {};
@@ -291,6 +357,10 @@ export function resolveRepoToLocal(repoUrl: string): string | undefined {
         ?.replace(/\.git$/, '') ?? '';
   }
   if (!repoName) return undefined;
+  // Clones the user has opened before win, wherever they live.
+  for (const known of listCheckouts()) {
+    if (urlPath && repoRemoteMatches(known.path, urlPath)) return known.path;
+  }
   const home = homedir();
   const candidates = [
     join(home, repoName),
@@ -427,21 +497,28 @@ async function main(overrides: Partial<MainOptions> = {}): Promise<void> {
     });
     close = result.close;
     console.log(chalk.green(`Listening on ${result.url}`));
+    if (!overrides.cwd) {
+      // Remember this clone so portable links and the repo switcher can find it later (not the demo repo).
+      try {
+        rememberCheckout(options.cwd ?? process.cwd());
+      } catch {
+        /* a registry write failure must never block startup */
+      }
+    }
 
+    const target = protocolLink
+      ? deepLinkBrowserTarget(protocolLink)
+      : { path: '/', query: new URLSearchParams() };
+    const openUrl = browserUrl(result.url, target, options);
     if (options.open) {
-      const target = protocolLink
-        ? deepLinkBrowserTarget(protocolLink)
-        : { path: '/', query: new URLSearchParams() };
-      const deepLinkParams = target.query;
-      if (options.at) deepLinkParams.set('commit', options.at);
-      if (options.pr) deepLinkParams.set('pr', options.pr);
-      const suffix = deepLinkParams.toString();
-      const openUrl = `${result.url}${target.path}${suffix ? `?${suffix}` : ''}`;
       try {
         await open(openUrl);
       } catch {
         console.log(chalk.yellow(`(Could not open browser automatically — visit ${openUrl})`));
       }
+    } else if (openUrl !== `${result.url}/`) {
+      // Filters live in the URL, so --no-open users need the full link.
+      console.log(chalk.green(`Open ${openUrl}`));
     }
 
     console.log(

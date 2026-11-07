@@ -62,4 +62,57 @@ describe('repository identity', () => {
       currentAuthor: { name: null, email: null }
     });
   });
+
+  describe('ssh_config aliases and explicit override', () => {
+    const run =
+      (values: Record<string, string>) =>
+      async (args: string[]): Promise<string> => {
+        const value = values[args.join(' ')];
+        if (value === undefined) throw new Error('missing');
+        return value;
+      };
+    const git = { cwd: '/private/work/widgets', runRaw: async () => '' };
+
+    it('resolves an ssh alias to the real host', async () => {
+      const identity = await getRepositoryIdentity(
+        git,
+        run({ 'remote get-url origin': 'git@github-personal:acme/widgets.git\n' }),
+        async (alias) => (alias === 'github-personal' ? 'github.com' : null)
+      );
+      expect(identity.remoteUrl).toBe('https://github.com/acme/widgets');
+      expect(identity.name).toBe('widgets');
+    });
+
+    it('stays null when the alias resolves to an unsupported host', async () => {
+      const identity = await getRepositoryIdentity(
+        git,
+        run({ 'remote get-url origin': 'git@corp-alias:acme/widgets.git\n' }),
+        async () => 'git.internal.example'
+      );
+      expect(identity.remoteUrl).toBeNull();
+    });
+
+    it('never asks ssh to resolve a plain https host', async () => {
+      const resolve = jest.fn(async () => 'github.com');
+      const identity = await getRepositoryIdentity(
+        git,
+        run({ 'remote get-url origin': 'https://example.com/acme/widgets\n' }),
+        resolve
+      );
+      expect(identity.remoteUrl).toBeNull();
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it('honors git-history-ui.remoteUrl over origin', async () => {
+      const identity = await getRepositoryIdentity(
+        git,
+        run({
+          'config --get git-history-ui.remoteUrl': 'git@github.com:acme/canonical.git\n',
+          'remote get-url origin': 'git@mystery:acme/widgets.git\n'
+        }),
+        async () => null
+      );
+      expect(identity.remoteUrl).toBe('https://github.com/acme/canonical');
+    });
+  });
 });

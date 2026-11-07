@@ -139,7 +139,7 @@ describe('SqliteIndex', () => {
     });
   });
 
-  it('detects a new commit and fully rebuilds the index', async () => {
+  it('detects a new commit and ingests only the new commits', async () => {
     await withTempHomeAsync(async () => {
       const { SqliteIndex } = fresh();
       if (!SqliteIndex.isAvailable()) return;
@@ -158,9 +158,99 @@ describe('SqliteIndex', () => {
         const second = repo.commit('two.txt', 'two', 'fix: second searchable');
         expect(await idx.isFresh()).toBe(false);
         expect((await idx.build()).total).toBe(2);
-        expect(logArgs[1]).not.toContain('--not');
+        expect(logArgs[0]).not.toContain('--not');
+        expect(logArgs[1]).toContain('--not'); // incremental: only commits beyond the old tips
         expect((await idx.search('second')).map((h) => h.hash)).toContain(second);
         idx.close();
+      } finally {
+        repo.cleanup();
+      }
+    });
+  });
+
+  it('candidates() stays within HEAD and follows HEAD across checkouts and new commits', async () => {
+    await withTempHomeAsync(async () => {
+      const { SqliteIndex } = fresh();
+      if (!SqliteIndex.isAvailable()) return;
+      const repo = makeRepo();
+      try {
+        repo.commit('base.txt', 'base', 'feat: base searchable');
+        repo.git(['checkout', '-q', '-b', 'side']);
+        const side = repo.commit('side.txt', 'side', 'feat: side searchable');
+        repo.git(['checkout', '-q', 'main']);
+        const idx = new SqliteIndex(repo.dir, async (args) => repo.git(args));
+        expect((await idx.build()).total).toBe(2);
+
+        const hashes = async () =>
+          (await idx.candidates(['searchable'], {}, 10)).commits.map((c) => c.hash);
+        expect(await hashes()).not.toContain(side); // all refs are indexed, HEAD scope applied
+        expect(await hashes()).toHaveLength(1);
+
+        // HEAD moves forward: only the new commit is flagged, scope grows
+        const next = repo.commit('next.txt', 'next', 'feat: next searchable');
+        await idx.build();
+        expect(await hashes()).toContain(next);
+        expect(await hashes()).toHaveLength(2);
+
+        // HEAD moves sideways: scope is recomputed
+        repo.git(['checkout', '-q', 'side']);
+        await idx.build();
+        expect(await hashes()).toContain(side);
+        expect(await hashes()).not.toContain(next);
+        idx.close();
+      } finally {
+        repo.cleanup();
+      }
+    });
+  });
+
+  it('candidates() honors author/date filters and works without terms', async () => {
+    await withTempHomeAsync(async () => {
+      const { SqliteIndex } = fresh();
+      if (!SqliteIndex.isAvailable()) return;
+      const repo = makeRepo();
+      try {
+        repo.commit('a.txt', 'a', 'feat: alpha');
+        const idx = new SqliteIndex(repo.dir, async (args) => repo.git(args));
+        await idx.build();
+        const all = await idx.candidates([], {}, 10);
+        expect(all.total).toBe(1);
+        expect((await idx.candidates([], { author: 'nobody' }, 10)).total).toBe(0);
+        expect((await idx.candidates([], { since: '2999-01-01' }, 10)).total).toBe(0);
+        expect((await idx.candidates(['alph'], {}, 10)).total).toBe(1); // prefix match
+        idx.close();
+      } finally {
+        repo.cleanup();
+      }
+    });
+  });
+
+  it('uses the ts index for date ranges (query plan)', async () => {
+    await withTempHomeAsync(async (home) => {
+      const { SqliteIndex } = fresh();
+      if (!SqliteIndex.isAvailable()) return;
+      const repo = makeRepo();
+      try {
+        repo.commit('a.txt', 'a', 'feat: alpha');
+        const idx = new SqliteIndex(repo.dir, async (args) => repo.git(args));
+        await idx.build();
+        idx.close();
+        const crypto = require('crypto') as typeof import('crypto');
+        const path = require('path') as typeof import('path');
+        const id = crypto
+          .createHash('sha256')
+          .update(path.resolve(repo.dir))
+          .digest('hex')
+          .slice(0, 16);
+        const Db = require('better-sqlite3');
+        const db = new Db(path.join(home, '.git-history-ui', `${id}.db`), { readonly: true });
+        const plan = db
+          .prepare(
+            "EXPLAIN QUERY PLAN SELECT hash FROM commits c WHERE c.ts >= CAST(strftime('%s', ?) AS INTEGER)"
+          )
+          .all('2026-01-01') as Array<{ detail: string }>;
+        db.close();
+        expect(plan.map((r) => r.detail).join(' ')).toMatch(/idx_commits_ts|idx_commits_head_ts/);
       } finally {
         repo.cleanup();
       }
@@ -302,7 +392,8 @@ describe('SqliteIndex', () => {
         };
 
         let streamCalls = 0;
-        const streamer = async (_args: string[], onChunk: (c: Buffer) => void): Promise<void> => {
+        const streamer = async (args: string[], onChunk: (c: Buffer) => void): Promise<void> => {
+          if (args[0] !== 'log') return; // rev-list (HEAD scope) streams nothing in this fake
           streamCalls++;
           // Split inside the two-byte UTF-8 sequence for \u00e9 to prove the
           // indexer decodes chunks with StringDecoder rather than corrupting
@@ -338,6 +429,12 @@ describe('SqliteIndex', () => {
       let subject = 'zebrafish migration';
       const runner = async (args: string[]): Promise<string> => {
         if (args[0] === 'rev-parse') return head;
+        // The fake rewrites a commit under the same hash, which real git never does:
+        // fail the reachability check so the second build is a full rebuild.
+        if (args[0] === 'rev-list') {
+          if (args.includes('--max-count=1')) throw new Error('cannot prove growth');
+          return '';
+        }
         if (args[0] === 'log') {
           return fakeLog([
             {

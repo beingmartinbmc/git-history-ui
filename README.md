@@ -3,7 +3,7 @@
 [![npm version](https://badge.fury.io/js/git-history-ui.svg)](https://badge.fury.io/js/git-history-ui)
 [![npm downloads](https://img.shields.io/npm/dm/git-history-ui.svg)](https://www.npmjs.com/package/git-history-ui)
 [![npm license](https://img.shields.io/npm/l/git-history-ui.svg)](https://www.npmjs.com/package/git-history-ui)
-[![install size](https://packagephobia.com/badge?p=git-history-ui)](https://packagephobia.com/result?p=git-history-ui)
+[![npm unpacked size](https://img.shields.io/npm/unpacked-size/git-history-ui.svg)](https://www.npmjs.com/package/git-history-ui?activeTab=code)
 [![GitHub stars](https://img.shields.io/github/stars/beingmartinbmc/git-history-ui.svg)](https://github.com/beingmartinbmc/git-history-ui)
 
 **A full Git history explorer in your browser. One command, nothing installed,

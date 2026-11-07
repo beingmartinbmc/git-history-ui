@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { parseProtocolUrl, resolveRepoToLocal } from '../cli';
+import { browserUrl, parseProtocolUrl, resolveRepoToLocal } from '../cli';
 import { withTempHome } from './helpers/repo';
 
 /**
@@ -83,5 +83,32 @@ describe('cli', () => {
       });
       expect(resolveRepoToLocal(parsed.repo!)).toBe(repoDir);
     });
+  });
+
+  it('puts CLI startup filters in the browser URL so the UI starts filtered', () => {
+    const base = 'http://localhost:3000';
+    const fresh = () => ({ path: '/', query: new URLSearchParams() });
+    expect(browserUrl(base, fresh(), {})).toBe(`${base}/`);
+
+    const url = new URL(
+      browserUrl(base, fresh(), {
+        file: 'src/a b.ts',
+        since: '2024-01-01',
+        author: 'Ada',
+        at: 'abc1234'
+      })
+    );
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      file: 'src/a b.ts',
+      since: '2024-01-01',
+      author: 'Ada',
+      commit: 'abc1234'
+    });
+
+    // A protocol deep link's own params are not overridden by CLI/preset filters.
+    const linked = { path: '/', query: new URLSearchParams({ author: 'Grace' }) };
+    expect(
+      new URL(browserUrl(base, linked, { author: 'Ada', file: 'x.ts' })).searchParams.get('author')
+    ).toBe('Grace');
   });
 });

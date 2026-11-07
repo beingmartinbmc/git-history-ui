@@ -1,5 +1,7 @@
 import { getCommitImpact } from '../backend/impact';
-import type { GitService, Commit } from '../backend/gitService';
+import { GitService, type Commit } from '../backend/gitService';
+import { writeFileSync } from 'fs';
+import { makeRepo } from './helpers/repo';
 
 function commit(over: Partial<Commit>): Commit {
   return {
@@ -141,5 +143,52 @@ describe('getCommitImpact', () => {
     } as unknown as GitService;
     const result = await getCommitImpact(svc, 'h');
     expect(result.relatedCommits).toEqual([]);
+  });
+});
+
+describe('getCommitImpact dependents (real repo)', () => {
+  it('finds unchanged files that import the changed ones, and nothing else', async () => {
+    const repo = makeRepo('ghui-impact-');
+    try {
+      repo.commit('src/util.ts', 'export const u = 1;\n', 'util');
+      repo.commit('src/lib/index.ts', 'export const l = 1;\n', 'lib');
+      repo.commit('src/a.ts', "import { u } from './util';\n", 'a imports util');
+      repo.commit('src/b.ts', "import { l } from './lib';\n", 'b imports lib/index');
+      repo.commit('src/barrel.ts', "export * from './util.js';\n", 'barrel re-exports util');
+      repo.commit('src/deep/c.ts', "const l = require('../lib/index');\n", 'c requires lib/index');
+      repo.commit('src/d.ts', "import { x } from './other';\nimport 'util';\n", 'd: unrelated');
+      repo.commit('docs/n.md', "import './util';\n", 'docs mention');
+      repo.commit('src/e.ts', "import { u } from './util';\n", 'e imports util');
+      // One commit touches util, lib/index and e; e imports util but is itself changed.
+      writeFileSync(`${repo.dir}/src/util.ts`, 'export const u = 3;\n');
+      writeFileSync(`${repo.dir}/src/lib/index.ts`, 'export const l = 3;\n');
+      writeFileSync(`${repo.dir}/src/e.ts`, "import { u } from './util';\n// touched\n");
+      repo.git(['add', '-A']);
+      repo.git(['commit', '-q', '-m', 'change util, lib and e']);
+      const hash = repo.git(['rev-parse', 'HEAD']).trim();
+
+      const impact = await getCommitImpact(new GitService(repo.dir), hash);
+      expect(impact.files.sort()).toEqual(['src/e.ts', 'src/lib/index.ts', 'src/util.ts']);
+      const key = (d: { from: string; to: string }) => `${d.from} -> ${d.to}`;
+      expect(impact.dependents.map(key).sort()).toEqual([
+        'src/a.ts -> src/util.ts',
+        'src/b.ts -> src/lib/index.ts',
+        'src/barrel.ts -> src/util.ts',
+        'src/deep/c.ts -> src/lib/index.ts'
+      ]);
+    } finally {
+      repo.cleanup();
+    }
+  });
+
+  it('returns no dependents when nothing imports the changed files', async () => {
+    const repo = makeRepo('ghui-impact-');
+    try {
+      repo.commit('src/a.ts', 'export {};\n', 'a');
+      const hash = repo.commit('src/solo.ts', 'export {};\n', 'solo');
+      expect((await getCommitImpact(new GitService(repo.dir), hash)).dependents).toEqual([]);
+    } finally {
+      repo.cleanup();
+    }
   });
 });

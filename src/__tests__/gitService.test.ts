@@ -188,3 +188,33 @@ describe('GitService', () => {
     await expect(svc.getCommit('not-a-hash')).rejects.toThrow(/Invalid commit hash/);
   });
 });
+
+describe('GitService regressions', () => {
+  let repo: string;
+  let svc: GitService;
+  let tagged: string;
+
+  beforeAll(() => {
+    repo = makeRepo();
+    tagged = commit(repo, 'a.txt', 'a\n', 'feat: a');
+    commit(repo, 'a.txt', 'a\nb\n', 'feat: b');
+    git(repo, ['tag', '-a', 'v9.9.9', '-m', 'annotated', tagged]);
+    svc = new GitService(repo);
+  });
+
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('attaches annotated tags to the tagged commit (peeled, not the tag object)', async () => {
+    const result = await svc.getCommits({ pageSize: 10 });
+    expect(result.commits.find((c) => c.hash === tagged)!.tags).toContain('v9.9.9');
+  });
+
+  it('reports the real total for a page past the end', async () => {
+    const result = await svc.getCommits({ page: 100_000, pageSize: 25 });
+    expect(result.commits).toEqual([]);
+    expect(result.total).toBe(2);
+    expect(result.totalPages).toBe(1);
+  });
+});

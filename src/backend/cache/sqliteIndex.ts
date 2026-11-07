@@ -13,16 +13,22 @@ export const SQLITE_LOG_FORMAT = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s', '
 );
 
 const ROOT_DIR = path.join(os.homedir(), '.git-history-ui');
+/** Bump when the commits table changes shape; older indexes are dropped and rebuilt. */
+const SCHEMA_VERSION = '2';
+// ponytail: indexed tips ride on the git command line; past this, rebuild fully (use --stdin to lift).
+const MAX_INCREMENTAL_TIPS = 1000;
 
 /**
  * Optional SQLite-backed commit index. Falls back gracefully if
  * `better-sqlite3` is not installed (declared as an optional dependency).
  *
  * Schema:
- *   commits(hash PK, short, author, email, date, parents, subject, body)
+ *   commits(hash PK, short, author, email, date, parents, subject, body,
+ *           ts = unix seconds of `date`, on_head = reachable from HEAD)
  *   commits_fts(subject, body) virtual using FTS5 (when available)
  *
- * Invalidated when the repo's HEAD ref or the refs/ directory mtime changes.
+ * Built from every ref (`git log --all`). When refs only gained commits, the next build
+ * ingests just the new ones; rewritten or removed history triggers a full rebuild.
  *
  * Git invocation is delegated to a caller-provided runner so this module
  * doesn't need to import `child_process` directly. (The hot-loop driver
@@ -133,8 +139,14 @@ export class SqliteIndex {
     try {
       fs.mkdirSync(path.dirname(this.dbFile), { recursive: true });
       this.db = new Ctor(this.dbFile);
+      this.db.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);');
+      if (this.readMeta('schema') !== SCHEMA_VERSION) {
+        this.db.exec(
+          'DROP TABLE IF EXISTS commits_fts; DROP TABLE IF EXISTS commits; DELETE FROM meta;'
+        );
+        this.db.prepare("INSERT INTO meta(k,v) VALUES('schema', ?)").run(SCHEMA_VERSION);
+      }
       this.db.exec(`
-        CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
         CREATE TABLE IF NOT EXISTS commits (
           hash TEXT PRIMARY KEY,
           short TEXT,
@@ -143,9 +155,12 @@ export class SqliteIndex {
           date TEXT,
           parents TEXT,
           subject TEXT,
-          body TEXT
+          body TEXT,
+          ts INTEGER NOT NULL DEFAULT 0,
+          on_head INTEGER NOT NULL DEFAULT 0
         );
-        CREATE INDEX IF NOT EXISTS idx_commits_date ON commits(date DESC);
+        CREATE INDEX IF NOT EXISTS idx_commits_ts ON commits(ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_commits_head_ts ON commits(on_head, ts DESC);
         CREATE INDEX IF NOT EXISTS idx_commits_author ON commits(author);
       `);
       try {
@@ -183,10 +198,8 @@ export class SqliteIndex {
 
   async isFresh(): Promise<boolean> {
     if (!this.open()) return false;
-    const stored = (
-      this.db!.prepare("SELECT v FROM meta WHERE k='refsSig'").get() as { v: string } | undefined
-    )?.v;
-    return !!stored && stored === (await this.refSignature());
+    const stored = this.readMeta('refsSig');
+    return !!stored && stored === (await this.refState()).sig;
   }
 
   /** Synchronously build the index from `git log --all`. Idempotent. */
@@ -208,28 +221,37 @@ export class SqliteIndex {
   private async doBuild(opts: { signal?: AbortSignal } = {}): Promise<void> {
     if (!this.db) return;
     this.setProgress('checking', 0, 'checking refs');
-    const sig = await this.refSignature();
-    const stored = (
-      this.db.prepare("SELECT v FROM meta WHERE k='refsSig'").get() as { v: string } | undefined
-    )?.v;
-    if (stored === sig) {
+    const state = await this.refState();
+    if (this.readMeta('refsSig') === state.sig) {
       this.setProgress('done', await this.rowCount(), 'already up to date');
       return;
     }
-    const args = ['log', '--all', `--pretty=format:${SQLITE_LOG_FORMAT}${RECORD_SEP}`];
+    // Refs that only gained commits need just the new ones; anything else rebuilds.
+    const prevTips = this.readTips();
+    const incremental = await this.onlyGrew(prevTips);
+    const prevHead = incremental ? (this.readMeta('headHash') ?? '') : '';
+    const label = incremental ? 'updating index' : 'rebuilding index';
+    const args = [
+      'log',
+      '--all',
+      ...(incremental ? ['--not', ...prevTips] : []),
+      `--pretty=format:${SQLITE_LOG_FORMAT}${RECORD_SEP}`
+    ];
 
     let indexed = 0;
     this.db.exec('BEGIN');
     try {
-      this.db.exec('DELETE FROM commits');
-      try {
-        // external-content table: a plain DELETE leaves the old terms in the index
-        this.db.exec("INSERT INTO commits_fts(commits_fts) VALUES('delete-all')");
-      } catch {
-        /* no fts */
+      if (!incremental) {
+        this.db.exec('DELETE FROM commits');
+        try {
+          // external-content table: a plain DELETE leaves the old terms in the index
+          this.db.exec("INSERT INTO commits_fts(commits_fts) VALUES('delete-all')");
+        } catch {
+          /* no fts */
+        }
       }
       const ins = this.db.prepare(
-        'INSERT OR REPLACE INTO commits(hash,short,author,email,date,parents,subject,body) VALUES (?,?,?,?,?,?,?,?)'
+        'INSERT OR IGNORE INTO commits(hash,short,author,email,date,parents,subject,body,ts) VALUES (?,?,?,?,?,?,?,?,?)'
       );
       const insFts = (() => {
         try {
@@ -241,7 +263,7 @@ export class SqliteIndex {
         }
       })();
 
-      this.setProgress('indexing', indexed, 'rebuilding index');
+      this.setProgress('indexing', indexed, label);
       const ingest = (record: string) => {
         const trimmed = record.trim();
         if (!trimmed) return;
@@ -249,10 +271,22 @@ export class SqliteIndex {
         if (fields.length < 8) return;
         const [hash, shortHash, author, email, date, parentsStr, subject, ...rest] = fields;
         const body = rest.join(FIELD_SEP);
-        ins.run(hash, shortHash, author, email, date, parentsStr, subject, body);
+        const ts = Math.floor(Date.parse(date) / 1000);
+        const added = ins.run(
+          hash,
+          shortHash,
+          author,
+          email,
+          date,
+          parentsStr,
+          subject,
+          body,
+          Number.isFinite(ts) ? ts : 0
+        );
+        if (added.changes === 0) return; // already indexed
         indexed++;
         if (indexed === 1 || indexed % 250 === 0) {
-          this.setProgress('indexing', indexed, 'rebuilding index');
+          this.setProgress('indexing', indexed, label);
         }
         if (insFts) {
           try {
@@ -263,38 +297,14 @@ export class SqliteIndex {
         }
       };
 
-      // Streaming path: incremental parse keeps memory bounded regardless
-      // of repo size. Falls back to buffered runGit when no streamer was
-      // injected (e.g. legacy callers, tests).
-      if (this.streamGit) {
-        let pending = '';
-        const decoder = new StringDecoder('utf8');
-        await this.streamGit(
-          args,
-          (chunk) => {
-            pending += decoder.write(chunk);
-            let idx: number;
-            // Process every complete record as it arrives so we never hold
-            // more than one record's worth of git output in memory.
-            while ((idx = pending.indexOf(RECORD_SEP)) >= 0) {
-              const record = pending.slice(0, idx);
-              pending = pending.slice(idx + 1);
-              ingest(record);
-            }
-          },
-          { signal: opts.signal }
-        );
-        pending += decoder.end();
-        if (pending.trim()) ingest(pending);
-      } else {
-        const out = await this.runGit(args);
-        for (const record of out.split(RECORD_SEP)) ingest(record);
-      }
+      await this.forEachRecord(args, RECORD_SEP, ingest, opts.signal);
+      await this.syncHeadScope(state.head, prevHead, opts.signal);
 
-      this.db.prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('refsSig', ?)").run(sig);
-      this.db
-        .prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('builtAt', ?)")
-        .run(new Date().toISOString());
+      const setMeta = this.db.prepare('INSERT OR REPLACE INTO meta(k,v) VALUES(?, ?)');
+      setMeta.run('refsSig', state.sig);
+      setMeta.run('builtAt', new Date().toISOString());
+      setMeta.run('tips', JSON.stringify(state.tips));
+      setMeta.run('headHash', state.head);
       this.db.exec('COMMIT');
       this.setProgress('done', await this.rowCount(), 'index ready');
     } catch (err) {
@@ -305,6 +315,90 @@ export class SqliteIndex {
         this.setProgress('error', indexed, err instanceof Error ? err.message : String(err));
       }
       throw err;
+    }
+  }
+
+  /** Feed git output to `onRecord` one `sep`-delimited record at a time (streamed when possible). */
+  private async forEachRecord(
+    args: string[],
+    sep: string,
+    onRecord: (record: string) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    // Streaming keeps memory bounded regardless of repo size; tests/legacy callers buffer.
+    if (!this.streamGit) {
+      for (const record of (await this.runGit(args)).split(sep)) onRecord(record);
+      return;
+    }
+    let pending = '';
+    const decoder = new StringDecoder('utf8');
+    await this.streamGit(
+      args,
+      (chunk) => {
+        pending += decoder.write(chunk);
+        let idx: number;
+        while ((idx = pending.indexOf(sep)) >= 0) {
+          const record = pending.slice(0, idx);
+          pending = pending.slice(idx + sep.length);
+          onRecord(record);
+        }
+      },
+      { signal }
+    );
+    pending += decoder.end();
+    if (pending.trim()) onRecord(pending);
+  }
+
+  /** True when every indexed tip is still reachable, i.e. history only grew since the last build. */
+  private async onlyGrew(prevTips: string[]): Promise<boolean> {
+    if (!prevTips.length || prevTips.length > MAX_INCREMENTAL_TIPS) return false;
+    try {
+      const lost = await this.runGit(['rev-list', '--max-count=1', ...prevTips, '--not', '--all']);
+      return lost.trim() === '';
+    } catch {
+      return false; // e.g. an old tip was pruned
+    }
+  }
+
+  /** Keep `on_head` = "reachable from HEAD", the scope the git search path uses by default. */
+  private async syncHeadScope(head: string, prevHead: string, signal?: AbortSignal): Promise<void> {
+    if (!this.db || !head || head === prevHead) return;
+    // HEAD only moved forward → flag just the new commits; otherwise recompute from scratch.
+    const forward = !!prevHead && (await this.isAncestor(prevHead, head));
+    if (!forward) this.db.exec('UPDATE commits SET on_head = 0 WHERE on_head = 1');
+    const flag = this.db.prepare('UPDATE commits SET on_head = 1 WHERE hash = ?');
+    await this.forEachRecord(
+      ['rev-list', head, ...(forward ? ['--not', prevHead] : [])],
+      '\n',
+      (hash) => {
+        const h = hash.trim();
+        if (h) flag.run(h);
+      },
+      signal
+    );
+  }
+
+  private async isAncestor(ancestor: string, of: string): Promise<boolean> {
+    try {
+      return (
+        (await this.runGit(['rev-list', '--max-count=1', ancestor, '--not', of])).trim() === ''
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private readMeta(k: string): string | undefined {
+    return (this.db!.prepare('SELECT v FROM meta WHERE k = ?').get(k) as { v: string } | undefined)
+      ?.v;
+  }
+
+  private readTips(): string[] {
+    try {
+      const tips = JSON.parse(this.readMeta('tips') ?? '[]');
+      return Array.isArray(tips) ? tips.filter((t) => typeof t === 'string') : [];
+    } catch {
+      return [];
     }
   }
 
@@ -338,7 +432,7 @@ export class SqliteIndex {
           `SELECT c.hash, c.short, c.subject, c.body, c.date, c.author, c.email, c.parents
            FROM commits_fts f JOIN commits c ON c.rowid = f.rowid
            WHERE commits_fts MATCH ?${clause}
-           ORDER BY rank, c.date DESC LIMIT ? OFFSET ?`
+           ORDER BY rank, c.ts DESC LIMIT ? OFFSET ?`
         )
         .all(query, ...params, limit, offset) as Row[];
     } catch {
@@ -347,7 +441,7 @@ export class SqliteIndex {
         .prepare(
           `SELECT c.hash, c.short, c.subject, c.body, c.date, c.author, c.email, c.parents
            FROM commits c WHERE (c.subject LIKE ? OR c.body LIKE ?)${clause}
-           ORDER BY c.date DESC LIMIT ? OFFSET ?`
+           ORDER BY c.ts DESC LIMIT ? OFFSET ?`
         )
         .all(like, like, ...params, limit, offset) as Row[];
     }
@@ -383,6 +477,53 @@ export class SqliteIndex {
     }
   }
 
+  /**
+   * Candidate commits for the natural-language pipeline: reachable from HEAD (same scope as the
+   * git path), newest first, matching any of `terms` as FTS5 prefixes. No terms → filters only.
+   */
+  async candidates(
+    terms: string[],
+    filters: { author?: string; since?: string; until?: string },
+    limit: number
+  ): Promise<{ commits: Commit[]; total: number }> {
+    if (!this.open()) return { commits: [], total: 0 };
+    const db = this.db!;
+    const { clause, params } = buildFilterClause(filters);
+    const run = (from: string, match: string, lead: unknown[]) => {
+      const where = `${match}c.on_head = 1${clause}`;
+      const args = [...lead, ...params];
+      return {
+        commits: (
+          db
+            .prepare(
+              `SELECT c.hash, c.short, c.subject, c.body, c.date, c.author, c.email, c.parents
+               FROM ${from} WHERE ${where} ORDER BY c.ts DESC LIMIT ?`
+            )
+            .all(...args, limit) as CommitRow[]
+        ).map(rowToCommit),
+        total: (
+          db.prepare(`SELECT COUNT(*) AS n FROM ${from} WHERE ${where}`).get(...args) as {
+            n: number;
+          }
+        ).n
+      };
+    };
+    if (!terms.length) return run('commits c', '', []);
+    try {
+      const match = terms.map((t) => `"${t.replace(/"/g, '""')}"*`).join(' OR ');
+      return run('commits_fts f JOIN commits c ON c.rowid = f.rowid', 'commits_fts MATCH ? AND ', [
+        match
+      ]);
+    } catch {
+      const likes = terms.map(() => '(c.subject LIKE ? OR c.body LIKE ?)').join(' OR ');
+      return run(
+        'commits c',
+        `(${likes}) AND `,
+        terms.flatMap((t) => [`%${t}%`, `%${t}%`])
+      );
+    }
+  }
+
   invalidate() {
     if (!this.open()) return;
     this.db!.prepare("DELETE FROM meta WHERE k = 'refsSig'").run();
@@ -396,13 +537,14 @@ export class SqliteIndex {
     }
   }
 
-  private async refSignature(): Promise<string> {
+  /** Signature of HEAD + refs, plus the commit tips it covers (annotated tags peeled). */
+  private async refState(): Promise<{ sig: string; tips: string[]; head: string }> {
     const head = await this.currentHead();
     let refs = '';
     try {
       refs = await this.runGit([
         'for-each-ref',
-        '--format=%(refname)%00%(objectname)%00%(creatordate:iso-strict)',
+        '--format=%(refname)%00%(objectname)%00%(*objectname)%00%(creatordate:iso-strict)',
         'refs/heads',
         'refs/remotes',
         'refs/tags'
@@ -410,10 +552,19 @@ export class SqliteIndex {
     } catch {
       /* ignore */
     }
-    return crypto
-      .createHash('sha256')
-      .update(head + '|' + refs)
-      .digest('hex');
+    const tips = new Set<string>(head ? [head] : []);
+    for (const line of refs.split('\n')) {
+      const [, object, peeled] = line.split('\0');
+      if (peeled || object) tips.add(peeled || object);
+    }
+    return {
+      sig: crypto
+        .createHash('sha256')
+        .update(head + '|' + refs)
+        .digest('hex'),
+      tips: [...tips],
+      head
+    };
   }
 
   private async currentHead(): Promise<string> {
@@ -454,12 +605,12 @@ function buildFilterClause(filters?: { author?: string; since?: string; until?: 
     params.push('%' + filters.author + '%', '%' + filters.author + '%');
   }
   if (filters?.since) {
-    // ISO strings carry differing UTC offsets; compare instants, not text
-    parts.push('julianday(c.date) >= julianday(?)');
+    // ISO strings carry differing UTC offsets; compare instants (indexed `ts`), not text
+    parts.push("c.ts >= CAST(strftime('%s', ?) AS INTEGER)");
     params.push(normalizeDateFilter(filters.since, 'since'));
   }
   if (filters?.until) {
-    parts.push('julianday(c.date) <= julianday(?)');
+    parts.push("c.ts <= CAST(strftime('%s', ?) AS INTEGER)");
     params.push(normalizeDateFilter(filters.until, 'until'));
   }
   return {
@@ -467,6 +618,8 @@ function buildFilterClause(filters?: { author?: string; since?: string; until?: 
     params
   };
 }
+
+type CommitRow = Parameters<typeof rowToCommit>[0];
 
 function rowToCommit(r: {
   hash: string;

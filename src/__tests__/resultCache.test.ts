@@ -50,7 +50,13 @@ describe('ResultCache', () => {
 
   it('key() excludes null/undefined/empty values', () => {
     const k = ResultCache.key({ a: 'one', b: undefined, c: null, d: '' });
-    expect(k).toBe('a=one');
+    expect(k).toBe(ResultCache.key({ a: 'one' }));
+  });
+
+  it('key() does not collide when a value embeds another param', () => {
+    expect(ResultCache.key({ author: 'alice&branch=main' })).not.toBe(
+      ResultCache.key({ author: 'alice', branch: 'main' })
+    );
   });
 });
 

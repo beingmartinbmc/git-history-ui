@@ -50,6 +50,24 @@ describe('buildCommitGroups', () => {
     expect(pr!.commits).toEqual(expect.arrayContaining(['m1', 'f3', 'f2', 'f1']));
   });
 
+  it('does not pull trunk history past the branch point into a PR group', async () => {
+    // trunk: t1 <- t2 <- t3 <- m1 (first parent)   feature: t1 <- f1 <- f2 (second parent)
+    const t1 = commit({ hash: 't1', subject: 'root' });
+    const t2 = commit({ hash: 't2', subject: 'trunk work', parents: ['t1'] });
+    const t3 = commit({ hash: 't3', subject: 'more trunk work', parents: ['t2'] });
+    const f1 = commit({ hash: 'f1', subject: 'feature start', parents: ['t1'] });
+    const f2 = commit({ hash: 'f2', subject: 'feature end', parents: ['f1'] });
+    const merge = commit({
+      hash: 'm1',
+      subject: 'Merge pull request #7 from feat/x',
+      isMerge: true,
+      parents: ['t3', 'f2']
+    });
+
+    const groups = await buildCommitGroups(fakeGitService([merge, t3, f2, t2, f1, t1]));
+    expect(groups.find((g) => g.prNumber === 7)!.commits).toEqual(['m1', 'f2', 'f1']);
+  });
+
   it('detects squash merges from "(#N)" suffix', async () => {
     const sq = commit({ hash: 'sq', subject: 'feat: cool new thing (#99)' });
     const groups = await buildCommitGroups(fakeGitService([sq]));
