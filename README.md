@@ -337,7 +337,7 @@ steps:
   - uses: actions/checkout@v4
     with:
       fetch-depth: 0
-  - uses: beingmartinbmc/git-history-ui@v5.5.1
+  - uses: beingmartinbmc/git-history-ui@v5.6.0
     with:
       format: markdown
 ```
